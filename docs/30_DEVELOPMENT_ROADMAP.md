@@ -52,7 +52,7 @@ Sub-Phases
 
 1.2A Database Foundation (SQLAlchemy base, mixins, repository base) - Completed
 
-1.2B Domain Models - Pending
+1.2B Domain Models (SystemSetting, CreatedAtMixin) - Completed
 
 ---
 

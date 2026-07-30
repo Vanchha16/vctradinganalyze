@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Added - Phase 1.2B: Domain Models
+
+`SystemSetting` model - the first real domain model, with a unique/indexed `key`, `value`, `description`, and full created_at/updated_at
+
+`SystemSettingRepository` - a concrete repository with a single data-access method (`get_by_key`), no business logic
+
+`CreatedAtMixin` - reusable infrastructure for append-only rows (single `created_at`, no `updated_at`)
+
+First real Alembic migration (`2822d8e2e377_create_system_settings_table`), verified via a full upgrade/downgrade/upgrade round-trip and `alembic check` with zero drift
+
+`AuditLog` intentionally deferred to Phase 2, to be modeled together with `User` so its foreign key can be correct from the start
+
+### Status
+
+Phase 1.2B (Domain Models) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 1.2A: Database Foundation
 
 `UUIDMixin` and `TimestampMixin` for SQLAlchemy models (UUID primary keys, UTC created_at/updated_at)

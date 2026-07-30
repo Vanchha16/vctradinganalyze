@@ -1,1 +1,3 @@
-"""SQLAlchemy models will be added in later phases."""
+from app.models.system_setting import SystemSetting
+
+__all__ = ["SystemSetting"]

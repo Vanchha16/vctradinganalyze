@@ -18,3 +18,13 @@ class TimestampMixin:
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class CreatedAtMixin:
+    """Gives a model a single UTC-aware created_at column.
+
+    For append-only / immutable rows (e.g. audit logs) where an updated_at
+    would contradict the table's purpose.
+    """
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

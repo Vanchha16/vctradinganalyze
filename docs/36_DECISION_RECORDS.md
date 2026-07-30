@@ -1,0 +1,732 @@
+# Architecture Decision Records (ADR)
+
+Version: 1.0
+
+---
+
+# Objective
+
+This document records significant architectural and technical decisions made throughout the project.
+
+Each decision must include:
+
+- Context
+- Decision
+- Reasoning
+- Trade-offs
+- Consequences
+- Status
+
+Architecture decisions should never rely solely on memory.
+
+---
+
+# ADR Template
+
+## ADR-XXX
+
+Title
+
+Date
+
+Status
+
+Accepted
+
+Context
+
+Describe the problem.
+
+Decision
+
+Describe the chosen solution.
+
+Reason
+
+Explain why.
+
+Alternatives Considered
+
+Option A
+
+Option B
+
+Option C
+
+Trade-offs
+
+Pros
+
+Cons
+
+Consequences
+
+Positive
+
+Negative
+
+Future Review
+
+When should this decision be revisited?
+
+---
+
+# ADR-001
+
+Title
+
+Use FastAPI as Backend Framework
+
+Status
+
+Accepted
+
+Context
+
+The backend requires:
+
+- High performance
+- Async support
+- OpenAPI generation
+- Excellent typing
+- Modern architecture
+
+Decision
+
+Use FastAPI.
+
+Reason
+
+Excellent async support.
+
+Automatic API documentation.
+
+Strong typing.
+
+Large ecosystem.
+
+Trade-offs
+
+Pros
+
+Fast
+
+Clean
+
+Scalable
+
+Cons
+
+Smaller ecosystem than Django.
+
+Future Review
+
+Review every major FastAPI release.
+
+---
+
+# ADR-002
+
+Title
+
+Use Next.js for Frontend
+
+Status
+
+Accepted
+
+Reason
+
+SSR
+
+Excellent React ecosystem
+
+TypeScript
+
+SEO support
+
+App Router
+
+Future Review
+
+Evaluate major Next.js releases.
+
+---
+
+# ADR-003
+
+Title
+
+Use PostgreSQL
+
+Status
+
+Accepted
+
+Reason
+
+Reliable
+
+Powerful indexing
+
+JSON support
+
+Scalable
+
+Excellent tooling
+
+---
+
+# ADR-004
+
+Title
+
+Use Redis
+
+Status
+
+Accepted
+
+Reason
+
+Caching
+
+Queues
+
+Rate Limiting
+
+WebSocket Support
+
+Fast lookups
+
+---
+
+# ADR-005
+
+Title
+
+Separate AI from Business Logic
+
+Status
+
+Accepted
+
+Decision
+
+AI performs reasoning only.
+
+Business rules remain deterministic.
+
+Reason
+
+Prevent hallucinations.
+
+Improve testing.
+
+Increase explainability.
+
+Trade-offs
+
+Pros
+
+Reliable
+
+Predictable
+
+Auditable
+
+Cons
+
+More engineering effort.
+
+---
+
+# ADR-006
+
+Title
+
+Use Deterministic Technical Engines
+
+Status
+
+Accepted
+
+Decision
+
+Indicators are calculated in code.
+
+Never by AI.
+
+Reason
+
+Accuracy
+
+Repeatability
+
+Testing
+
+Auditability
+
+---
+
+# ADR-007
+
+Title
+
+AI Never Invents Market Data
+
+Status
+
+Accepted
+
+Decision
+
+AI receives structured evidence only.
+
+Reason
+
+Prevent hallucinations.
+
+Increase trust.
+
+Improve consistency.
+
+---
+
+# ADR-008
+
+Title
+
+Evidence-Based Architecture
+
+Status
+
+Accepted
+
+Decision
+
+Every engine publishes evidence.
+
+Signal Engine consumes evidence.
+
+Reason
+
+Loose coupling.
+
+Independent testing.
+
+Better explainability.
+
+---
+
+# ADR-009
+
+Title
+
+Modular Engine Design
+
+Status
+
+Accepted
+
+Decision
+
+Each domain has its own engine.
+
+Examples
+
+Technical
+
+SMC
+
+Risk
+
+News
+
+Economic
+
+Confidence
+
+Reason
+
+Independent development.
+
+Scalable architecture.
+
+Easy maintenance.
+
+---
+
+# ADR-010
+
+Title
+
+Signal Generation Requires Confluence
+
+Status
+
+Accepted
+
+Decision
+
+Signals are never generated from a single indicator.
+
+Reason
+
+Reduce false positives.
+
+Increase signal quality.
+
+Encourage institutional-style analysis.
+
+---
+
+# ADR-011
+
+Title
+
+WAIT is a Valid Recommendation
+
+Status
+
+Accepted
+
+Decision
+
+The platform may recommend WAIT.
+
+Reason
+
+No trade is often better than a poor trade.
+
+Trade-offs
+
+Pros
+
+Protects users.
+
+Builds trust.
+
+Cons
+
+Fewer signals.
+
+---
+
+# ADR-012
+
+Title
+
+Market Regime Before Strategy Selection
+
+Status
+
+Accepted
+
+Decision
+
+Determine market regime before selecting a strategy.
+
+Reason
+
+Different strategies perform better under different conditions.
+
+---
+
+# ADR-013
+
+Title
+
+Confidence Must Be Explainable
+
+Status
+
+Accepted
+
+Decision
+
+Every confidence score must include strengths and penalties.
+
+Reason
+
+Transparency.
+
+User trust.
+
+Debugging.
+
+---
+
+# ADR-014
+
+Title
+
+Risk Engine Can Reject Signals
+
+Status
+
+Accepted
+
+Decision
+
+The Risk Engine has veto authority.
+
+Reason
+
+Protect users during high-risk conditions.
+
+Examples
+
+Major economic events
+
+Extreme volatility
+
+Low liquidity
+
+---
+
+# ADR-015
+
+Title
+
+Admin Replay Capability
+
+Status
+
+Accepted
+
+Decision
+
+Every AI decision must be replayable.
+
+Reason
+
+Debugging.
+
+Compliance.
+
+Continuous improvement.
+
+---
+
+# ADR-016
+
+Title
+
+API-First Architecture
+
+Status
+
+Accepted
+
+Decision
+
+Every feature is exposed through the API before UI implementation.
+
+Reason
+
+Supports web, mobile, Telegram, and future integrations.
+
+---
+
+# ADR-017
+
+Title
+
+Configuration Over Hardcoding
+
+Status
+
+Accepted
+
+Decision
+
+Strategies, providers, thresholds, and feature behavior should be configurable whenever practical.
+
+Reason
+
+Simplifies maintenance.
+
+Supports future expansion.
+
+Reduces code changes.
+
+---
+
+# ADR-018
+
+Title
+
+Version Everything
+
+Status
+
+Accepted
+
+Decision
+
+Version prompts, AI models, APIs, database schema, engines, and configuration.
+
+Reason
+
+Rollback capability.
+
+Reproducibility.
+
+Historical analysis.
+
+---
+
+# ADR-019
+
+Title
+
+Observability by Default
+
+Status
+
+Accepted
+
+Decision
+
+Every critical service must expose metrics, logs, and health checks.
+
+Reason
+
+Simplifies troubleshooting.
+
+Improves reliability.
+
+Supports proactive monitoring.
+
+---
+
+# ADR-020
+
+Title
+
+Security by Design
+
+Status
+
+Accepted
+
+Decision
+
+Security requirements are integrated into architecture from the beginning rather than added later.
+
+Reason
+
+Reduce vulnerabilities.
+
+Simplify compliance.
+
+Protect user trust.
+
+---
+
+# Future ADRs
+
+Every major architectural change requires a new ADR.
+
+Existing ADRs should never be overwritten.
+
+If a decision changes:
+
+Old ADR
+
+↓
+
+Superseded
+
+↓
+
+New ADR
+
+This preserves historical context.
+
+---
+
+# ADR Lifecycle
+
+Proposed
+
+↓
+
+Under Review
+
+↓
+
+Accepted
+
+↓
+
+Implemented
+
+↓
+
+Deprecated (Optional)
+
+↓
+
+Superseded (Optional)
+
+---
+
+# ADR-021
+
+Title
+
+Use uv as Python Dependency Manager
+
+Status
+
+Accepted
+
+Context
+
+The backend needs a fast, reproducible, single-source-of-truth dependency management workflow for Python packages and virtual environments.
+
+Decision
+
+Use uv for all backend dependency management (installing, locking, running scripts). `pyproject.toml` is the single source of dependency declarations; `uv.lock` is committed for reproducible installs. `requirements.txt` is no longer used.
+
+Reason
+
+Significantly faster installs and locking than pip.
+
+Single tool for virtualenv creation, dependency resolution, and locking.
+
+Reproducible builds via a committed lockfile.
+
+Growing ecosystem adoption.
+
+Trade-offs
+
+Pros
+
+Fast
+
+Reproducible
+
+Simple developer workflow
+
+Cons
+
+Newer tool than pip, smaller long-term track record.
+
+Future Review
+
+Review if uv adoption stalls or a superior tool emerges.
+
+---
+
+# Review Policy
+
+Review ADRs:
+
+- Before major releases
+- When introducing new infrastructure
+- When replacing providers
+- When changing AI models
+- During annual architecture reviews

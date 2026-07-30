@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added - Phase 1.2A: Database Foundation
+
+`UUIDMixin` and `TimestampMixin` for SQLAlchemy models (UUID primary keys, UTC created_at/updated_at)
+
+`BaseRepository` generic infrastructure: constructor-injected session, query/filter/pagination helpers, transaction context manager - no CRUD, so concrete repositories define their own operations
+
+Verified Alembic autogeneration against the current (model-free) metadata; migration history intentionally left empty until the first real domain model lands
+
+### Status
+
+Phase 1.2A (Database Foundation) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 1.1: Project Foundation
 
 Backend skeleton (FastAPI) structured per Clean Architecture layering: api, config, core, database, dependencies, middleware, exceptions, repositories, services, utils, workers

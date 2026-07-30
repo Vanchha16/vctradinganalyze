@@ -46,6 +46,14 @@ Status
 
 Completed
 
+Sub-Phases
+
+1.1 Project Foundation (Docker, FastAPI, Next.js, config, logging, CI) - Completed
+
+1.2A Database Foundation (SQLAlchemy base, mixins, repository base) - Completed
+
+1.2B Domain Models - Pending
+
 ---
 
 # Phase 2

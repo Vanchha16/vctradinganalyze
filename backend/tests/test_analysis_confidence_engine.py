@@ -8,7 +8,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.database.base import Base
-from app.exceptions import ResourceNotFoundException
 from app.models.asset import Asset
 from app.models.enums import MarketType, Timeframe
 from app.models.price_candle import PriceCandle
@@ -17,7 +16,8 @@ from app.models.smc_processing_state import SMCProcessingState
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.smc_event_repository import SMCEventRepository
 from app.repositories.smc_processing_state_repository import SMCProcessingStateRepository
-from app.services.market_regime.types import MarketRegimeState
+from app.services.analysis_confidence.types import ConfidenceLevel, ConfidenceMultiTimeframeVerdict
+from app.services.analysis_confidence_engine import AnalysisConfidenceEngine
 from app.services.market_regime_engine import MarketRegimeEngine
 from app.services.smc_engine import SMCEngine
 from app.services.technical_analysis_engine import TechnicalAnalysisEngine
@@ -68,39 +68,50 @@ def _seed_trending_candles(
     session.commit()
 
 
-def _make_engine(session: Session) -> MarketRegimeEngine:
+def _make_engine(session: Session) -> AnalysisConfidenceEngine:
     price_candle_repository = PriceCandleRepository(session)
     technical_analysis_engine = TechnicalAnalysisEngine(price_candle_repository)
     smc_engine = SMCEngine(
         price_candle_repository, SMCEventRepository(session), SMCProcessingStateRepository(session)
     )
-    return MarketRegimeEngine(price_candle_repository, technical_analysis_engine, smc_engine)
+    market_regime_engine = MarketRegimeEngine(
+        price_candle_repository, technical_analysis_engine, smc_engine
+    )
+    return AnalysisConfidenceEngine(technical_analysis_engine, smc_engine, market_regime_engine)
 
 
-def test_analyze_raises_when_no_candles(session: Session, asset: Asset) -> None:
+def test_analyze_returns_graceful_result_when_no_candles(session: Session, asset: Asset) -> None:
     engine = _make_engine(session)
 
-    with pytest.raises(ResourceNotFoundException):
-        engine.analyze(asset, Timeframe.H1)
+    result = engine.analyze(asset, Timeframe.H1)
+
+    assert result.confidence_level == ConfidenceLevel.VERY_LOW
+    assert "technical_analysis_unavailable" in result.missing_data
+    assert "smc_unavailable" in result.missing_data
+    assert "market_regime_unavailable" in result.missing_data
+    assert result.technical is None
+    assert result.smc is None
+    assert result.market_regime is None
 
 
-def test_analyze_returns_structured_evidence_with_a_valid_regime(
-    session: Session, asset: Asset
-) -> None:
+def test_analyze_returns_structured_evidence_with_real_data(session: Session, asset: Asset) -> None:
     _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
     engine = _make_engine(session)
 
     result = engine.analyze(asset, Timeframe.H1)
 
-    assert result.regime in list(MarketRegimeState)
-    assert 0.0 <= result.confidence <= 100.0
-    assert len(result.candidates) == 10  # every non-UNCERTAIN regime is evaluated
+    assert 0.0 <= result.overall_confidence <= 100.0
+    assert result.confidence_level in list(ConfidenceLevel)
+    assert result.technical is not None
+    assert result.smc is not None
+    assert result.market_regime is not None
+    assert result.missing_data == []
+    assert result.summary != ""
 
 
-def test_analyze_does_not_recompute_upstream_engines_per_analyzer(
-    session: Session, asset: Asset
-) -> None:
-    """Refinement: TA/SMC are each called exactly once per analyze()."""
+def test_technical_and_smc_are_each_computed_exactly_once(session: Session, asset: Asset) -> None:
+    """Regression for ADR-049: the Confidence Engine must not cause
+    Market Regime to recompute TA/SMC a second time."""
     _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
 
     price_candle_repository = PriceCandleRepository(session)
@@ -108,6 +119,7 @@ def test_analyze_does_not_recompute_upstream_engines_per_analyzer(
     smc_engine = SMCEngine(
         price_candle_repository, SMCEventRepository(session), SMCProcessingStateRepository(session)
     )
+    market_regime_engine = MarketRegimeEngine(price_candle_repository, ta_engine, smc_engine)
 
     ta_calls = 0
     smc_calls = 0
@@ -127,14 +139,14 @@ def test_analyze_does_not_recompute_upstream_engines_per_analyzer(
     ta_engine.analyze = counted_ta_analyze  # type: ignore[method-assign]
     smc_engine.analyze = counted_smc_analyze  # type: ignore[method-assign]
 
-    engine = MarketRegimeEngine(price_candle_repository, ta_engine, smc_engine)
+    engine = AnalysisConfidenceEngine(ta_engine, smc_engine, market_regime_engine)
     engine.analyze(asset, Timeframe.H1)
 
     assert ta_calls == 1
     assert smc_calls == 1
 
 
-def test_multi_timeframe_combines_available_timeframes(session: Session, asset: Asset) -> None:
+def test_multi_timeframe_returns_all_five_timeframes(session: Session, asset: Asset) -> None:
     for timeframe in (Timeframe.W1, Timeframe.D1, Timeframe.H4, Timeframe.H1, Timeframe.M15):
         _seed_trending_candles(session, asset, timeframe, 300, drift=0.3)
     engine = _make_engine(session)
@@ -142,57 +154,13 @@ def test_multi_timeframe_combines_available_timeframes(session: Session, asset: 
     result = engine.analyze_multi_timeframe(asset)
 
     assert len(result.timeframes) == 5
+    assert result.verdict in list(ConfidenceMultiTimeframeVerdict)
 
 
-def test_multi_timeframe_handles_partial_data(session: Session, asset: Asset) -> None:
-    _seed_trending_candles(session, asset, Timeframe.D1, 300, drift=0.3)
+def test_multi_timeframe_with_no_data_is_mixed(session: Session, asset: Asset) -> None:
     engine = _make_engine(session)
 
     result = engine.analyze_multi_timeframe(asset)
 
-    assert len(result.timeframes) == 1
-
-
-def test_analyze_accepts_precomputed_technical_analysis_and_smc(
-    session: Session, asset: Asset
-) -> None:
-    """Regression for ADR-049: passing pre-computed TA/SMC skips the
-    engine's own internal calls to those engines - added for the
-    Confidence Engine (Phase 4D), which computes TA/SMC once itself."""
-    _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
-
-    price_candle_repository = PriceCandleRepository(session)
-    ta_engine = TechnicalAnalysisEngine(price_candle_repository)
-    smc_engine = SMCEngine(
-        price_candle_repository, SMCEventRepository(session), SMCProcessingStateRepository(session)
-    )
-    engine = MarketRegimeEngine(price_candle_repository, ta_engine, smc_engine)
-
-    precomputed_ta = ta_engine.analyze(asset, Timeframe.H1)
-    precomputed_smc = smc_engine.analyze(asset, Timeframe.H1)
-
-    ta_calls = 0
-    smc_calls = 0
-    original_ta_analyze = ta_engine.analyze
-    original_smc_analyze = smc_engine.analyze
-
-    def counted_ta_analyze(*args: object, **kwargs: object):
-        nonlocal ta_calls
-        ta_calls += 1
-        return original_ta_analyze(*args, **kwargs)  # type: ignore[arg-type]
-
-    def counted_smc_analyze(*args: object, **kwargs: object):
-        nonlocal smc_calls
-        smc_calls += 1
-        return original_smc_analyze(*args, **kwargs)  # type: ignore[arg-type]
-
-    ta_engine.analyze = counted_ta_analyze  # type: ignore[method-assign]
-    smc_engine.analyze = counted_smc_analyze  # type: ignore[method-assign]
-
-    result = engine.analyze(
-        asset, Timeframe.H1, technical_analysis=precomputed_ta, smc=precomputed_smc
-    )
-
-    assert ta_calls == 0
-    assert smc_calls == 0
-    assert result.regime is not None
+    assert len(result.timeframes) == 5
+    assert result.verdict == ConfidenceMultiTimeframeVerdict.MIXED

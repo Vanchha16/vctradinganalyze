@@ -461,6 +461,50 @@ Response
 
 ---
 
+# Confidence
+
+GET /analysis/confidence/{symbol}?timeframe=H1
+
+Public (no authentication). `{symbol}` is case-insensitive. Evaluates the quality/completeness/consistency of Technical Analysis's, SMC's, and Market Regime's evidence - no BUY/SELL recommendation, no trade-outcome prediction (docs/15, docs/45, ADR-031, ADR-043, ADR-047).
+
+Response
+
+{
+  "symbol", "timeframe",
+  "overall_confidence", "confidence_level",
+  "summary",
+  "technical": { ...TechnicalAnalysisResponse or null... },
+  "smc": { ...SMCAnalysisResponse or null... },
+  "market_regime": { ...MarketRegimeResponse or null... },
+  "alignment": { "technical_direction", "smc_direction", "regime_direction", "agreement_ratio", "agreement_score" },
+  "conflicts": [ { "description", "severity", "engines_involved" } ],
+  "conflict_severity",
+  "missing_data": [],
+  "warnings": [],
+  "breakdown": { "technical_alignment", "smc_alignment", "regime_confirmation", "cross_engine_agreement", "data_completeness", "freshness", "conflict_penalty", "total" },
+  "calculated_at"
+}
+
+`confidence_level` is one of `very_low`/`low`/`moderate`/`high`/`very_high` (docs/15 §4). `summary` is a deterministic, template-built 2-3 sentence string - no AI-generated language. Unlike Technical Analysis/SMC/Market Regime, this endpoint does **not** 404 when an upstream engine has no candle data for the timeframe - it degrades gracefully, returning 200 with reduced confidence and the affected engine's field set to `null` plus a `missing_data` entry (docs/15 §15). 404 only if the asset symbol itself is unknown.
+
+---
+
+GET /analysis/confidence/{symbol}/multi-timeframe
+
+Public. Combines Weekly/Daily/H4/H1/M15 confidence results into one verdict (same timeframe set as Market Regime/SMC, docs/45 §12).
+
+Response
+
+{
+  "symbol",
+  "verdict",
+  "timeframes": [ { "timeframe", "overall_confidence", "confidence_level" } ]
+}
+
+`verdict` is `aligned` only when every timeframe's `confidence_level` is `high`/`very_high`; otherwise `mixed`. Always returns all 5 timeframes, even ones with no candle data (graceful degradation applies per-timeframe too).
+
+---
+
 # News
 
 GET /news

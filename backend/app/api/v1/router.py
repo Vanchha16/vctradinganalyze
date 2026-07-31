@@ -1,6 +1,14 @@
 from fastapi import APIRouter
 
-from app.api.v1.routes import auth, health, market_data, market_regime, smc, technical_analysis
+from app.api.v1.routes import (
+    analysis_confidence,
+    auth,
+    health,
+    market_data,
+    market_regime,
+    smc,
+    technical_analysis,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
@@ -9,3 +17,4 @@ api_router.include_router(market_data.router)
 api_router.include_router(technical_analysis.router)
 api_router.include_router(smc.router)
 api_router.include_router(market_regime.router)
+api_router.include_router(analysis_confidence.router)

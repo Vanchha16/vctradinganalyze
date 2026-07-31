@@ -128,7 +128,7 @@ Sub-Phases
 
 4C Market Regime Engine (eleven deterministic analyzers, RegimeConfidenceEngine, stateless MarketRegimeEngine reusing Technical Analysis/SMC evidence; docs/44_MARKET_REGIME_ARCHITECTURE.md, ADR-038 through ADR-044) - Completed
 
-4D Confidence Engine - Not started
+4D Confidence Engine (`AnalysisConfidenceEngine` evaluating quality/completeness/consistency of Technical Analysis's, SMC's, and Market Regime's evidence - no BUY/SELL recommendation, no trade-outcome prediction; docs/45_CONFIDENCE_ARCHITECTURE.md, ADR-045 through ADR-049) - Completed
 
 ---
 

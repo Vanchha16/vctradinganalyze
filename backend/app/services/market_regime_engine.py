@@ -40,7 +40,9 @@ from app.services.market_regime.types import (
     MarketRegimeVerdict,
     TimeframeRegimeSummary,
 )
+from app.services.smc.types import SMCAnalysisResult
 from app.services.smc_engine import SMCEngine
+from app.services.technical_analysis.types import TechnicalAnalysisResult
 from app.services.technical_analysis_engine import TechnicalAnalysisEngine
 
 _DEFAULT_LOOKBACK = 500
@@ -67,7 +69,19 @@ class MarketRegimeEngine:
         self._smc_engine = smc_engine
         self._lookback = lookback
 
-    def analyze(self, asset: Asset, timeframe: Timeframe) -> MarketRegimeResult:
+    def analyze(
+        self,
+        asset: Asset,
+        timeframe: Timeframe,
+        *,
+        technical_analysis: TechnicalAnalysisResult | None = None,
+        smc: SMCAnalysisResult | None = None,
+    ) -> MarketRegimeResult:
+        """`technical_analysis`/`smc` may be passed in already-computed
+        (ADR-049) so a caller that also needs them directly - the
+        Confidence Engine - doesn't force this engine to recompute them.
+        Defaults to `None`, preserving the original always-recompute
+        behavior for every existing caller."""
         candles = self._price_candle_repository.list_recent(
             asset.id, timeframe, limit=self._lookback
         )
@@ -76,9 +90,11 @@ class MarketRegimeEngine:
                 f"No {timeframe.value} candles available for {asset.symbol}"
             )
 
-        # Cache: each upstream engine is called exactly once for this execution.
-        technical_analysis = self._technical_analysis_engine.analyze(asset, timeframe)
-        smc = self._smc_engine.analyze(asset, timeframe)
+        # Cache: each upstream engine is called at most once for this execution.
+        technical_analysis = technical_analysis or self._technical_analysis_engine.analyze(
+            asset, timeframe
+        )
+        smc = smc or self._smc_engine.analyze(asset, timeframe)
 
         current_price = candles[-1].close
 

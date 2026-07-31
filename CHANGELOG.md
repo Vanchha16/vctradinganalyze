@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Added - Phase 4D: Confidence Engine
+
+`docs/45_CONFIDENCE_ARCHITECTURE.md` - new architecture document defining the data flow, modular scoring algorithm, alignment/conflict detection, freshness/completeness evaluation, and multi-timeframe strategy
+
+`docs/15_CONFIDENCE_ENGINE.md` rewritten (v1.0 to v2.0) - v1.0 was a pre-Phase-4 vision document assuming six inputs (three of which don't exist) and BUY/SELL-oriented examples that contradicted its own stated evidence-only objective; v2.0 restricts scope to Technical Analysis/SMC/Market Regime, replaces the unusable formula/schema with the one actually implemented, and states News/Economic/Risk as explicit future inputs
+
+`app/services/analysis_confidence/` - nine deterministic modules (`direction_normalizer`, `technical_confidence_analyzer`, `smc_confidence_analyzer`, `regime_confidence_analyzer`, `alignment_analyzer`, `conflict_analyzer`, `data_quality_analyzer`, `freshness_analyzer`, `summary_builder`) plus `confidence_aggregator` - the three "reframing" analyzers translate each upstream engine's already-computed score into confidence terms without recomputing any evidence; `confidence_aggregator.combine()` accepts a generic named-component list so Phase 5/6 inputs can be added without restructuring the aggregation pipeline
+
+`AnalysisConfidenceEngine` (`app/services/analysis_confidence_engine.py`) - stateless (ADR-045, no new table), named to avoid confusion with `RegimeConfidenceEngine` (ADR-048); calls `TechnicalAnalysisEngine`/`SMCEngine` exactly once per execution and passes both into `MarketRegimeEngine.analyze()` (extended with optional pre-computed parameters, ADR-049) rather than letting it recompute them; degrades gracefully (never a hard failure) when any upstream engine has no candle data, returning reduced confidence with an explicit `missing_data` entry instead
+
+`MarketRegimeEngine.analyze()` extended (additive only, `app/services/market_regime_engine.py`) with optional keyword-only `technical_analysis`/`smc` parameters, both defaulting to `None` - every existing caller unaffected (ADR-049)
+
+**ADR-045** through **ADR-049**: Confidence Engine is stateless; the modular weighted-component scoring algorithm (Technical Analysis 25 / SMC 25 / Market Regime 20 / Cross-Engine Agreement 20 / Data Completeness 5 / Freshness 5 / Conflict Penalty floor -15); Phase 4D scope limited to Technical Analysis/SMC/Market Regime, News/Economic/Risk explicitly deferred to Phase 5/6; `AnalysisConfidenceEngine` naming distinguishes it from `RegimeConfidenceEngine`; `MarketRegimeEngine.analyze()`'s additive optional pre-computed-inputs extension
+
+New public (no auth) endpoints: `GET /analysis/confidence/{symbol}?timeframe=` and `GET /analysis/confidence/{symbol}/multi-timeframe` - unlike Technical Analysis/SMC/Market Regime, does not 404 on missing candle data (graceful degradation instead), only on an unknown asset symbol
+
+Response includes a deterministic, template-built 2-3 sentence `summary` (no AI-generated language) and an overall `conflict_severity` (`NONE`/`LOW`/`MEDIUM`/`HIGH`) alongside the full explainable `breakdown`
+
+docs/04 updated: new "Confidence" section documenting both endpoints' concrete contracts, including the graceful-degradation behavior that distinguishes this endpoint from every prior `/analysis/*` route
+
+Deliberately excluded (per Phase 4D approval): any BUY/SELL/WAIT recommendation or trade-outcome prediction; News Sentiment/Economic Calendar/Risk Management inputs (Phase 5/6, not built); historical calibration (needs a trade-outcomes dataset that doesn't exist); persistence of confidence results
+
+Tests: `test_analysis_confidence_direction_normalizer.py`, `test_analysis_confidence_alignment_analyzer.py`, `test_analysis_confidence_conflict_analyzer.py`, `test_analysis_confidence_data_quality_analyzer.py`, `test_analysis_confidence_freshness_analyzer.py` (including the SQLite naive-datetime gotcha), `test_analysis_confidence_aggregator.py`, `test_analysis_confidence_summary_builder.py`, `test_analysis_confidence_engine.py` (integration, including the TA/SMC-called-exactly-once regression and graceful-degradation scenarios), `test_analysis_confidence_api.py`; `test_market_regime_engine.py` extended with a regression test for the new pre-computed-inputs parameters
+
+### Status
+
+Phase 4D (Confidence Engine) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 4C: Market Regime Engine
 
 `docs/44_MARKET_REGIME_ARCHITECTURE.md` - new architecture document defining the reuse map, classification precedence rule, and classification-stability safeguard

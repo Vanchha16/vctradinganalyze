@@ -1829,6 +1829,261 @@ Revisit if real-world usage shows request-to-request regime flicker; the natural
 
 ---
 
+# ADR-045
+
+Title
+
+Confidence Engine Is Stateless (No Persisted Snapshot Table)
+
+Status
+
+Accepted
+
+Context
+
+Phase 4D's Confidence Engine (docs/15, docs/45) synthesizes a confidence result from Technical Analysis's, SMC's, and Market Regime's already-computed evidence. As with Technical Analysis (ADR-027) and Market Regime (ADR-038), a choice existed between persisting each computed confidence result or recomputing fresh on every request.
+
+Decision
+
+`AnalysisConfidenceEngine.analyze()`/`analyze_multi_timeframe()` are fully stateless - no new table, no migration. Every call recomputes from fresh Technical Analysis, SMC, and Market Regime results.
+
+Reason
+
+There is no "genuinely evolving single entity" here to justify persistence, the criterion this project has used consistently since SMC's persistence decision (ADR-032, BACKLOG.md §13) - a confidence result is a derived snapshot of three other engines' current state, not an entity with its own lifecycle. Persisting it would create a second source of truth with no clear rule for which is authoritative, the same reasoning ADR-027 already established for Technical Analysis.
+
+Alternatives Considered
+
+Option A: Persist every computed confidence result in a new `confidence_results` table - rejected, same reasoning as ADR-027: no clear benefit at this phase, and nothing downstream needs historical confidence snapshots yet.
+
+Option B (chosen): Fully stateless, computed fresh per request.
+
+Trade-offs
+
+Pros
+
+No schema/migration needed.
+
+Guaranteed freshness - consistent with Technical Analysis's and Market Regime's statelessness.
+
+Single source of truth (the three upstream engines' current output), not two.
+
+Cons
+
+Every request recomputes rather than reading a cached row - acceptable given the upstream engines are already fast enough for Technical Analysis's and Market Regime's own stateless designs.
+
+No historical audit trail of past confidence results.
+
+Future Review
+
+Revisit only if a future phase (e.g. a Signal Engine wanting historical confidence trends) needs persisted confidence history - would need its own ADR, not a quiet addition.
+
+---
+
+# ADR-046
+
+Title
+
+Confidence Scoring Algorithm - Modular Weighted Components
+
+Status
+
+Accepted
+
+Context
+
+docs/15 v1.0's original scoring design assumed six weighted inputs (Technical Analysis, SMC, Economic Calendar, News Sentiment, Risk Management, Market Regime), three of which don't exist yet (Phase 5/6). A concrete, implementable formula was needed for the three engines that do exist, without hard-coding an assumption that no more will ever be added.
+
+Decision
+
+Seven weighted components, implemented in `app/services/analysis_confidence/confidence_aggregator.py`:
+
+- Technical Analysis alignment: 25 (`technical_score / 100 * 25`)
+- SMC alignment: 25 (`smc_score / 100 * 25`)
+- Market Regime confirmation: 20 (`confidence / 100 * 20`)
+- Cross-engine agreement: 20 (`agreement_ratio * 20`)
+- Data completeness: 5
+- Freshness: 5
+- Conflict penalty: floored at -15
+
+`combine()` accepts a list of named `WeightedComponent(name, score)` values rather than positional arguments, so Phase 5/6 (News Sentiment, Economic Calendar, Risk Management) can add new named components by extending the component list and `ConfidenceBreakdown`'s fields, without restructuring how components are summed/floored/capped.
+
+Market Regime is weighted at 20, not equal to Technical Analysis's/SMC's 25, because `MarketRegimeEngine.analyze()` already consumes Technical Analysis's and SMC's evidence internally - equal weighting would double-count the same underlying evidence through two paths. For the same reason, volatility is not scored as an independent confidence factor here; it flows in only via Market Regime's own `confidence_breakdown.volatility_clarity` (folded into `regime_confirmation`), preventing a second, independent volatility penalty from double-counting the same market condition.
+
+Reason
+
+docs/15 v1.0's weighting table could not be implemented as-is (half its inputs don't exist). A complete formula for the three real inputs was required, designed to be extensible rather than requiring a rewrite when Phase 5/6's inputs arrive.
+
+Alternatives Considered
+
+Option A: Hardcode exactly three positional weight arguments (technical, smc, regime) - rejected, would require restructuring `combine()`'s signature (and every call site) the moment a fourth input is added.
+
+Option B (chosen): Generic named-component list, extensible by construction.
+
+Trade-offs
+
+Pros
+
+Phase 5/6 additions are additive (new components, new `ConfidenceBreakdown` fields), not a rewrite of the aggregation function.
+
+Explainable per-component breakdown, matching the pattern established by ADR-028/036/042.
+
+Cons
+
+The exact point allocations (25/25/20/20/5/5/-15) are a considered but ultimately somewhat arbitrary judgment call, like every prior scoring ADR's weights - not derived from a backtest or statistical model.
+
+Future Review
+
+Revisit the weight allocation once real usage data exists to inform tuning, and when Phase 5/6 adds News Sentiment/Economic Calendar/Risk Management as new weighted components.
+
+---
+
+# ADR-047
+
+Title
+
+Confidence Engine Scope Limited to Technical Analysis, SMC, and Market Regime for Phase 4D
+
+Status
+
+Accepted
+
+Context
+
+docs/15 v1.0 listed Technical Analysis, SMC, News Sentiment, Economic Calendar, Risk Management, and Market Regime as inputs, and included BUY/SELL-oriented "Agreement Score" examples and penalty rules referencing data that doesn't exist (spread, upcoming economic events). This directly conflicted with the explicit Core Principle for this phase: the Confidence Engine evaluates evidence quality, it does not predict trade outcomes or issue recommendations.
+
+Decision
+
+Phase 4D's Confidence Engine consumes only Technical Analysis, SMC, and Market Regime - the three engines that exist. News Sentiment, Economic Calendar, and Risk Management are documented as future inputs (docs/15 §3), not implemented, not weighted, and not referenced as available. Every BUY/SELL-oriented example and formula in docs/15 v1.0 is removed and replaced with evidence-quality language consistent with ADR-031/ADR-043.
+
+Reason
+
+Implementing docs/15 v1.0 as written would have required either inventing data sources that don't exist (spread, economic events) or silently reintroducing BUY/SELL-style reasoning this project has deliberately kept out of every deterministic engine so far (ADR-031, ADR-043). Restricting scope to what's actually buildable, and stating the future inputs explicitly rather than silently, keeps the boundary clear for whoever builds Phase 5/6.
+
+Alternatives Considered
+
+Option A: Implement placeholder/stub scoring for News/Economic/Risk (e.g. always-neutral contributions) so the six-input structure could be "completed" now - rejected, adds complexity for inputs that don't exist and risks the stubs being mistaken for real evidence.
+
+Option B (chosen): Three real inputs only; explicitly documented future inputs.
+
+Trade-offs
+
+Pros
+
+Every input has real, implemented evidence behind it - no placeholder/stub scoring to be mistaken for real signal.
+
+Matches this project's "never invent architecture" principle - Phase 5/6's actual News/Economic/Risk engines will define their own real evidence shape when built.
+
+Cons
+
+The weighting table will need revision when Phase 5/6 inputs arrive (mitigated by ADR-046's modular aggregation design).
+
+Future Review
+
+Revisit when News Sentiment, Economic Calendar, and/or Risk Management engines are built (Phase 5/6) - add their evidence as new weighted components per ADR-046, with a new ADR for the specific weight rebalancing.
+
+---
+
+# ADR-048
+
+Title
+
+`AnalysisConfidenceEngine` Naming Distinguishes It From `RegimeConfidenceEngine`
+
+Status
+
+Accepted
+
+Context
+
+`app/services/market_regime/confidence_engine.py`'s `RegimeConfidenceEngine` (Phase 4C) already exists and computes regime-classification confidence only (ADR-042). BACKLOG.md §14 explicitly flagged this naming collision risk when Phase 4C was approved: a bare `ConfidenceEngine` class for Phase 4D would be easily confused with it in imports, log messages, and conversation.
+
+Decision
+
+Phase 4D's top-level orchestrator is named `AnalysisConfidenceEngine` (`app/services/analysis_confidence_engine.py`), not `ConfidenceEngine`. The HTTP-facing route path (`/analysis/confidence/{symbol}`) is unaffected - user-facing naming and internal class naming aren't required to match 1:1 elsewhere in this codebase either (e.g. `MarketRegimeEngine` backs `/analysis/market-regime/{symbol}`, not `/analysis/market-regime-engine/{symbol}`).
+
+Reason
+
+`RegimeConfidenceEngine` answers "how reliable is this specific regime classification?" `AnalysisConfidenceEngine` answers "how trustworthy is the overall analysis across all three engines?" These are different questions with different callers, and a naming collision between them would be a recurring source of confusion for every future contributor and for AI-assisted development sessions re-deriving context.
+
+Alternatives Considered
+
+Option A: Rename `RegimeConfidenceEngine` instead, freeing up `ConfidenceEngine` for Phase 4D - rejected, would be a gratuitous breaking rename of already-shipped Phase 4C code for a naming preference, not a functional need.
+
+Option B (chosen): New engine gets the disambiguating name; existing Phase 4C code is untouched.
+
+Trade-offs
+
+Pros
+
+Zero risk of import/log confusion between the two engines.
+
+No changes to already-shipped Phase 4C code.
+
+Cons
+
+Slightly longer class name than the original docs/15 sketch's bare `ConfidenceEngine`.
+
+Future Review
+
+None expected - revisit only if a future rename of either engine is independently justified.
+
+---
+
+# ADR-049
+
+Title
+
+`MarketRegimeEngine.analyze()` Accepts Optional Pre-Computed Technical Analysis/SMC Results
+
+Status
+
+Accepted
+
+Context
+
+`MarketRegimeEngine.analyze()` (Phase 4C) always calls `TechnicalAnalysisEngine.analyze()` and `SMCEngine.analyze()` internally. Phase 4D's `AnalysisConfidenceEngine` also needs both results directly (to reframe their scores into confidence terms) and additionally calls `MarketRegimeEngine.analyze()` for the third input - a naive implementation would compute Technical Analysis and SMC twice per confidence request.
+
+Decision
+
+`MarketRegimeEngine.analyze()` gains two new keyword-only parameters, both defaulting to `None`:
+
+```python
+def analyze(self, asset, timeframe, *, technical_analysis=None, smc=None) -> MarketRegimeResult:
+    technical_analysis = technical_analysis or self._technical_analysis_engine.analyze(asset, timeframe)
+    smc = smc or self._smc_engine.analyze(asset, timeframe)
+    ...
+```
+
+`AnalysisConfidenceEngine` computes Technical Analysis and SMC once each and passes them in; every existing caller (the `/analysis/market-regime/*` routes, `analyze_multi_timeframe`) is unaffected since both parameters default to `None`, preserving the original always-recompute behavior exactly.
+
+Reason
+
+This is a small, additive, backward-compatible extension to already-shipped Phase 4C code, chosen over the alternative of accepting duplicate computation. Market Regime's own docstring already establishes the precedent of caching upstream results within one execution ("Both upstream engines are called exactly once per (asset, timeframe) within a single `analyze()` execution") - this ADR extends that same principle one level up, to cross-engine calls from Confidence.
+
+Alternatives Considered
+
+Option A: Accept the duplicate computation (Confidence Engine calls Technical Analysis/SMC/Market Regime independently, Market Regime recomputes Technical Analysis/SMC itself) - rejected, wastes work on every confidence request for no benefit, and both engines are non-trivial (Technical Analysis runs nine analyzers, SMC persists to `smc_events`).
+
+Option B (chosen): Extend `MarketRegimeEngine.analyze()` with optional pre-computed parameters.
+
+Trade-offs
+
+Pros
+
+Technical Analysis and SMC are each computed exactly once per confidence request (regression-tested in both `test_market_regime_engine.py` and `test_analysis_confidence_engine.py`).
+
+Zero behavior change for any existing caller.
+
+Cons
+
+`MarketRegimeEngine.analyze()`'s signature is slightly more complex (two optional keyword-only parameters) for a need specific to one caller (Confidence Engine).
+
+Future Review
+
+None expected - revisit only if a future third caller needs a different pre-computation pattern.
+
+---
+
 # Review Policy
 
 Review ADRs:

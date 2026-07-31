@@ -1,3 +1,6 @@
+from datetime import datetime
+
+
 class MarketDataProviderError(Exception):
     """Base class for provider-level failures. Internal to the market-data
     pipeline - not an `AppException` subclass, since Phase 3A/3.5 expose no
@@ -36,3 +39,24 @@ class ProviderConfigurationError(MarketDataProviderError):
 
 class AllProvidersFailedError(MarketDataProviderError):
     """Every configured provider failed for a given collection request."""
+
+
+class DailyQuotaExceededError(TransientProviderError):
+    """A provider's configured daily request budget is exhausted (ADR-025).
+
+    Raised by `RateLimitedProvider`, not by individual providers - it is
+    provider-agnostic, unlike a provider-specific quota error (e.g. one
+    reflecting Twelve Data's own 429 response). Carries the quota metadata
+    so it can be logged/observed (docs/38 §7 Monitoring) rather than just
+    surfacing as an opaque failure.
+    """
+
+    def __init__(self, *, provider: str, used: float, limit: float, reset_at: datetime) -> None:
+        self.provider = provider
+        self.used = used
+        self.limit = limit
+        self.reset_at = reset_at
+        super().__init__(
+            f"{provider}: daily quota exhausted ({used:.0f}/{limit:.0f} requests, "
+            f"resets at {reset_at.isoformat()})"
+        )

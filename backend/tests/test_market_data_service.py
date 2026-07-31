@@ -18,7 +18,10 @@ from app.services.market_data.providers.mock import MockMarketDataProvider
 from app.services.market_data_service import MarketDataService
 
 _TABLES = [Asset.__table__, PriceCandle.__table__, IndicatorResult.__table__]
-_ALL_TIMEFRAMES_CAPABILITIES = ProviderCapabilities(supported_timeframes=frozenset(Timeframe))
+_ALL_TIMEFRAMES_CAPABILITIES = ProviderCapabilities(
+    supported_timeframes=frozenset(Timeframe),
+    supported_market_types=frozenset(MarketType),
+)
 
 
 @pytest.fixture
@@ -255,7 +258,10 @@ def test_collect_skips_provider_that_declares_unsupported_timeframe(
             return True
 
         def capabilities(self) -> ProviderCapabilities:
-            return ProviderCapabilities(supported_timeframes=frozenset({Timeframe.M1}))
+            return ProviderCapabilities(
+                supported_timeframes=frozenset({Timeframe.M1}),
+                supported_market_types=frozenset(MarketType),
+            )
 
     unsupported = _M1OnlyProvider()
     working = MockMarketDataProvider()

@@ -27,7 +27,9 @@ Do not implement rate limiting inside the provider. Wrap it in `RateLimitedProvi
 
 # 3. Symbol Normalization
 
-The canonical symbol is `Asset.symbol` (e.g. `EURUSD`, `XAUUSD`). Translate to/from the provider's own format entirely inside the provider module - e.g. a private `_to_provider_symbol(symbol: str) -> str` function. Do not add a new database table for this unless the mapping genuinely can't be derived by a simple rule (see docs/38 §3 - still true as of Phase 3.5; revisit only if a provider actually requires it).
+The canonical symbol is `Asset.symbol` (e.g. `EURUSD`, `XAUUSD`). Translate to/from the provider's own format entirely inside the provider module - e.g. a private `to_provider_symbol(symbol: str) -> str | None` function. Do not add a new database table for this unless the mapping genuinely can't be derived by a simple rule (see docs/38 §3 - still true as of Phase 3.5; revisit only if a provider actually requires it).
+
+**Important (learned building the Twelve Data provider, Phase 3B):** `MarketDataProvider.get_candles` only receives a bare canonical symbol string - no `Asset`, no `market_type`. This means the mapping function cannot rely on knowing the asset class when deciding how to translate a symbol; a purely mechanical rule based on symbol *shape alone* (e.g. "split any 6-character symbol in half") is unsafe, because an unrelated symbol from a different asset class can accidentally match the same shape and get silently mis-translated into a plausible-looking but wrong provider symbol (see docs/41 §3's note on `NAS100` almost being split like a forex pair). Guard the mechanical rule with an allowlist of values it's actually meant to match (e.g. known currency codes), not just a length/format check - and see docs/41_SYMBOL_NORMALIZATION.md for the concrete pattern to follow.
 
 ---
 

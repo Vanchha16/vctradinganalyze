@@ -2,11 +2,14 @@ import hashlib
 import random
 from datetime import datetime
 
-from app.models.enums import Timeframe
+from app.models.enums import MarketType, Timeframe
 from app.services.market_data.providers.base import ProviderCapabilities, RawCandle
 from app.services.market_data.timeframe_utils import TIMEFRAME_DURATIONS
 
-_CAPABILITIES = ProviderCapabilities(supported_timeframes=frozenset(Timeframe))
+_CAPABILITIES = ProviderCapabilities(
+    supported_timeframes=frozenset(Timeframe),
+    supported_market_types=frozenset(MarketType),
+)
 
 _BASE_PRICES: dict[str, float] = {
     "XAUUSD": 2400.0,

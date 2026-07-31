@@ -100,7 +100,7 @@ Sub-Phases
 
 3.5 Market Data Integration & Quality Gate (provider rate limiting, extensible capability declarations, provider-specific exception hierarchy, timestamp validation, latency logging, health-check integration, PostgreSQL CI verification, provider contract-test convention; docs/40_PROVIDER_INTEGRATION_GUIDE.md) - Completed
 
-3B Real Provider Integration (Twelve Data) - Not started
+3B Real Provider Integration (TwelveDataProvider, docs/41_SYMBOL_NORMALIZATION.md, daily quota enforcement per ADR-025) - Completed
 
 ---
 

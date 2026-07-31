@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added - Phase 3B: Twelve Data Provider
+
+`docs/41_SYMBOL_NORMALIZATION.md` - new document defining the project's canonical internal symbol representation (plain, uppercase, separator-free `Asset.symbol`) first, then the Twelve Data-specific mapping: a mechanical FOREX/METAL/CRYPTO rule (guarded by a known-currency-code allowlist, not a bare length check), an explicit INDEX override table (left empty - no entries could be confirmed against Twelve Data's own symbol catalog from public documentation alone), and the confirmed timeframe-to-`interval` table
+
+`TwelveDataProvider` (`app/services/market_data/providers/twelve_data.py`) - the first real `MarketDataProvider` implementation, covering FOREX/METAL/CRYPTO (INDEX deliberately excluded from `capabilities()` until docs/41's override table has verified entries); classifies Twelve Data's error responses into `TwelveDataAuthenticationError`/`TwelveDataQuotaExceededError`/`TwelveDataInvalidSymbolError`, each subclassing the shared `PermanentProviderError`/`TransientProviderError` categories
+
+`TwelveDataHttpClient` (`app/services/market_data/providers/twelve_data_http.py`) - isolates raw `httpx` transport concerns (base URL, auth header, timeout, network-level error handling) from `TwelveDataProvider`'s response-classification logic; accepts an injectable `transport` so tests never make real network calls. Recorded as **ADR-026** ("Isolate Raw HTTP Transport Behind a Dedicated Client Per Provider") - the pattern any future HTTP-calling provider should follow
+
+`DailyQuotaExceededError` added to the provider exception hierarchy; `RateLimitedProvider` gained an optional `requests_per_day` parameter (ADR-025) - Twelve Data's free tier is capped at both 8 requests/minute *and* 800/day, and the existing per-minute token bucket alone couldn't prevent exceeding the daily cap. Raises (rather than sleeping for hours) once the UTC-calendar-day budget is exhausted, carrying `used`/`limit`/`reset_at` for observability
+
+`ProviderCapabilities.supported_market_types` is now a required field, not an optional field defaulting to `None`-meaning-"supports everything" - every provider must declare its market types explicitly (`MockMarketDataProvider` updated accordingly)
+
+New settings: `market_data_rate_limits_per_day`, `market_data_default_rate_limit_per_day`, `twelve_data_api_key`, `twelve_data_base_url`, `twelve_data_timeout_seconds`; `TWELVE_DATA_API_KEY=` added to `.env.example`. `twelve_data` is registered in the provider factory but **not** in the default `market_data_providers` list - it only activates when explicitly configured with a real API key
+
+`httpx` promoted from a dev-only to a declared runtime dependency (`pyproject.toml`) - it was already installed transitively via FastAPI's test client, but a real HTTP client is now needed in production code, not just tests
+
+Provider contract-test convention exercised again: `test_twelve_data_provider.py::test_twelve_data_provider_satisfies_provider_contract` runs the same `assert_provider_contract` helper (Phase 3.5) against a mocked-transport `TwelveDataProvider`, alongside dedicated error-classification and symbol-mapping tests - no real Twelve Data API calls are made anywhere in the test suite (docs/40 §10)
+
+A real bug was caught during test-writing, not just implementation: a naive "split any 6-character symbol in half" mechanical rule would have mis-translated `NAS100` into `NAS/100` - fixed with a known-currency-code allowlist before it ever reached production code; documented in docs/40 §3 and docs/41 §3 so it isn't rediscovered
+
+Deliberately still out of scope: enabling `twelve_data` by default, INDEX market-type support (blocked on verifying docs/41's override table against Twelve Data's real symbol catalog), a second real fallback provider, and any Phase 4 work
+
+### Status
+
+Phase 3B (Twelve Data Provider) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 3.5: Market Data Integration & Quality Gate
 
 `docs/40_PROVIDER_INTEGRATION_GUIDE.md` - new canonical checklist for integrating any market-data provider: interface requirements, symbol/timeframe mapping, error classification, capability declaration, rate-limit configuration, secrets convention, health-check integration, and testing requirements

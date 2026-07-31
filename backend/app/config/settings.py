@@ -24,7 +24,13 @@ class Settings(BaseSettings):
     market_data_retry_max_attempts: int = 3
     market_data_retry_backoff_seconds: float = 1.0
     market_data_default_rate_limit_per_minute: float = 60.0
-    market_data_rate_limits_per_minute: dict[str, float] = {"mock": 6000.0}
+    market_data_rate_limits_per_minute: dict[str, float] = {"mock": 6000.0, "twelve_data": 8.0}
+    market_data_default_rate_limit_per_day: float | None = None
+    market_data_rate_limits_per_day: dict[str, float] = {"twelve_data": 800.0}
+
+    twelve_data_api_key: str = ""
+    twelve_data_base_url: str = "https://api.twelvedata.com"
+    twelve_data_timeout_seconds: float = 10.0
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

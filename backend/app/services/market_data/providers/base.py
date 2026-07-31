@@ -29,25 +29,26 @@ class ProviderCapabilities:
     """What a provider can be asked to do (docs/40).
 
     A structured value object rather than a single `supports(...)` method,
-    so new capability dimensions (e.g. a future `max_symbols_per_request`
-    or `supported_asset_exchanges`) can be added as new fields - with
-    defaults, so existing providers keep working unchanged - instead of
-    requiring a breaking signature change every time a new dimension is
-    needed.
+    so new capability dimensions (e.g. a future `max_symbols_per_request`)
+    can be added as new fields - with defaults, so existing providers keep
+    working unchanged - instead of requiring a breaking signature change
+    every time a new dimension is needed.
+
+    `supported_market_types` is required, not optional-defaulting-to-"no
+    restriction" - every provider must say explicitly which market types
+    it covers (e.g. `frozenset(MarketType)` if it genuinely covers all of
+    them), rather than relying on `None` as an ambiguous "supports
+    everything" sentinel that's easy to set by accident.
     """
 
     supported_timeframes: frozenset[Timeframe]
-    supported_market_types: frozenset[MarketType] | None = None
-    max_lookback: timedelta | None = None
+    supported_market_types: frozenset[MarketType]
+    max_lookback: timedelta | None = None  # None = no known limit (distinct concept - see below)
 
     def supports(self, timeframe: Timeframe, *, market_type: MarketType | None = None) -> bool:
         if timeframe not in self.supported_timeframes:
             return False
-        if (
-            market_type is not None
-            and self.supported_market_types is not None
-            and market_type not in self.supported_market_types
-        ):
+        if market_type is not None and market_type not in self.supported_market_types:
             return False
         return True
 

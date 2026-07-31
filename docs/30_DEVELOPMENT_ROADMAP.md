@@ -126,7 +126,7 @@ Sub-Phases
 
 4B SMC Engine (twelve deterministic analyzers, SMCScoringEngine, persistent SMCEngine with lifecycle-managed `smc_events`; docs/43_SMC_ARCHITECTURE.md, ADR-032 through ADR-037) - Completed
 
-4C Market Regime Engine - Not started
+4C Market Regime Engine (eleven deterministic analyzers, RegimeConfidenceEngine, stateless MarketRegimeEngine reusing Technical Analysis/SMC evidence; docs/44_MARKET_REGIME_ARCHITECTURE.md, ADR-038 through ADR-044) - Completed
 
 4D Confidence Engine - Not started
 

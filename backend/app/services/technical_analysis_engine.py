@@ -95,6 +95,11 @@ class TechnicalAnalysisEngine:
             indicators={name: output.value for name, output in indicators.items()},
             warnings=[*warnings, *[c.description for c in conflicts.conflicts]],
             calculated_at=candles[-1].timestamp,
+            trend_evidence=trend,
+            momentum=momentum,
+            oscillator=oscillator,
+            volatility=volatility,
+            volume=volume,
         )
 
     def analyze_multi_timeframe(self, asset: Asset) -> MultiTimeframeResult:

@@ -2,6 +2,8 @@
 
 Version: 1.0
 
+Status: Implemented in Phase 4C. See docs/44_MARKET_REGIME_ARCHITECTURE.md for the concrete algorithms, classification precedence rule, and API contract. §16 ("Strategy Compatibility") and §17 ("AI Integration") are documentation guidance for future engines (Signal Engine/AI Orchestrator, Phase 6) - never this engine's output (ADR-043). §2's "Detect exhaustion" has no dedicated analyzer; it's folded into Pullback/Reversal evidence as a warning (docs/44 §9). §3's "Uncertain" is the fallback when no other regime's criteria are met with sufficient confidence, never a positively-detected condition (docs/44 §10).
+
 ---
 
 # 1. Objective

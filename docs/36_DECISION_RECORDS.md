@@ -1505,6 +1505,330 @@ Revisit the archive threshold once real usage patterns (or the future Signal Eng
 
 ---
 
+# ADR-038
+
+Title
+
+Market Regime Engine is Stateless
+
+Status
+
+Accepted
+
+Context
+
+Phase 4C needed a persistence decision, as SMC (ADR-032) and Technical Analysis (ADR-027) each did. docs/03 has no `market_regime`/`regime_events` table - unlike SMC's situation, matching Technical Analysis's instead.
+
+Decision
+
+`MarketRegimeEngine` persists nothing. Every call to `analyze()`/`analyze_multi_timeframe()` fetches recent candles, calls `TechnicalAnalysisEngine.analyze()` and `SMCEngine.analyze()` (each exactly once), runs the regime analyzers, and returns a plain in-memory result. No new database table exists for this phase.
+
+Reason
+
+A regime classification is a fresh synthesis of evidence two other engines have already computed and (in SMC's case) already persisted - it has no genuine per-zone lifecycle of its own, unlike an Order Block or FVG. Recomputing it is cheap precisely because the expensive detection work lives upstream.
+
+Alternatives Considered
+
+Option A: Persist regime classifications, mirroring SMC's ADR-032 - rejected, no documented table exists, and a regime classification has no lifecycle state to track (it doesn't get "mitigated" or "touched" the way a zone does).
+
+Option B (chosen): Stateless, matching ADR-027's precedent.
+
+Trade-offs
+
+Pros
+
+No new table/migration/repository for something with no genuine lifecycle.
+
+Consistent with the "no table documented -> stateless" pattern already established.
+
+Cons
+
+No persisted regime history for future backtesting without re-running the engine over historical candles.
+
+Future Review
+
+Revisit if a future phase (backtesting, Confidence Engine) needs queryable regime history rather than point-in-time recomputation.
+
+---
+
+# ADR-039
+
+Title
+
+Regime Classification Precedence Order
+
+Status
+
+Accepted
+
+Context
+
+docs/16 §3 lists eleven possible regime values but never states a rule for choosing among them when multiple conditions hold simultaneously (e.g. a strong bullish trend during high volatility near a breakout) - a genuine missing deterministic rule.
+
+Decision
+
+Per Phase 4C's approved refinement: every candidate regime's confidence is evaluated first (`RegimeClassifier.build_candidates`), independent of precedence. Candidates below `MIN_CONFIDENCE_TO_QUALIFY` (60.0, matching docs/16 §14's confidence-band boundary) are discarded. Only among the qualifying survivors is this precedence order applied: Reversal > Breakout > Distribution/Accumulation > Trending Bullish/Bearish > Pullback > Ranging > High/Low Volatility > Uncertain (fallback).
+
+Reason
+
+Evaluating confidence before applying precedence (rather than a naive "first matching condition wins" scan) reduces false positives - a weak, barely-qualifying Reversal signal should not automatically outrank a strong, clearly-qualifying Trending Bullish signal just because Reversal is earlier in the list; both must clear the confidence bar first, and only then does precedence break ties among genuine candidates.
+
+Alternatives Considered
+
+Option A: First-match-wins scan through the precedence order, no confidence-qualification step - rejected per Phase 4C's explicit refinement request, since it would let a barely-detected condition outrank robust evidence lower in the list.
+
+Option B (chosen): Confidence-qualify first, precedence second.
+
+Trade-offs
+
+Pros
+
+Reduces false positives from weak evidence in a high-precedence category.
+
+Precedence order remains simple and fully documented, not a black-box weighted vote.
+
+Cons
+
+The precedence order itself, and the 60.0 qualification threshold, are considered starting points, not derived from a formal model.
+
+Future Review
+
+Revisit the precedence order and threshold once real classification outcomes can inform tuning.
+
+---
+
+# ADR-040
+
+Title
+
+Accumulation/Distribution Deterministic Definition
+
+Status
+
+Accepted
+
+Context
+
+docs/16 §9/§10 give characteristics ("Institutional Buying/Selling Evidence," "Increasing Volume," "Sideways Movement") but no algorithm for computing an Accumulation Score/Distribution Score.
+
+Decision
+
+Accumulation score sums: range confirmation (40 pts) + increasing volume trend (30 pts, recent-half vs. baseline-half candle volume average) + "institutional buying evidence" (30 pts) - defined as an ACTIVE bullish SMC Order Block, or a **sell-side** liquidity sweep. Distribution score mirrors this with bearish Order Blocks / **buy-side** sweeps. Implemented in `app/services/market_regime/accumulation_distribution_analyzer.py`.
+
+Reason
+
+A liquidity sweep's directionality has a standard, well-known interpretation in Smart Money Concepts practice: a sell-side sweep (price wicks below an old low then reverses up) represents smart money buying from retail stop-losses - an accumulation signal - and a buy-side sweep is the mirror (distribution). Reusing SMC's already-persisted Order Block/sweep evidence avoids re-scanning candles for institutional footprints SMC has already detected.
+
+Alternatives Considered
+
+Option A: Re-scan raw candles for volume/price-action patterns independent of SMC's evidence - rejected, duplicates detection work SMC already performs and persists.
+
+Option B (chosen): Reuse SMC's Order Block/liquidity-sweep evidence with the standard ICT sweep-directionality interpretation.
+
+Trade-offs
+
+Pros
+
+No duplicated institutional-footprint detection logic.
+
+Reuses evidence practitioners already understand semantically.
+
+Cons
+
+The specific point weights (40/30/30) and the 1.1x volume-increase threshold are considered starting points, not derived from a formal model.
+
+Future Review
+
+Revisit the weights/threshold once real outcomes can inform tuning, alongside ADR-028/ADR-036.
+
+---
+
+# ADR-041
+
+Title
+
+Pullback Depth Classification (Distinct from SMC's Multi-Timeframe Pullback)
+
+Status
+
+Accepted
+
+Context
+
+docs/16 §11 requires classifying pullback depth (Healthy/Deep/Potential Reversal) but gives no measurement algorithm. SMC already has its own "Pullback" concept (docs/09 §16, ADR-036) - a **multi-timeframe** classification for when a lower timeframe disagrees with a higher timeframe's structure. These are easily conflated but answer different questions.
+
+Decision
+
+Market Regime's Pullback Depth is a **single-timeframe** retracement-depth measurement: using the most recently classified SMC swing high/low (from `MarketStructureEvidence.classifications`, not re-detected), measure how far current price has retraced against the dominant trend as a fraction of that swing's range. Fibonacci-style bands: ≤0.382 Healthy, ≤0.618 Deep, beyond that Potential Reversal. Implemented in `app/services/market_regime/pullback_reversal_analyzer.py`.
+
+Reason
+
+The two "Pullback" concepts are legitimately different (one about timeframe agreement, one about retracement magnitude within one timeframe) and both are useful - renaming either to avoid the name collision would obscure their docs/09/docs/16 origins. Explicit documentation of the distinction (here and in docs/44 §9) prevents future confusion.
+
+Alternatives Considered
+
+Option A: Reuse SMC's multi-timeframe Pullback flag directly as Market Regime's Pullback evidence - rejected, answers a different question (timeframe agreement, not retracement depth) and docs/16 §11 explicitly wants a depth classification.
+
+Option B (chosen): A new, single-timeframe retracement-depth measurement, explicitly distinguished from SMC's concept in documentation.
+
+Trade-offs
+
+Pros
+
+Answers docs/16 §11's actual question (how deep is this pullback) rather than repurposing an unrelated multi-timeframe signal.
+
+Reuses SMC's already-classified swing points rather than re-detecting them.
+
+Cons
+
+The Fibonacci-style band boundaries (0.382/0.618) are a considered but not empirically-derived convention, and docs/16 never mentions Fibonacci levels itself.
+
+Future Review
+
+Revisit the band boundaries once real outcomes can inform tuning.
+
+---
+
+# ADR-042
+
+Title
+
+Regime Confidence is Distinct from `technical_score`/`smc_score`; "Uncertain" Fallback Semantics
+
+Status
+
+Accepted
+
+Context
+
+docs/16 §14 gives a confidence-banding table (95-100 Extremely Reliable ... below 60 Uncertain) but doesn't clarify whether this is a third scoring system alongside `technical_score`/`smc_score`, or something conceptually different. Separately, docs/16 §3 lists "Uncertain" as one of eleven regimes, while §14 implies it's simply what any regime is called below 60 confidence - these readings conflict unless resolved.
+
+Decision
+
+The Market Regime Engine produces `RegimeConfidenceBreakdown` (deliberately not named "*Score*" per Phase 4C refinement) - `confidence` measures **how reliable this specific classification is** (trend clarity + volatility clarity + structural confirmation, minus stability/conflict penalties), never combined with `technical_score` (indicator agreement strength) or `smc_score` (institutional structure evidence strength). "Uncertain" is exclusively the fallback value returned when no candidate regime clears `MIN_CONFIDENCE_TO_QUALIFY` (ADR-039) - it is never a positively-detected condition in its own right.
+
+Reason
+
+Three engines now each produce a distinct measure (`technical_score`, `smc_score`, regime `confidence`) answering three different questions. Conflating any of them - or leaving "Uncertain" ambiguous between "a real market state" and "we're not sure" - would undermine the explainability every prior scoring ADR (ADR-028, ADR-036) has established as this project's convention.
+
+Alternatives Considered
+
+Option A: Treat "Uncertain" as a positively-detected regime with its own criteria - rejected, docs/16 never defines what would make a market genuinely "Uncertain" as opposed to simply low-confidence in every other category.
+
+Option B (chosen): "Uncertain" as pure fallback; `confidence` as a distinct, non-competing classification-reliability measure.
+
+Trade-offs
+
+Pros
+
+Removes the docs/16 §3-vs-§14 ambiguity cleanly.
+
+Consistent three-engine separation of concerns (structure evidence vs. indicator evidence vs. classification reliability).
+
+Cons
+
+None identified - this is a clarifying, not a functional, decision.
+
+Future Review
+
+None expected.
+
+---
+
+# ADR-043
+
+Title
+
+Strategy Compatibility and AI Integration Are Documentation Guidance, Not Engine Output
+
+Status
+
+Accepted
+
+Context
+
+docs/16 §16 ("Strategy Compatibility": e.g. "Ranging -> Recommended: Mean Reversion") and §17 ("AI Integration," a narrative example combining regime with reasoning) both describe strategy-selection guidance - arguably a recommendation, which the Core Principle for this phase explicitly forbids ("No BUY/SELL recommendations. The engine classifies market conditions only.").
+
+Decision
+
+Confirmed on Phase 4C approval: §16 and §17 are excluded from `MarketRegimeEngine`'s output entirely. `MarketRegimeResult`/`MarketRegimeResponse` have no `compatible_strategies`, `recommendation`, or narrative field. They remain documentation notes in docs/16 for whichever future engine (Signal Engine, AI Orchestrator - Phase 6) decides what to do with a given regime classification.
+
+Reason
+
+Even an "evidence-only, non-binding" strategy list would still encode an opinion about what should be *done* with a regime, which is squarely the Signal Engine's/AI Orchestrator's job (ADR-005, ADR-008, ADR-031), not this classifier's. Keeping the boundary sharp here mirrors the same boundary already drawn for Technical Analysis (ADR-031) and SMC (implicitly, via evidence-only output).
+
+Alternatives Considered
+
+Option A: Include a non-binding `compatible_strategies` list, framed as descriptive metadata - considered, but rejected as still encoding a recommendation in substance if not in name.
+
+Option B (chosen): Exclude both sections from engine output; retain them purely as documentation guidance.
+
+Trade-offs
+
+Pros
+
+Unambiguous compliance with the "classification only, no recommendations" principle.
+
+Cons
+
+A future Signal Engine will need to independently re-derive strategy compatibility from docs/16 §16's guidance rather than reading it off this engine's response.
+
+Future Review
+
+Revisit only when the Signal Engine (Phase 6) is built and needs this mapping - implemented there, referencing docs/16 §16, not retrofitted onto this engine.
+
+---
+
+# ADR-044
+
+Title
+
+Market Regime Classification Stability
+
+Status
+
+Accepted
+
+Context
+
+Phase 4C's approval requested explicit documentation of hysteresis, minimum confidence before switching regimes, anti-oscillation behavior, and fallback handling - standard concerns for any classifier whose output could otherwise flicker between nearly-tied categories on small input changes. This sits in tension with ADR-038's statelessness decision, since true hysteresis conventionally requires remembering the previous classification.
+
+Decision
+
+Given the engine is stateless (ADR-038), true cross-request hysteresis (comparing to a persisted prior classification) is **not** implemented this phase. Instead, a same-request, fully deterministic anti-oscillation safeguard is implemented in `RegimeClassifier.classify()`:
+
+- **Minimum confidence before switching**: only candidates at or above `MIN_CONFIDENCE_TO_QUALIFY` (60.0) are eligible to win at all (ADR-039).
+- **Anti-oscillation margin**: the winning candidate is compared to the next-best *other* qualifying candidate (`runner_up`). If the margin is below `MIN_MARGIN` (10.0), the classification is still reported (no forced downgrade), but `RegimeConfidenceBreakdown.stability_penalty` is reduced proportionally and a `warnings` entry names both candidates near the boundary.
+- **Fallback handling**: when no candidate qualifies, `regime` is `Uncertain` (ADR-039/ADR-042) with `confidence` reflecting the absence of any confirmed structural evidence.
+
+Reason
+
+Genuine hysteresis - resisting a *change* from the previously reported regime - needs memory of that previous call, which contradicts ADR-038's stateless decision. Rather than silently ignoring the stability requirement, or quietly reversing the persistence decision to support it, this ADR implements the strongest anti-oscillation safeguard available without persistence: requiring a clear margin of victory within the current evidence window, which still meaningfully dampens flicker on genuinely marginal/tied evidence (the case most likely to flip between adjacent, similarly-priced requests), while being honest that it does not reproduce true request-to-request memory.
+
+Alternatives Considered
+
+Option A: Add a minimal persisted "last regime" cache (not full event history) specifically to support true hysteresis - considered, but rejected for this phase since it would partially reverse ADR-038 for a benefit not yet demonstrated to be needed; revisitable if real request patterns show flip-flopping.
+
+Option B (chosen): Same-request margin-based anti-oscillation, explicitly documented as distinct from true cross-request hysteresis.
+
+Trade-offs
+
+Pros
+
+Fully deterministic and reproducible - the same candle window always produces the same stability outcome.
+
+No persistence added for a benefit not yet observed as necessary.
+
+Cons
+
+Does not prevent flicker across genuinely different candle windows over time (e.g. as new candles roll into the lookback window) the way true hysteresis would.
+
+Future Review
+
+Revisit if real-world usage shows request-to-request regime flicker; the natural next step would be a minimal last-regime cache (per asset/timeframe) specifically for a hysteresis check, without adopting SMC-style full event persistence.
+
+---
+
 # Review Policy
 
 Review ADRs:

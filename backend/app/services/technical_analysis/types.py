@@ -200,7 +200,18 @@ class MultiTimeframeResult:
 
 @dataclass(frozen=True, slots=True)
 class TechnicalAnalysisResult:
-    """The engine's final aggregated output (docs/08 §11, docs/42)."""
+    """The engine's final aggregated output (docs/08 §11, docs/42).
+
+    `trend_evidence`/`momentum`/`oscillator`/`volatility`/`volume` are a
+    Phase 4C addition: this analyzer-level evidence (ADX DI+/DI-,
+    Bollinger upper/lower, volatility/volume state) was previously
+    computed inside `analyze()` only to feed the scoring engine, then
+    discarded before reaching the returned dataclass. The Market Regime
+    Engine needs that state directly (docs/44) rather than re-deriving
+    it, so it's now exposed here too. Purely additive - `trend`/
+    `strength`/`indicators` are unchanged, and this is not (yet)
+    surfaced on the public HTTP response (docs/44, deliberately
+    scoped)."""
 
     symbol: str
     timeframe: Timeframe
@@ -215,3 +226,8 @@ class TechnicalAnalysisResult:
     indicators: dict[str, float]
     warnings: list[str]
     calculated_at: datetime
+    trend_evidence: TrendEvidence
+    momentum: MomentumEvidence
+    oscillator: OscillatorEvidence
+    volatility: VolatilityEvidence
+    volume: VolumeEvidence

@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added - Phase 4C: Market Regime Engine
+
+`docs/44_MARKET_REGIME_ARCHITECTURE.md` - new architecture document defining the reuse map, classification precedence rule, and classification-stability safeguard
+
+`app/services/market_regime/` - eleven deterministic analyzers (`TrendRegimeAnalyzer`, `VolatilityRegimeAnalyzer`, `RangeAnalyzer`, `ExpansionAnalyzer`, `TransitionAnalyzer`, `AccumulationDistributionAnalyzer`, `BreakoutAnalyzer`, `PullbackReversalAnalyzer`, `RegimeConflictAnalyzer`, `RegimeClassifier`, `MultiTimeframeAnalyzer`) plus `RegimeConfidenceEngine` - almost entirely reusing Technical Analysis's and SMC's already-computed evidence rather than re-deriving it (docs/44 §5)
+
+`MarketRegimeEngine` (`app/services/market_regime_engine.py`) - stateless (ADR-038, no `market_regime` table exists), calling `TechnicalAnalysisEngine` and `SMCEngine` exactly once per execution and passing their results by parameter to every analyzer (no repeated upstream analysis within one request)
+
+`TechnicalAnalysisResult` extended (additive only, `app/services/technical_analysis/types.py`) with `trend_evidence`/`momentum`/`oscillator`/`volatility`/`volume` - analyzer-level evidence (ADX DI+/DI-, Bollinger bounds, state classifications) that was previously computed and discarded before reaching the public dataclass; Market Regime needed it directly rather than re-deriving it
+
+**ADR-038** through **ADR-044**: Market Regime Engine is stateless; the classification precedence rule (evaluate all candidates' confidence first, apply precedence only among qualifiers); Accumulation/Distribution's deterministic definition (SMC Order Blocks/liquidity-sweep directionality); Pullback Depth as a single-timeframe retracement measurement, explicitly distinct from SMC's multi-timeframe Pullback; Regime Confidence's distinction from `technical_score`/`smc_score` and "Uncertain" fallback semantics; Strategy Compatibility/AI Integration as documentation guidance, never engine output; Market Regime Classification Stability (same-request anti-oscillation margin check, explicitly not true cross-request hysteresis given statelessness)
+
+New public (no auth) endpoints: `GET /analysis/market-regime/{symbol}?timeframe=` and `GET /analysis/market-regime/{symbol}/multi-timeframe`
+
+docs/16 and docs/04 updated: docs/16 resolves the "Uncertain" ambiguity and notes "Detect exhaustion" is folded into Pullback/Reversal warnings, not a dedicated output; docs/04 documents both new endpoints' concrete contracts
+
+Deliberately excluded (per Phase 4C approval): `compatible_strategies`/recommendation fields (docs/16 §16/§17 remain documentation guidance only); true cross-request hysteresis (statelessness would need to be partially reversed - deferred)
+
+Tests: `test_trend_regime_analyzer.py`, `test_volatility_regime_analyzer.py`, `test_expansion_analyzer.py`, `test_range_analyzer.py`, `test_transition_analyzer.py`, `test_accumulation_distribution_analyzer.py`, `test_breakout_analyzer.py`, `test_pullback_reversal_analyzer.py`, `test_market_regime_conflict_analyzer.py`, `test_regime_classifier.py` (including the precedence-vs-raw-confidence regression case), `test_confidence_engine.py`, `test_market_regime_multi_timeframe_analyzer.py`, `test_market_regime_engine.py` (integration, including a test proving upstream engines are called exactly once), `test_market_regime_api.py` (59 new tests total)
+
+Deliberately out of scope: any BUY/SELL/WAIT recommendation, strategy-compatibility output, true cross-request hysteresis, Confidence Engine (Phase 4D), News/Economic analysis (Phase 5), AI Orchestrator integration (Phase 6)
+
+### Status
+
+Phase 4C (Market Regime Engine) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 4B: Smart Money Concepts (SMC) Engine
 
 `docs/43_SMC_ARCHITECTURE.md` - new architecture document defining the persistence model, analyzer dependency graph, lifecycle states, and all algorithms (market structure, BOS, CHOCH, order blocks, FVG, liquidity, premium/discount, multi-timeframe)

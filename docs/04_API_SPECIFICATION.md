@@ -417,6 +417,50 @@ Response
 
 ---
 
+# Market Regime
+
+GET /analysis/market-regime/{symbol}?timeframe=H1
+
+Public (no authentication). `{symbol}` is case-insensitive. Deterministic classification only - no BUY/SELL recommendation, no strategy guidance (docs/16, docs/44, ADR-043).
+
+Response
+
+{
+  "symbol", "timeframe",
+  "regime",
+  "confidence",
+  "confidence_breakdown": { "trend_clarity", "volatility_clarity", "structural_confirmation", "stability_penalty", "conflict_penalty", "total" },
+  "trend_regime": { "direction", "strength", "structure_state", "aligned" },
+  "volatility": { "state", "recent_atr_average", "baseline_atr_average" },
+  "range": { "is_ranging", "range_width", "range_strength" },
+  "expansion": { "state", "ratio" },
+  "transition": { "shifting", "from_hint", "to_hint", "confidence" },
+  "accumulation_distribution": { "accumulation_score", "distribution_score" },
+  "breakout": { "detected", "direction", "volume_confirmed" },
+  "pullback_reversal": { "pullback_depth", "retracement_ratio", "reversal_direction", "reversal_confidence", "exhaustion_warning" },
+  "candidates": [ { "regime", "confidence", "precedence" } ],
+  "warnings": [],
+  "calculated_at"
+}
+
+`regime` is one of docs/16 §3's eleven values exactly - never an invented value. `confidence` is distinct from `technical_score`/`smc_score` (ADR-042) - it measures how reliable this classification is, not evidence strength. 404 if the asset is unknown, or if no candles exist yet for that asset/timeframe.
+
+---
+
+GET /analysis/market-regime/{symbol}/multi-timeframe
+
+Public. Combines Weekly/Daily/H4/H1/M15 regime classifications into one verdict (ADR-036's timeframe set, reused per docs/44 §12).
+
+Response
+
+{
+  "symbol",
+  "verdict",
+  "timeframes": [ { "timeframe", "regime" } ]
+}
+
+---
+
 # News
 
 GET /news

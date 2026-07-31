@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.models.enums import Timeframe
 from app.services.market_data.providers.mock import MockMarketDataProvider
+from tests.market_data_contract import assert_provider_contract
 
 
 def test_mock_provider_is_deterministic_across_instances() -> None:
@@ -42,3 +43,12 @@ def test_mock_provider_generates_valid_ohlc_relationships() -> None:
 
 def test_mock_provider_health_check_always_true() -> None:
     assert MockMarketDataProvider().health_check() is True
+
+
+def test_mock_provider_satisfies_provider_contract() -> None:
+    """Reference usage of the shared contract test (docs/40) - every
+    future provider's test suite should call this same helper."""
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(hours=1)
+
+    assert_provider_contract(MockMarketDataProvider(), "EURUSD", Timeframe.M1, start, end)

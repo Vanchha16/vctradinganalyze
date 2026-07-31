@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Added - Phase 3.5: Market Data Integration & Quality Gate
+
+`docs/40_PROVIDER_INTEGRATION_GUIDE.md` - new canonical checklist for integrating any market-data provider: interface requirements, symbol/timeframe mapping, error classification, capability declaration, rate-limit configuration, secrets convention, health-check integration, and testing requirements
+
+`RateLimitedProvider` (`app/services/market_data/providers/rate_limited.py`) - a token-bucket decorator wrapping any `MarketDataProvider`, so rate limiting is applied uniformly without embedding provider-specific throttling logic in `MarketDataService`; configured per-provider via `settings.market_data_rate_limits_per_minute` (falling back to `settings.market_data_default_rate_limit_per_minute`), applied automatically by `get_market_data_providers()`
+
+`ProviderCapabilities` (`app/services/market_data/providers/base.py`) - a structured, extensible value object (`supported_timeframes`, `supported_market_types`, `max_lookback`) replacing a single boolean `supports()` method, so new capability dimensions can be added without breaking existing providers; `MarketDataService` now checks capabilities proactively before calling a provider, rather than discovering an unsupported timeframe reactively
+
+`ProviderConfigurationError` added to the provider exception hierarchy (`app/services/market_data/exceptions.py`) for setup-time misconfiguration (e.g. an unknown provider name), replacing a raw `ValueError`; the hierarchy's extension point for future provider-specific exceptions (e.g. `TwelveDataAuthenticationError`) is now documented
+
+`CandleValidator` gained a timestamp-plausibility rule - a candle whose timestamp falls outside the requested `[start, end]` window (with a small clock-skew tolerance) is now rejected, closing docs/34's "Timestamp" validation requirement
+
+`MarketDataService` now logs provider-call latency (`market_data.provider_call`, with `duration_ms` and `outcome`) for every attempt, success or failure - closing part of ADR-019's "Observability by Default" requirement for this pipeline
+
+`GET /health/ready` now reports each configured provider's `health_check()` result diagnostically (`market_data_providers` in the response body) - a provider being unreachable does not flip overall readiness
+
+CI (`.github/workflows/ci.yml`) now runs a real PostgreSQL 17 service container and executes `alembic upgrade head`/`alembic check` against it before the test suite - closing the long-standing "CI doesn't test the migration path" gap (BACKLOG.md §5/§9)
+
+Provider contract-test convention: `tests/market_data_contract.py::assert_provider_contract`, demonstrated against `MockMarketDataProvider` in `test_mock_provider.py` - every future provider's test suite should call the same helper
+
+Tests: `test_rate_limited_provider.py`, `test_market_data_dependencies.py`, plus additions to `test_market_data_service.py` (capability-based skipping) and `test_candle_validator.py` (timestamp-plausibility rules)
+
+Deliberately still no real market-data provider integrated (Phase 3B); no persisted symbol-mapping table; no metrics/Prometheus endpoint (still tracked separately in BACKLOG.md)
+
+### Status
+
+Phase 3.5 (Market Data Integration & Quality Gate) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 3A: Market Data Foundation
 
 `docs/38_MARKET_DATA_ARCHITECTURE.md` - new architecture document defining the provider abstraction, symbol/timeframe normalization, data validation, duplicate detection, retry/failover, scheduler design, and provider lifecycle for the market-data pipeline

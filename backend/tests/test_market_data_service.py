@@ -13,11 +13,12 @@ from app.models.price_candle import PriceCandle
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.services.market_data.candle_validator import CandleValidator
 from app.services.market_data.exceptions import PermanentProviderError, TransientProviderError
-from app.services.market_data.providers.base import RawCandle
+from app.services.market_data.providers.base import ProviderCapabilities, RawCandle
 from app.services.market_data.providers.mock import MockMarketDataProvider
 from app.services.market_data_service import MarketDataService
 
 _TABLES = [Asset.__table__, PriceCandle.__table__, IndicatorResult.__table__]
+_ALL_TIMEFRAMES_CAPABILITIES = ProviderCapabilities(supported_timeframes=frozenset(Timeframe))
 
 
 @pytest.fixture
@@ -53,6 +54,9 @@ class _AlwaysFailingProvider:
     def health_check(self) -> bool:
         return False
 
+    def capabilities(self) -> ProviderCapabilities:
+        return _ALL_TIMEFRAMES_CAPABILITIES
+
 
 class _FailsTwiceThenSucceedsProvider:
     name = "flaky"
@@ -80,6 +84,9 @@ class _FailsTwiceThenSucceedsProvider:
 
     def health_check(self) -> bool:
         return True
+
+    def capabilities(self) -> ProviderCapabilities:
+        return _ALL_TIMEFRAMES_CAPABILITIES
 
 
 def _noop_sleep(_: float) -> None:
@@ -211,6 +218,9 @@ def test_collect_rejects_invalid_candles_without_failing_the_batch(
         def health_check(self) -> bool:
             return True
 
+        def capabilities(self) -> ProviderCapabilities:
+            return _ALL_TIMEFRAMES_CAPABILITIES
+
     service = MarketDataService(
         providers=[_CorruptedProvider()],
         candle_validator=CandleValidator(),
@@ -224,3 +234,41 @@ def test_collect_rejects_invalid_candles_without_failing_the_batch(
     assert result.fetched == 2
     assert result.rejected == 1
     assert result.persisted == 1
+
+
+def test_collect_skips_provider_that_declares_unsupported_timeframe(
+    session: Session, asset: Asset
+) -> None:
+    class _M1OnlyProvider:
+        name = "m1_only"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_candles(
+            self, symbol: str, timeframe: Timeframe, start: datetime, end: datetime
+        ) -> list[RawCandle]:
+            self.calls += 1
+            return []
+
+        def health_check(self) -> bool:
+            return True
+
+        def capabilities(self) -> ProviderCapabilities:
+            return ProviderCapabilities(supported_timeframes=frozenset({Timeframe.M1}))
+
+    unsupported = _M1OnlyProvider()
+    working = MockMarketDataProvider()
+    service = MarketDataService(
+        providers=[unsupported, working],
+        candle_validator=CandleValidator(),
+        price_candle_repository=PriceCandleRepository(session),
+        sleep=_noop_sleep,
+    )
+    end = datetime(2026, 1, 1, tzinfo=UTC)
+    start = end - timedelta(minutes=5)
+
+    result = service.collect(asset, Timeframe.H1, start=start, end=end)
+
+    assert unsupported.calls == 0  # skipped proactively, never invoked
+    assert result.persisted > 0  # fell through to the working provider

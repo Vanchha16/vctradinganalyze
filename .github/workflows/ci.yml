@@ -9,9 +9,25 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: claudetrading_user
+          POSTGRES_PASSWORD: change-me
+          POSTGRES_DB: claudetrading
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: backend
+    env:
+      DATABASE_URL: postgresql+psycopg://claudetrading_user:change-me@localhost:5432/claudetrading
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +44,12 @@ jobs:
 
       - name: Mypy
         run: uv run mypy app
+
+      - name: Alembic upgrade (PostgreSQL)
+        run: uv run alembic upgrade head
+
+      - name: Alembic check (no drift against PostgreSQL)
+        run: uv run alembic check
 
       - name: Pytest
         run: uv run pytest -q

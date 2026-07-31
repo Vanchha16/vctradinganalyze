@@ -31,7 +31,9 @@ class MarketDataService:
 
     Validation itself lives entirely in `CandleValidator` (docs/38 §5) -
     this service coordinates the workflow, it does not decide what makes a
-    candle valid.
+    candle valid. Likewise, rate limiting is applied to providers before
+    they reach this service (`RateLimitedProvider`, docs/40) - this class
+    has no rate-limiting logic of its own and stays provider-agnostic.
     """
 
     def __init__(
@@ -41,22 +43,26 @@ class MarketDataService:
         price_candle_repository: PriceCandleRepository,
         *,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._providers = providers
         self._candle_validator = candle_validator
         self._price_candle_repository = price_candle_repository
         self._sleep = sleep
+        self._clock = clock
 
     def collect(
         self, asset: Asset, timeframe: Timeframe, *, start: datetime, end: datetime
     ) -> CollectionResult:
-        raw_candles = self._fetch_with_failover(asset.symbol, timeframe, start, end)
+        raw_candles = self._fetch_with_failover(asset, timeframe, start, end)
 
         persisted = 0
         rejected = 0
         for raw in raw_candles:
             normalized = normalize_candle(raw)
-            is_valid, reason = self._candle_validator.validate(normalized)
+            is_valid, reason = self._candle_validator.validate(
+                normalized, window_start=start, window_end=end
+            )
             if not is_valid:
                 rejected += 1
                 logger.warning(
@@ -92,25 +98,37 @@ class MarketDataService:
         return CollectionResult(fetched=len(raw_candles), persisted=persisted, rejected=rejected)
 
     def _fetch_with_failover(
-        self, symbol: str, timeframe: Timeframe, start: datetime, end: datetime
+        self, asset: Asset, timeframe: Timeframe, start: datetime, end: datetime
     ) -> list[RawCandle]:
         for provider in self._providers:
+            if not provider.capabilities().supports(timeframe, market_type=asset.market_type):
+                logger.warning(
+                    "market_data.provider_unsupported",
+                    provider=provider.name,
+                    symbol=asset.symbol,
+                    timeframe=timeframe.value,
+                )
+                continue
+
             try:
-                return self._fetch_with_retry(provider, symbol, timeframe, start, end)
+                return self._fetch_with_retry(provider, asset.symbol, timeframe, start, end)
             except MarketDataProviderError as exc:
                 logger.warning(
                     "market_data.provider_failed",
                     provider=provider.name,
-                    symbol=symbol,
+                    symbol=asset.symbol,
                     timeframe=timeframe.value,
                     error=str(exc),
                 )
                 continue
 
-        logger.error("market_data.all_providers_failed", symbol=symbol, timeframe=timeframe.value)
-        # Every provider failed: fall back to whatever is already stored
-        # (docs/38 §8) by simply fetching nothing new - existing
-        # price_candles rows are left untouched, not deleted.
+        logger.error(
+            "market_data.all_providers_failed", symbol=asset.symbol, timeframe=timeframe.value
+        )
+        # Every provider failed (or none support this timeframe/market
+        # type): fall back to whatever is already stored (docs/38 §8) by
+        # simply fetching nothing new - existing price_candles rows are
+        # left untouched, not deleted.
         return []
 
     def _fetch_with_retry(
@@ -124,9 +142,34 @@ class MarketDataService:
         attempt = 0
         while True:
             attempt += 1
+            call_start = self._clock()
             try:
-                return provider.get_candles(symbol, timeframe, start, end)
-            except TransientProviderError:
-                if attempt >= settings.market_data_retry_max_attempts:
+                candles = provider.get_candles(symbol, timeframe, start, end)
+            except MarketDataProviderError as exc:
+                duration_ms = round((self._clock() - call_start) * 1000, 2)
+                is_transient = isinstance(exc, TransientProviderError)
+                logger.warning(
+                    "market_data.provider_call",
+                    provider=provider.name,
+                    symbol=symbol,
+                    timeframe=timeframe.value,
+                    duration_ms=duration_ms,
+                    outcome="transient_error" if is_transient else "permanent_error",
+                    attempt=attempt,
+                )
+                if not is_transient or attempt >= settings.market_data_retry_max_attempts:
                     raise
                 self._sleep(settings.market_data_retry_backoff_seconds * attempt)
+                continue
+
+            logger.info(
+                "market_data.provider_call",
+                provider=provider.name,
+                symbol=symbol,
+                timeframe=timeframe.value,
+                duration_ms=round((self._clock() - call_start) * 1000, 2),
+                outcome="success",
+                attempt=attempt,
+                candle_count=len(candles),
+            )
+            return candles

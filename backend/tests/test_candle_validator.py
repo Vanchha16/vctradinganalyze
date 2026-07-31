@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from app.models.enums import Timeframe
@@ -6,12 +6,14 @@ from app.services.market_data.candle_validator import CandleValidator
 from app.services.market_data.normalization import NormalizedCandle, normalize_candle
 from app.services.market_data.providers.base import RawCandle
 
+_TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
+
 
 def _candle(**overrides: object) -> NormalizedCandle:
     defaults: dict[str, object] = {
         "symbol": "EURUSD",
         "timeframe": Timeframe.M1,
-        "timestamp": datetime(2026, 1, 1, tzinfo=UTC),
+        "timestamp": _TIMESTAMP,
         "open": Decimal("1.1"),
         "high": Decimal("1.2"),
         "low": Decimal("1.0"),
@@ -22,46 +24,80 @@ def _candle(**overrides: object) -> NormalizedCandle:
     return NormalizedCandle(**defaults)  # type: ignore[arg-type]
 
 
+def _validate(candle: NormalizedCandle, **window: datetime) -> tuple[bool, str | None]:
+    window.setdefault("window_start", _TIMESTAMP)
+    window.setdefault("window_end", _TIMESTAMP)
+    return CandleValidator().validate(candle, **window)  # type: ignore[arg-type]
+
+
 def test_valid_candle_passes() -> None:
-    is_valid, reason = CandleValidator().validate(_candle())
+    is_valid, reason = _validate(_candle())
     assert is_valid is True
     assert reason is None
 
 
 def test_rejects_non_positive_price() -> None:
-    is_valid, reason = CandleValidator().validate(_candle(open=Decimal("0")))
+    is_valid, reason = _validate(_candle(open=Decimal("0")))
     assert is_valid is False
     assert reason == "non_positive_price"
 
 
 def test_rejects_high_less_than_low() -> None:
-    is_valid, reason = CandleValidator().validate(_candle(high=Decimal("0.5"), low=Decimal("1.0")))
+    is_valid, reason = _validate(_candle(high=Decimal("0.5"), low=Decimal("1.0")))
     assert is_valid is False
     assert reason == "high_less_than_low"
 
 
 def test_rejects_high_below_close() -> None:
-    is_valid, reason = CandleValidator().validate(
-        _candle(high=Decimal("1.05"), close=Decimal("1.15"))
-    )
+    is_valid, reason = _validate(_candle(high=Decimal("1.05"), close=Decimal("1.15")))
     assert is_valid is False
     assert reason == "high_below_open_or_close"
 
 
 def test_rejects_low_above_open() -> None:
-    is_valid, reason = CandleValidator().validate(_candle(low=Decimal("1.12"), open=Decimal("1.1")))
+    is_valid, reason = _validate(_candle(low=Decimal("1.12"), open=Decimal("1.1")))
     assert is_valid is False
     assert reason == "low_above_open_or_close"
 
 
 def test_rejects_negative_volume() -> None:
-    is_valid, reason = CandleValidator().validate(_candle(volume=Decimal("-1")))
+    is_valid, reason = _validate(_candle(volume=Decimal("-1")))
     assert is_valid is False
     assert reason == "negative_volume"
 
 
 def test_accepts_null_volume() -> None:
-    is_valid, reason = CandleValidator().validate(_candle(volume=None))
+    is_valid, reason = _validate(_candle(volume=None))
+    assert is_valid is True
+    assert reason is None
+
+
+def test_rejects_timestamp_before_requested_window() -> None:
+    candle = _candle(timestamp=_TIMESTAMP - timedelta(hours=1))
+    is_valid, reason = _validate(candle, window_start=_TIMESTAMP, window_end=_TIMESTAMP)
+    assert is_valid is False
+    assert reason == "timestamp_before_requested_window"
+
+
+def test_rejects_timestamp_after_requested_window() -> None:
+    candle = _candle(timestamp=_TIMESTAMP + timedelta(hours=1))
+    is_valid, reason = _validate(candle, window_start=_TIMESTAMP, window_end=_TIMESTAMP)
+    assert is_valid is False
+    assert reason == "timestamp_after_requested_window"
+
+
+def test_accepts_timestamp_within_small_clock_skew_tolerance() -> None:
+    candle = _candle(timestamp=_TIMESTAMP + timedelta(seconds=30))
+    is_valid, reason = _validate(candle, window_start=_TIMESTAMP, window_end=_TIMESTAMP)
+    assert is_valid is True
+    assert reason is None
+
+
+def test_accepts_timestamp_within_requested_window_range() -> None:
+    candle = _candle(timestamp=_TIMESTAMP + timedelta(minutes=30))
+    is_valid, reason = _validate(
+        candle, window_start=_TIMESTAMP, window_end=_TIMESTAMP + timedelta(hours=1)
+    )
     assert is_valid is True
     assert reason is None
 

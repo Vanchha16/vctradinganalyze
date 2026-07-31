@@ -3,8 +3,10 @@ import random
 from datetime import datetime
 
 from app.models.enums import Timeframe
-from app.services.market_data.providers.base import RawCandle
+from app.services.market_data.providers.base import ProviderCapabilities, RawCandle
 from app.services.market_data.timeframe_utils import TIMEFRAME_DURATIONS
+
+_CAPABILITIES = ProviderCapabilities(supported_timeframes=frozenset(Timeframe))
 
 _BASE_PRICES: dict[str, float] = {
     "XAUUSD": 2400.0,
@@ -62,3 +64,6 @@ class MockMarketDataProvider:
 
     def health_check(self) -> bool:
         return True
+
+    def capabilities(self) -> ProviderCapabilities:
+        return _CAPABILITIES

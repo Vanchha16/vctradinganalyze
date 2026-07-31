@@ -98,6 +98,8 @@ Sub-Phases
 
 3A Market Data Foundation (provider abstraction, MockMarketDataProvider, Asset/PriceCandle/IndicatorResult models, indicator-calculation engine + registry, scheduler; docs/38_MARKET_DATA_ARCHITECTURE.md, ADR-024) - Completed
 
+3.5 Market Data Integration & Quality Gate (provider rate limiting, extensible capability declarations, provider-specific exception hierarchy, timestamp validation, latency logging, health-check integration, PostgreSQL CI verification, provider contract-test convention; docs/40_PROVIDER_INTEGRATION_GUIDE.md) - Completed
+
 3B Real Provider Integration (Twelve Data) - Not started
 
 ---

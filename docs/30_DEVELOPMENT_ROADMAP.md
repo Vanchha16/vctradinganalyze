@@ -74,6 +74,8 @@ Sub-Phases
 
 2A Authentication Data & Security Primitives (User, OAuthAccount, UserSession, AuditLog models; JWT/password hashing utilities; ADR-022) - Completed
 
+2B Authentication Service Layer (UserService, AuthenticationService, audit logging integration, custom auth exceptions; ADR-023) - Completed
+
 ---
 
 # Phase 3

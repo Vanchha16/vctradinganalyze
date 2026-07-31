@@ -15,3 +15,8 @@ class AuditLogRepository(BaseRepository[AuditLog]):
         return (
             self.session.execute(self._paginate(query, offset=offset, limit=limit)).scalars().all()
         )
+
+    def create(self, log: AuditLog) -> AuditLog:
+        self.session.add(log)
+        self.session.flush()
+        return log

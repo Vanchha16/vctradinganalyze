@@ -763,6 +763,64 @@ Revisit if a provider requires multiple linked identities per (provider, provide
 
 ---
 
+# ADR-023
+
+Title
+
+Hash Refresh Tokens with SHA-256, Distinct from Argon2id Password Hashing
+
+Status
+
+Accepted
+
+Context
+
+docs/23_AUTHENTICATION_AND_RBAC.md §6 requires sessions to be tracked and revocable, and `UserSessionRepository.get_by_refresh_token_hash` looks up a session by an exact hash match on the presented refresh token. docs/23 does not specify a hashing algorithm for this. Argon2id (used for passwords per docs/23 §7) is salted per-hash and designed to be verified against a known plaintext, not looked up by equality - it cannot support this access pattern.
+
+Decision
+
+Hash refresh tokens with SHA-256 (`app.core.security.hash_token`) for storage in `UserSession.refresh_token_hash` and for lookup. Continue using Argon2id exclusively for password hashing.
+
+Reason
+
+Refresh tokens are high-entropy, randomly generated JWTs (not low-entropy user secrets), so a fast deterministic hash is appropriate and enables the required exact-match session lookup. Argon2id remains reserved for passwords, where slow, salted hashing defends against offline brute-force of user-chosen secrets.
+
+Alternatives Considered
+
+Option A: Store refresh tokens in plaintext - rejected, a database read would leak valid session tokens.
+
+Option B: Use Argon2id for refresh tokens too - rejected, salted hashes cannot be looked up by equality without also storing the plaintext or salt separately, defeating the purpose.
+
+Option C: SHA-256 (chosen) - deterministic, fast, appropriate for high-entropy tokens.
+
+Trade-offs
+
+Pros
+
+Enables O(1) session lookup by hash.
+
+Keeps password hashing (Argon2id) and token hashing (SHA-256) each suited to their own threat model.
+
+Cons
+
+SHA-256 alone would be unsuitable for low-entropy secrets; must not be reused for passwords.
+
+Consequences
+
+Positive
+
+Session/refresh-token lookups remain a simple indexed equality query.
+
+Negative
+
+None identified; this is inferred beyond the literal text of docs/23, recorded here per CLAUDE.md's "never invent architecture" rule (same practice as ADR-022).
+
+Future Review
+
+Revisit if refresh tokens are ever generated with lower entropy, or if a token-revocation-by-`jti` scheme (see BACKLOG.md) replaces hash-based session lookup.
+
+---
+
 # Review Policy
 
 Review ADRs:

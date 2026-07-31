@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -46,3 +47,14 @@ def create_refresh_token(user_id: uuid.UUID) -> str:
 
 def decode_token(token: str) -> dict[str, Any]:
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+
+
+def hash_token(token: str) -> str:
+    """Deterministically hash a refresh token for storage/lookup (see ADR-023).
+
+    Unlike password hashing, refresh tokens must be looked up by exact match,
+    which rules out Argon2id's salted, verify-only hashes. SHA-256 is
+    sufficient here because the token itself is a high-entropy, randomly
+    generated JWT rather than a low-entropy user secret.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

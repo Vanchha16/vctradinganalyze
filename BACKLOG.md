@@ -2,7 +2,7 @@
 
 This document preserves unresolved ideas, deferred architectural decisions, documentation gaps, and future enhancements identified during Phases 1.1 through 2A. It is a backlog, not a plan — nothing here is scheduled or approved for implementation until explicitly revisited.
 
-Last updated: 2026-07-31 (Phase 2A closed out — commit, changelog, roadmap updates)
+Last updated: 2026-07-31 (Phase 2B: Authentication Service Layer)
 
 ---
 
@@ -31,6 +31,7 @@ Last updated: 2026-07-31 (Phase 2A closed out — commit, changelog, roadmap upd
 ## 4. Security Enhancements Planned for Future Phases
 
 - **Failed-login lockout** (docs/23 §17) — needs new `users` columns (`failed_login_attempts`, `locked_until` — not in `docs/03` currently) plus Redis-backed attempt tracking/backoff logic.
+- **Temporary decision: login does not require `is_verified` (Phase 2B).** docs/23 §8 states email verification is "required before accessing protected access," but email-delivery infrastructure is explicitly deferred (see below), so no user could ever become verified. `AuthenticationService.login` therefore only checks credentials and `User.is_active`, not `User.is_verified` — otherwise every newly registered account would be permanently unusable. **This must be revisited once the email verification workflow exists**: either enforce `is_verified` in `login` at that point, or confirm the intent was always to gate it at the authorization/route level instead of at login.
 - **Email verification flow** (docs/23 §8) — token generation/validation logic can be built, but real delivery is blocked on SMTP/Celery email infrastructure, which doesn't exist yet. Explicitly deferred during Phase 2A scoping.
 - **Password reset flow** (docs/23 §9) — same email-infrastructure dependency as above. Must also invalidate old sessions on reset, per docs/23.
 - **Future email delivery architecture** — both email verification and password reset depend on a not-yet-designed email subsystem (SMTP provider choice, templating, Celery task for async send, retry/failure handling). Needs its own design pass before either flow can be built, rather than being bolted on ad hoc to whichever flow is implemented first.
@@ -39,8 +40,12 @@ Last updated: 2026-07-31 (Phase 2A closed out — commit, changelog, roadmap upd
 - **Session/device management endpoints** (docs/23 §11 — list current/previous devices, logout current/other/all) — `UserSessionRepository.list_for_user` exists, but there's no API surface yet.
 - **CAPTCHA after repeated failed logins** — explicitly "(Future)" in docs/23 §17.
 - **Google OAuth login flow itself** (docs/23 §2) — only the `OAuthAccount` linking table + repository exist; the actual redirect/callback flow isn't built.
-- **Token revocation strategy using `jti`** — JWTs currently carry standard claims but no revocation mechanism has been designed. Needs a decision on storing/checking a `jti` (JWT ID) claim (e.g. against `UserSession` or a Redis denylist) so access tokens can be invalidated before natural expiry (logout, password reset, role change, compromised-token response).
-- **Audit logging is not yet wired up.** The `AuditLog` model and repository exist, but nothing writes to it yet — needs to be hooked into login/logout/password-reset/role-change flows once those endpoints exist (docs/23 §18).
+- **Token revocation strategy using `jti`** — access tokens carry a `jti` claim (unused) but no revocation mechanism has been designed. Refresh-token invalidation is handled (Phase 2B) by deleting the corresponding `UserSession` row (logout/revoke), but **access tokens themselves cannot be revoked before natural expiry** (15 min) — a compromised access token, or a role change, remains valid until it expires. Needs a decision on an access-token denylist (e.g. `jti` checked against Redis) if this window is judged too wide.
+- **Audit logging wiring status (updated Phase 2B).** `AuthenticationService` now writes `AuditLog` entries for `login_success`, `login_failed`, `logout`, and `session_revoked`. Still not wired: password-reset, permission/role-change, and account-deletion events (docs/23 §18) — these can't be logged until those flows themselves exist.
+- **`UserSession` has no `last_activity` column**, though docs/23 §6 lists it as tracked alongside device/browser/IP/created/expiration. Adding it needs a new migration, which was out of Phase 2B's approved scope (service-layer only, no schema changes). Revisit when device-management endpoints are built.
+- **`AuthenticationService.revoke_session`/`revoke_all_sessions` exist as business logic (Phase 2B) but have no API surface yet** — docs/23 §11's device-management endpoints (list/logout current/other/all) still need routes built on top of these.
+- **SQLite returns naive datetimes for `DateTime(timezone=True)` columns (institutional knowledge — do not rediscover).** Unlike Postgres, SQLite has no native timezone-aware datetime type, so a value written as UTC-aware comes back naive when read through the SQLite test/verification DB. `AuthenticationService._as_aware_utc` was added to normalize this before comparing `UserSession.expires_at` against `datetime.now(UTC)`. Any future code comparing timestamps read from the DB should account for this if it might run against the SQLite verification path.
+- **Coverage tooling (`pytest-cov`) is not installed.** docs/06 §21 and docs/31 §10 set coverage goals (90%/95%), but nothing in `pyproject.toml` measures it yet. Test coverage for Phase 2A/2B has been verified by inspection (all success/failure branches have a test) rather than a numeric report.
 - **CORS is broader than necessary.** `main.py` currently sets `allow_methods=["*"]` and `allow_headers=["*"]` with `allow_credentials=True` — flagged during the very first architecture review (before Phase 1.1 implementation). Should be scoped down to the actual methods/headers in use once the real API surface stabilizes.
 - **Production JWT secret.** The dev placeholder in `.env.example` (`change_this_secret`, 18 bytes) triggers PyJWT's `InsecureKeyLengthWarning` in tests — expected for a placeholder, but a reminder that production deployments must set a real secret ≥32 bytes.
 - **Additional security hardening ideas surfaced during Phase 2A** (not yet scoped to a phase): refresh-token rotation on use, per-session IP/user-agent binding for anomaly detection, and structured logging of auth failures separate from general app logs for easier SIEM ingestion later.
@@ -54,24 +59,34 @@ Last updated: 2026-07-31 (Phase 2A closed out — commit, changelog, roadmap upd
 - **Data retention** (`docs/03` §18 — e.g. notifications deleted after 90 days, price candles archived after 2 years) has no implementation yet; not relevant until the corresponding tables exist, but will need scheduled cleanup jobs (likely Celery beat) eventually.
 - **CI doesn't test the migration path.** `.github/workflows/ci.yml` runs ruff/mypy/pytest but doesn't spin up a real Postgres service container and run `alembic upgrade head` against it — would have caught the `server_default` issue automatically instead of relying on manual verification each time. Worth adding.
 
-## 6. Authentication Improvements (from docs/23, deferred out of Phase 2A)
+## 6. Authentication Improvements (from docs/23, deferred out of Phase 2A/2B)
 
 - RBAC expansion: `roles`/`permissions`/`role_permissions` schema + permission-checking dependency + granular permission strings (`signals.publish`, etc.)
-- Email verification endpoints (`POST /auth/verify-email`, `POST /auth/resend-verification` — also need adding to `docs/04`), 24h token expiry, resend flow
+- Email verification endpoints (`POST /auth/verify-email`, `POST /auth/resend-verification` — also need adding to `docs/04`), 24h token expiry, resend flow, and revisiting the Phase 2B decision that `login` doesn't check `is_verified` (see §4 above)
 - Password reset endpoints (forgot/reset), invalidating old sessions on reset
 - Failed-login lockout (schema + Redis-backed counter)
 - Google OAuth login flow (redirect/callback) — and re-evaluating whether to store provider tokens
-- Session/device management endpoints (list, revoke one/all)
-- Audit logging hookup into real auth flows once they exist
-- Core auth endpoints themselves — `POST /auth/register`, `/login`, `/refresh`, `/logout`, `GET /auth/me` — not yet built; Phase 2A was models + security primitives only
+- Session/device management **API endpoints** (list, revoke one/all) — the underlying business logic (`AuthenticationService.revoke_session`/`revoke_all_sessions`) was built in Phase 2B, but there is no route surface yet
+- Access-token revocation via `jti` denylist (see §4 above) — refresh-token/session revocation is handled, access tokens are not
+- API endpoints themselves — `POST /auth/register`, `/login`, `/refresh`, `/logout`, `GET /auth/me` — still not built; Phase 2B implemented the underlying `UserService`/`AuthenticationService` business logic only, no FastAPI routes/dependencies/middleware/cookies
 
 ## 7. Inferred Improvements That Should Eventually Reach Documentation/ADRs
 
-- **ADR-022** (OAuth `(provider, provider_user_id)` uniqueness) is the first example of documenting an inferred schema decision not explicitly in `docs/03`. Continue this practice — likely candidates: the future `roles`/`permissions` table design, the future `failed_login_attempts`/`locked_until` columns, and the future OAuth token-storage decision if it's revisited.
+- **ADR-022** (OAuth `(provider, provider_user_id)` uniqueness) and **ADR-023** (SHA-256 refresh-token hashing, distinct from Argon2id password hashing) are examples of documenting inferred decisions not explicitly in the docs. Continue this practice — likely candidates: the future `roles`/`permissions` table design, the future `failed_login_attempts`/`locked_until` columns, the future OAuth token-storage decision if it's revisited, and an eventual decision on access-token revocation via `jti`.
 - The Alembic `server_default` dialect-rendering gotcha (§5 above) should get a permanent home in the docs, not just this backlog.
 - `docs/02` vs `docs/06` folder-structure divergence (§1 above) should be reconciled.
 - **Sub-phase tracking convention** (1.1, 1.2A, 1.2B, 2A, ...) has been maintained ad hoc — as a "Sub-Phases" note under Phase 1 in `docs/30`, and only in conversation/commit-message prose for Phase 2. Worth deciding whether this should become a formal, consistently-applied part of `docs/30` going forward, or stay lightweight.
 
-## 8. Outstanding Validation Gaps
+## 9. Development Environment Differences (SQLite vs. PostgreSQL)
+
+**This is the canonical place to record behavioral differences between SQLite (used for local development, unit tests, and migration verification) and PostgreSQL (the production database, per ADR-003 and docs/06 §2). Add new entries here as they're discovered — don't let them live only in chat history or a single test's docstring.**
+
+- **Timezone-aware datetime behavior.** SQLite has no native timezone-aware datetime type, so a `DateTime(timezone=True)` value written as UTC-aware comes back **naive** when read through SQLite, even though Postgres preserves the offset correctly. Discovered in Phase 2B when comparing `UserSession.expires_at` (read from the DB) against `datetime.now(UTC)` raised `TypeError: can't compare offset-naive and offset-aware datetimes`. Fixed with a normalizing helper (`AuthenticationService._as_aware_utc`) rather than assuming the value is already aware. **Any code that compares a datetime read from the DB against a fresh `datetime.now(UTC)` must account for this if it may run against the SQLite path.**
+- **Alembic autogenerate `server_default` differences.** Column *types* render dialect-neutrally in autogenerated migrations, but `server_default` SQL expressions are compiled against whichever dialect is *connected* at generation time. Generating against the SQLite verification DB has twice produced `server_default=sa.text('(CURRENT_TIMESTAMP)')`, which is invalid Postgres syntax — both times caught and manually corrected to `sa.func.now()` before committing (see §5 for full detail). **Every future migration must be checked for this before committing.**
+- **`foreign_keys` pragma requirement.** Unlike Postgres, SQLite does not enforce foreign-key constraints by default. Repository/model tests that verify FK behavior (cascade or restrict on delete) must explicitly enable `PRAGMA foreign_keys=ON` on the test connection/engine, or the tests will silently pass even if the same constraint would fail against real Postgres (see §5, discovered in Phase 2A).
+- **No migration has ever been run against real Postgres in this sandbox** (no reachable Postgres server here); all migrations have only been round-trip verified against temporary SQLite databases. Recommend running the full migration chain against actual Postgres at least once before any real deployment (see §5).
+- *(Add future SQLite/Postgres behavioral differences here as they're found — e.g. JSON column semantics, case-sensitivity of text comparisons/`LIKE`, or numeric precision, none of which have been hit yet but are plausible candidates.)*
+
+## 10. Outstanding Validation Gaps
 
 - **Docker has never actually been run in this environment.** No `docker` CLI is available in this sandbox, so `docker build`, `docker compose up`, and `docker compose config` (beyond static YAML parsing) have never been executed end-to-end across any phase. All Docker-related work has been verified by static review only. This should be validated in a real environment before considering the Docker setup production-ready.

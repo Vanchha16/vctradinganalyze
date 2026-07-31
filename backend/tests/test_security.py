@@ -64,9 +64,19 @@ def test_decode_token_rejects_expired_token() -> None:
 
 
 def test_decode_token_rejects_tampered_signature() -> None:
+    """Tamper the *first* character of the signature segment, not the
+    last. The last base64url character of a JWT can, depending on the
+    signature's byte length, only encode padding/insignificant bits - so
+    flipping it occasionally round-trips to the same decoded bytes and
+    the "tampered" token verifies anyway (a real, reproducible flake
+    discovered in Phase 3C, not a one-off). The first character of a
+    base64 group always fully determines its leading bits, so tampering
+    it is deterministic."""
     user_id = uuid.uuid4()
     token = create_access_token(user_id)
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    header, payload, signature = token.split(".")
+    tampered_signature = ("A" if signature[0] != "A" else "B") + signature[1:]
+    tampered = f"{header}.{payload}.{tampered_signature}"
 
     with pytest.raises(jwt.InvalidTokenError):
         decode_token(tampered)

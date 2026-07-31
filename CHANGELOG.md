@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added - Phase 3C: Market Data API
+
+`GET /assets`, `GET /assets/{symbol}`, `GET /market/{symbol}/latest`, `GET /market/{symbol}/candles`, `GET /market/{symbol}/indicators` - all public, no authentication required (per explicit decision: market reference data isn't user-specific, matching docs/04's Guest rate-limit tier and docs/23 §12's "View Public Pages")
+
+Thin API layer only - every route calls existing repositories (`AssetRepository`, `PriceCandleRepository`, `IndicatorResultRepository`) directly, with new repository methods (`AssetRepository.list_filtered`/`count_filtered`, `PriceCandleRepository.list_range`'s new optional `limit`) added to support filtering/pagination without introducing service-layer logic that wasn't needed for read-only endpoints
+
+`GET /market/{symbol}/indicators` is new - not previously in docs/04 - exposing the raw `indicator_results` values (docs/39) Phase 3A/3B already populate; deliberately distinct from the future `GET /analysis/technical/{symbol}` (Phase 4's synthesized trend/scoring output, still unbuilt). The `indicator` query filter is validated against the indicator registry (`app.indicators.registry`), not an unrestricted string - an unknown indicator name is rejected with a clear error rather than silently returning nothing
+
+`GET /market/{symbol}` renamed to `GET /market/{symbol}/latest` before implementation, to make its single-candle-snapshot purpose explicit and avoid future ambiguity with the candles/indicators endpoints
+
+Symbol path parameters are case-insensitive (`eurusd` and `EURUSD` resolve identically) - shared `get_asset_or_404` dependency normalizes and 404s consistently across every symbol-keyed route
+
+`RequestValidationError` handler added (`app/exceptions/handlers.py`), normalizing FastAPI's built-in `{"detail": [...]}` validation-error shape to the project's standard `{"error", "message"}` envelope - a gap that existed since Phase 2C but was only surfaced now that a phase has meaningfully-validated query parameters (`timeframe`, indicator names) users will routinely get wrong
+
+Spread is intentionally omitted from `GET /market/{symbol}/latest`'s response, not fabricated - it isn't part of the data model (docs/03 §5, no integrated provider supplies it); documented as unavailable in docs/04 rather than invented
+
+docs/04_API_SPECIFICATION.md updated: the five endpoints above with concrete request/response shapes, and `GET /analysis/technical/{symbol}` explicitly marked "not yet implemented" with a note distinguishing it from the new indicators endpoint
+
+A genuinely flaky pre-existing test was found and fixed while running the full suite repeatedly during this phase: `test_decode_token_rejects_tampered_signature` tampered only the *last* character of a JWT signature, which - depending on the signature's byte length - can encode only padding/insignificant bits, occasionally letting the "tampered" token verify successfully anyway (reproduced failing 1-in-3 runs in isolation). Fixed to tamper the *first* character of the signature segment instead, which is always significant
+
+Tests: `test_market_data_api.py` (14 tests) covering pagination, filtering, 404s, symbol-case-normalization, timeframe/indicator validation error envelopes, and candle range/limit behavior
+
+### Status
+
+Phase 3C (Market Data API) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 3B: Twelve Data Provider
 
 `docs/41_SYMBOL_NORMALIZATION.md` - new document defining the project's canonical internal symbol representation (plain, uppercase, separator-free `Asset.symbol`) first, then the Twelve Data-specific mapping: a mechanical FOREX/METAL/CRYPTO rule (guarded by a known-currency-code allowlist, not a bare length check), an explicit INDEX override table (left empty - no entries could be confirmed against Twelve Data's own symbol catalog from public documentation alone), and the confirmed timeframe-to-`interval` table

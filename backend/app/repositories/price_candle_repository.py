@@ -48,18 +48,24 @@ class PriceCandleRepository(BaseRepository[PriceCandle]):
         *,
         start: datetime,
         end: datetime,
+        limit: int | None = None,
     ) -> Sequence[PriceCandle]:
-        query = (
-            select(PriceCandle)
-            .where(
-                PriceCandle.asset_id == asset_id,
-                PriceCandle.timeframe == timeframe,
-                PriceCandle.timestamp >= start,
-                PriceCandle.timestamp <= end,
-            )
-            .order_by(PriceCandle.timestamp.asc())
+        """Candles in `[start, end]`, oldest-first. When `limit` truncates
+        the range, the most recent candles within the range are kept
+        (matching `list_recent`'s "most recent N" semantics) rather than
+        the oldest."""
+        query = select(PriceCandle).where(
+            PriceCandle.asset_id == asset_id,
+            PriceCandle.timeframe == timeframe,
+            PriceCandle.timestamp >= start,
+            PriceCandle.timestamp <= end,
         )
-        return self.session.execute(query).scalars().all()
+        if limit is None:
+            return self.session.execute(query.order_by(PriceCandle.timestamp.asc())).scalars().all()
+
+        query = query.order_by(PriceCandle.timestamp.desc()).limit(limit)
+        rows = self.session.execute(query).scalars().all()
+        return list(reversed(rows))
 
     def upsert(self, candle: PriceCandle) -> PriceCandle:
         """Insert a candle, or update it in place if one already exists for

@@ -102,6 +102,8 @@ Sub-Phases
 
 3B Real Provider Integration (TwelveDataProvider, docs/41_SYMBOL_NORMALIZATION.md, daily quota enforcement per ADR-025) - Completed
 
+3C Market Data API (public GET /assets, /assets/{symbol}, /market/{symbol}/latest, /market/{symbol}/candles, /market/{symbol}/indicators; RequestValidationError envelope normalization; docs/04 updated) - Completed
+
 ---
 
 # Phase 4

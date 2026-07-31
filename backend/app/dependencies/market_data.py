@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.dependencies.database import get_db
+from app.repositories.asset_repository import AssetRepository
+from app.repositories.indicator_result_repository import IndicatorResultRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.services.market_data.candle_validator import CandleValidator
 from app.services.market_data.exceptions import ProviderConfigurationError
@@ -69,3 +71,19 @@ def get_market_data_service(db: Annotated[Session, Depends(get_db)]) -> MarketDa
         candle_validator=CandleValidator(),
         price_candle_repository=PriceCandleRepository(db),
     )
+
+
+def get_asset_repository(db: Annotated[Session, Depends(get_db)]) -> AssetRepository:
+    return AssetRepository(db)
+
+
+def get_price_candle_repository(
+    db: Annotated[Session, Depends(get_db)],
+) -> PriceCandleRepository:
+    return PriceCandleRepository(db)
+
+
+def get_indicator_result_repository(
+    db: Annotated[Session, Depends(get_db)],
+) -> IndicatorResultRepository:
+    return IndicatorResultRepository(db)

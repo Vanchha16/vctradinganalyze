@@ -216,9 +216,28 @@ News
 
 GET /assets
 
-Return supported assets.
+Return supported assets. Public - no authentication required (docs/23 §12 Guest role: "View Public Pages").
 
-Example
+Query parameters
+
+page (default 1)
+
+limit (default 20, max 100)
+
+market_type (forex, metal, crypto, index)
+
+is_active (true/false)
+
+Response
+
+{
+  "items": [ { "id", "symbol", "name", "market_type", "exchange", "base_currency", "quote_currency", "is_active" } ],
+  "page": 1,
+  "limit": 20,
+  "total": 42
+}
+
+Example symbols
 
 EURUSD
 
@@ -236,43 +255,79 @@ US30
 
 GET /assets/{symbol}
 
-Return asset details.
+Return asset details. Public. `{symbol}` is case-insensitive (`eurusd` and `EURUSD` return the same asset). 404 if unknown.
 
 ---
 
 # Market Data
 
-GET /market/{symbol}
+GET /market/{symbol}/latest
+
+Public. Renamed from an earlier `GET /market/{symbol}` draft (Phase 3C) to make the endpoint's purpose explicit - it returns only the single most recent candle, not a market snapshot.
 
 Query
 
-timeframe=H1
+timeframe (required)
 
 Response
 
-OHLC
+{
+  "timestamp", "open", "high", "low", "close", "volume"
+}
 
-Volume
+Note: "Spread" was listed in an earlier draft of this endpoint, but is not part of the data model (docs/03 §5 `price_candles` doesn't track it, and no integrated provider - Twelve Data included - supplies it in the `time_series` response this project consumes). It is intentionally omitted from the response rather than fabricated. Revisit if a future provider or data source supplies real spread data.
 
-Spread
+404 if no candles exist yet for that asset/timeframe.
 
 ---
 
 GET /market/{symbol}/candles
 
+Public.
+
 Parameters
 
-timeframe
+timeframe (required)
 
-limit
+from (optional - ISO 8601 datetime; if omitted, returns the most recent `limit` candles instead of a bounded range)
 
-from
+to (optional - defaults to now)
 
-to
+limit (default 100, max 1000 - higher than the general list-endpoint cap of 100, since time-series/chart data legitimately needs more rows per request)
+
+Response
+
+{
+  "symbol", "timeframe",
+  "items": [ { "timestamp", "open", "high", "low", "close", "volume" } ]
+}
+
+---
+
+GET /market/{symbol}/indicators
+
+Public. Returns **raw** indicator values as calculated and stored (docs/39_INDICATOR_REFERENCE.md) - EMA, RSI, MACD, ADX, ATR, VWAP, etc. This is deliberately distinct from `GET /analysis/technical/{symbol}` below, which returns Phase 4's *synthesized* trend/strength/technical-score output once that engine exists. Do not confuse the two: this endpoint exists today and returns exactly what `indicator_results` stores; `/analysis/technical/{symbol}` does not exist yet.
+
+Parameters
+
+timeframe (required)
+
+indicator (optional - must be a registered indicator name, e.g. `rsi_14`, `macd`; validated against the indicator registry, docs/39 §7 summary table - an unknown name is rejected, not silently ignored)
+
+limit (default 100, max 1000)
+
+Response
+
+{
+  "symbol", "timeframe",
+  "items": [ { "indicator", "value", "metadata", "calculated_at" } ]
+}
 
 ---
 
 # Technical Analysis
+
+**Not yet implemented** (Phase 4 - Technical Analysis Engine, docs/08). This returns *synthesized* trend detection, technical scoring, and conflict detection built on top of the raw indicator values `GET /market/{symbol}/indicators` (above) already exposes today. Do not confuse the two.
 
 GET /analysis/technical/{symbol}
 

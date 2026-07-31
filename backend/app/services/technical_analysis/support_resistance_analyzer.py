@@ -11,32 +11,24 @@ from collections.abc import Sequence
 from decimal import ROUND_FLOOR, Decimal
 
 from app.models.price_candle import PriceCandle
+from app.services.market_structure.swing_points import find_swing_points
 from app.services.technical_analysis.types import SupportResistanceEvidence, SupportResistanceLevel
 
-#: Candles on each side of a candidate swing point (classic 5-candle fractal).
-_FRACTAL_WINDOW = 2
 _LEVELS_TO_KEEP = 5
 
 
 def _find_swing_points(
     candles: Sequence[PriceCandle],
 ) -> tuple[list[SupportResistanceLevel], list[SupportResistanceLevel]]:
-    highs: list[SupportResistanceLevel] = []
-    lows: list[SupportResistanceLevel] = []
-    n = len(candles)
-
-    for i in range(_FRACTAL_WINDOW, n - _FRACTAL_WINDOW):
-        window = candles[i - _FRACTAL_WINDOW : i + _FRACTAL_WINDOW + 1]
-        candle = candles[i]
-        if candle.high == max(c.high for c in window):
-            highs.append(
-                SupportResistanceLevel(price=candle.high, source="swing_high", strength="weak")
-            )
-        if candle.low == min(c.low for c in window):
-            lows.append(
-                SupportResistanceLevel(price=candle.low, source="swing_low", strength="weak")
-            )
-
+    swing_highs, swing_lows = find_swing_points(candles)
+    highs = [
+        SupportResistanceLevel(price=point.price, source="swing_high", strength="weak")
+        for point in swing_highs
+    ]
+    lows = [
+        SupportResistanceLevel(price=point.price, source="swing_low", strength="weak")
+        for point in swing_lows
+    ]
     return highs, lows
 
 

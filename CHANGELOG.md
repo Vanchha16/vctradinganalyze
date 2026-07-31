@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Added - Phase 4B: Smart Money Concepts (SMC) Engine
+
+`docs/43_SMC_ARCHITECTURE.md` - new architecture document defining the persistence model, analyzer dependency graph, lifecycle states, and all algorithms (market structure, BOS, CHOCH, order blocks, FVG, liquidity, premium/discount, multi-timeframe)
+
+`app/services/market_structure/swing_points.py` - swing-high/low fractal detection extracted from Technical Analysis's private `_find_swing_points`, now shared by both engines rather than duplicated
+
+`app/services/smc/` - twelve deterministic analyzers (`MarketStructureAnalyzer`, `BOSAnalyzer`, `CHOCHAnalyzer`, `OrderBlockAnalyzer`, `MitigationAnalyzer`, `BreakerBlockAnalyzer`, `FairValueGapAnalyzer`, `LiquidityAnalyzer`, `PremiumDiscountAnalyzer`, `ConfluenceAnalyzer`, `SMCConflictAnalyzer`, `MultiTimeframeAnalyzer`) plus `SMCScoringEngine`, each a pure function over plain dataclasses - no database access, no AI, no probabilistic reasoning (ADR-031, ADR-036)
+
+`SMCEngine` (`app/services/smc_engine.py`) - unlike the stateless Technical Analysis Engine, persists detected structures to `smc_events` (ADR-032): bounded to the most recent 500 candles per call, de-duplicated against existing rows by natural key, with a lifecycle-archiving pass and an `SMCProcessingState` checkpoint per asset/timeframe
+
+New models: `SMCEvent` (mutable zone-lifecycle rows - a first for this project, contrasting every other append-only table, ADR-033) and `SMCProcessingState` (recovery/migration bookkeeping: last processed timestamp, engine version)
+
+**ADR-032** through **ADR-037**: SMC persistence and incremental-scan design; mutable `smc_events` rows; Order Block candle-pattern definition; equal-highs/lows magnitude-aware tolerance; SMC multi-timeframe weights and `smc_score` distinct from `technical_score`; SMC Event Lifecycle (ACTIVE/MITIGATED/INVALIDATED/ARCHIVED states and transitions, never deleting historical events)
+
+New public (no auth) endpoints: `GET /analysis/smc/{symbol}?timeframe=` and `GET /analysis/smc/{symbol}/multi-timeframe`
+
+docs/09 and docs/04 updated: docs/09 §17's inconsistent flat boolean example (`"bos": true`) corrected to the list-based Evidence Model actually implemented, and the four concepts referenced during planning but absent from docs/09 (IFVG, Internal/External BOS, Displacement, Market Imbalance) are noted as deliberately excluded; docs/04 documents both new endpoints' concrete contracts
+
+Deliberately excluded (undocumented in docs/09, "never invent architecture"): Inverse Fair Value Gaps (IFVG), an Internal/External BOS distinction, a dedicated Displacement analyzer, Market Imbalance
+
+Tests: `test_swing_points.py`, `test_market_structure_analyzer.py`, `test_bos_analyzer.py`, `test_choch_analyzer.py`, `test_order_block_analyzer.py`, `test_mitigation_analyzer.py`, `test_breaker_block_analyzer.py`, `test_fair_value_gap_analyzer.py`, `test_liquidity_analyzer.py`, `test_premium_discount_analyzer.py`, `test_smc_confluence_analyzer.py`, `test_smc_conflict_analyzer.py`, `test_smc_scoring_engine.py`, `test_smc_multi_timeframe_analyzer.py`, `test_smc_models.py`, `test_smc_engine.py` (integration), `test_smc_api.py` (59 new tests total)
+
+Deliberately out of scope: any BUY/SELL/WAIT recommendation, true delta-only incremental scanning (documented as a future optimization), API filtering query params (`event_type`, `include_mitigated`), News/Economic analysis (Phase 5), AI Orchestrator integration (Phase 6)
+
+### Status
+
+Phase 4B (Smart Money Concepts Engine) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 4A: Technical Analysis Engine
 
 `docs/42_TECHNICAL_ANALYSIS_ARCHITECTURE.md` - new architecture document defining the data flow, analyzer responsibilities, missing-indicator policy, support/resistance algorithm, scoring formula, and multi-timeframe combination algorithm

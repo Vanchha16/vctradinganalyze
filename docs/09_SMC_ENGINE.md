@@ -2,6 +2,8 @@
 
 Version: 1.0
 
+Status: Implemented in Phase 4B. See docs/43_SMC_ARCHITECTURE.md for the concrete algorithms, data model, lifecycle states, and API contract. Concepts referenced during Phase 4B planning that do **not** appear in this document - Inverse Fair Value Gaps (IFVG), an Internal/External BOS distinction, a dedicated Displacement concept, and Market Imbalance - were deliberately excluded from implementation per "never invent architecture" (docs/43 §9, §18).
+
 ---
 
 # 1. Objective
@@ -351,6 +353,8 @@ Do not classify as full bearish reversal without confirmation.
 ---
 
 # 17. Output Format
+
+**Corrected in Phase 4B (docs/43 §6)**: the flat example below is superseded - `bos`/`choch` are lists of records (per §6/§7's own field descriptions), not booleans, and `smc_score` is one component of an explainable `score_breakdown` (ADR-036), not a single opaque number. `app/schemas/smc.py` is the canonical shape.
 
 {
     "market_structure": "Bullish",

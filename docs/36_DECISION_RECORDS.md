@@ -1213,6 +1213,298 @@ Revisit only if the project's phase boundaries themselves change (e.g. if a futu
 
 ---
 
+# ADR-032
+
+Title
+
+SMC Engine Persists Detected Structures (Contrast with ADR-027)
+
+Status
+
+Accepted
+
+Context
+
+The Technical Analysis Engine (Phase 4A, ADR-027) is deliberately stateless - no documented table existed for it, and its output is a point-in-time indicator snapshot with no lifecycle. The SMC Engine (Phase 4B) faces a different situation: docs/03 §7 already specifies an `smc_events` table, and SMC concepts (order blocks, FVGs, liquidity zones) have genuine lifecycle state - fresh, then touched, then mitigated or invalidated - that a stateless recompute-every-time design would discard.
+
+Decision
+
+`SMCEngine` persists detected/updated structures to `smc_events` on every `analyze()` call, de-duplicated against existing rows by natural key (`asset_id`, `timeframe`, `event_type`, `detected_at`) so repeated calls update in place rather than insert duplicates. Each call is bounded to the most recent 500 candles (`_DEFAULT_LOOKBACK`), keeping cost from growing with total asset history even without a full delta-only incremental scan.
+
+Reason
+
+Reversing ADR-027's stateless precedent for this specific engine is justified by two independent facts, not a general preference for persistence: the table is already documented, and the domain concepts are inherently stateful in a way Technical Analysis's indicators are not.
+
+Alternatives Considered
+
+Option A: Stay fully stateless, like Technical Analysis - rejected, would require re-deriving a zone's touch/mitigation history from scratch on every request, discarding information docs/03 §7 already expects to be stored.
+
+Option B (chosen): Persist to `smc_events`, bounded-window analysis, natural-key de-duplication.
+
+Trade-offs
+
+Pros
+
+Zone lifecycle (fresh/touched/mitigated/invalidated/archived) survives across requests, matching what `smc_events` was designed to store.
+
+Bounded-window analysis keeps repeated calls fast without the complexity of a full delta-only scan.
+
+Cons
+
+Not a true incremental scan - each call still re-examines the full bounded window, not just genuinely new candles (see ADR-032's companion note in docs/43 §15).
+
+Future Review
+
+Revisit once real-world history sizes/request volumes justify the added complexity of a true delta-only incremental scan.
+
+---
+
+# ADR-033
+
+Title
+
+`smc_events` Zone Rows Are Mutable, Not Append-Only
+
+Status
+
+Accepted
+
+Context
+
+Every other table with a temporal dimension in this project (`price_candles`, `indicator_results`, `audit_logs`) is append-only/immutable once written (`CreatedAtMixin`, single timestamp). Zone-type SMC concepts (order blocks, FVGs, liquidity zones) don't fit that shape - the same detected zone's state (touched, mitigated, broken) genuinely changes over time as later candles interact with it.
+
+Decision
+
+`SMCEvent` rows for zone-type `event_type`s are mutable: the same row's `status` and `context` (JSON) update in place via `SMCEventRepository.update_status`/direct mutation, looked up by a natural key rather than re-inserted per lifecycle transition. A `status` column (`SMCEventStatus`: ACTIVE/MITIGATED/INVALIDATED/ARCHIVED, ADR-037) was added beyond docs/03 §7's literal field list specifically to make "give me all ACTIVE order blocks" a plain indexed filter rather than a JSON-operator query. Rows are never deleted - even ARCHIVED zones remain queryable.
+
+Reason
+
+Modeling a zone as a sequence of append-only "transition" rows (matching the rest of the project's convention) would require inventing a correlation key linking multiple rows to "the same zone," adding complexity with no benefit over simply updating one row - since a zone is a single entity with evolving state, not a sequence of independent discrete facts like a price candle or an audit log entry.
+
+Alternatives Considered
+
+Option A: Append-only transition rows (matching every other table) - rejected, requires an artificial zone-correlation key and produces no benefit for a genuinely single, evolving entity.
+
+Option B (chosen): Mutable rows, looked up by natural key, status column added beyond docs/03's literal spec.
+
+Trade-offs
+
+Pros
+
+Simple 1:1 mapping between a detected zone and a database row.
+
+Efficient filtering by lifecycle state via a plain column, not JSON-operator queries.
+
+Cons
+
+A deliberate, documented inconsistency with every other table's append-only convention - must not be copied elsewhere without the same justification.
+
+Future Review
+
+None expected - this is scoped specifically to zone-type SMC concepts.
+
+---
+
+# ADR-034
+
+Title
+
+Order Block Candle-Pattern Definition
+
+Status
+
+Accepted
+
+Context
+
+docs/09 §8 lists what an Order Block *stores* (zone high/low, mitigated/touched/broken, strength/freshness scores, volume confirmation) but never defines which candle *is* the order block - a genuine ambiguity flagged during Phase 4B planning.
+
+Decision
+
+An order block is the **last opposite-colored candle before the displacement move that produces a BOS** - for a bullish BOS, the last bearish (`close < open`) candle within a 10-candle lookback preceding the break; for a bearish BOS, the last bullish candle. The zone is that candle's high/low. Breaker Blocks (docs/09 §13) are modeled as a lifecycle flag (`is_breaker`/`breaker_confirmed`/`retest_count`) on the same order-block row, not a separate event type - a broken order block and a confirmed breaker are the same zone at different lifecycle stages, not two different structures.
+
+Reason
+
+This is the standard ICT (Inner Circle Trader) definition for an order block and is the only definition consistent with docs/09 §14's confluence example ("Bullish BOS + Bullish Order Block"), which implies the order block causally precedes/produces the BOS rather than being an independent, separately-detected structure.
+
+Alternatives Considered
+
+Option A: Treat Order Blocks and Breaker Blocks as fully independent detectors, each scanning raw candles - rejected, duplicates work and risks producing two rows for what is conceptually one zone across its lifecycle.
+
+Option B (chosen): One candle-pattern definition tied to BOS detection; Breaker Block as a lifecycle flag on the same row.
+
+Trade-offs
+
+Pros
+
+No duplicate zone rows for the same institutional level across its Order Block / Breaker Block lifecycle.
+
+Matches the ICT convention practitioners and docs/09's confluence example both assume.
+
+Cons
+
+The 10-candle lookback limit is a considered but not empirically-derived constant.
+
+Future Review
+
+Revisit the lookback constant if real market data shows meaningful order blocks forming further back from their BOS than 10 candles.
+
+---
+
+# ADR-035
+
+Title
+
+Equal Highs/Lows Magnitude-Aware Tolerance
+
+Status
+
+Accepted
+
+Context
+
+docs/09 §10 requires detecting "Equal Highs" and "Equal Lows" for liquidity-zone purposes but gives no tolerance for what counts as "equal" - two swing highs are essentially never bit-for-bit identical in real price data.
+
+Decision
+
+Two or more swing highs (or lows) within 5 basis points (0.05%) of each other - proportional to price, not a fixed absolute value - are grouped into one equal-highs/equal-lows liquidity zone. Implemented in `app/services/smc/liquidity_analyzer.py`.
+
+Reason
+
+A proportional tolerance generalizes across a ~1.10 forex pair, a ~2400 gold price, and a ~60000 crypto price without a maintained per-asset-class table, mirroring ADR-029's magnitude-aware rounding heuristic for round-number levels - the same category of decision, applied to a different concept.
+
+Alternatives Considered
+
+Option A: Fixed absolute tolerance (e.g. 0.0005 price units) - rejected, meaningless across wildly different price scales (a forex pair vs. a stock index vs. a crypto asset).
+
+Option B (chosen): 5 basis points of price, proportional.
+
+Trade-offs
+
+Pros
+
+Generalizes to any asset's price scale automatically, consistent with ADR-029's precedent.
+
+Cons
+
+5 basis points is a considered but somewhat arbitrary constant, not derived from market-microstructure research per asset class.
+
+Future Review
+
+Revisit alongside ADR-029 if a specific asset class's real liquidity clustering is found to diverge meaningfully from this generic heuristic.
+
+---
+
+# ADR-036
+
+Title
+
+SMC Multi-Timeframe Weights and `smc_score` Are Distinct From Technical Analysis's
+
+Status
+
+Accepted
+
+Context
+
+docs/09 §15 names five priority timeframes (Weekly, Daily, H4, H1, M15) - one more than Technical Analysis's four (D1, H4, H1, M15, ADR-030). docs/09 §14 and §17 also create ambiguity between a "Confluence Score" (§14, max 100) and an "smc_score" (§17) - unclear whether these are the same number, competing scores, or something else.
+
+Decision
+
+SMC's multi-timeframe combination uses its own weight set - W1=35, D1=30, H4=20, H1=10, M15=5 (sum 100) - not a reuse of ADR-030's four-timeframe weights, since the timeframe set itself differs. Confluence (docs/09 §14) is implemented as **one component** feeding a single `smc_score` (via `SMCScoreBreakdown`, mirroring ADR-028's explainable-breakdown pattern), not a second, competing score. `smc_score` and `technical_score` are never combined by either engine - `smc_score` measures institutional-structure evidence strength (zone freshness, structural alignment, confluence), `technical_score` measures indicator agreement (moving averages, oscillators, volume). Combining them, if ever done, is the future Signal Engine's responsibility (docs/30 Phase 6), extending ADR-031's evidence-not-signals boundary to SMC.
+
+Reason
+
+Reusing ADR-030's weights verbatim would silently under-weight or omit the Weekly timeframe docs/09 explicitly names. Treating confluence as a second score (rather than a scoring component) would create two numbers answering overlapping questions with no defined relationship between them - explainability requires exactly one score with a documented breakdown, matching the project's existing ADR-028 precedent.
+
+Alternatives Considered
+
+Option A: Reuse ADR-030's four-timeframe weights unchanged, dropping Weekly - rejected, contradicts docs/09 §15's explicit five-timeframe priority list.
+
+Option B: Confluence Score and SMC Score as two independent, separately-returned numbers - rejected, no documented relationship between them would leave API consumers to guess which one matters.
+
+Option C (chosen): New five-timeframe weight set; confluence as one `SMCScoreBreakdown` component.
+
+Trade-offs
+
+Pros
+
+Matches docs/09 §15's five-timeframe list exactly.
+
+One explainable score, consistent with ADR-028's established breakdown pattern.
+
+Clear, documented boundary preventing `smc_score`/`technical_score` conflation.
+
+Cons
+
+The specific weight allocation (35/30/20/10/5) is a considered judgment call, not derived from a formal model.
+
+Future Review
+
+Revisit the weights alongside ADR-028/ADR-030 once real outcomes can inform tuning (Phase 6+).
+
+---
+
+# ADR-037
+
+Title
+
+SMC Event Lifecycle
+
+Status
+
+Accepted
+
+Context
+
+Phase 4B's persistence decision (ADR-032) requires a defined set of lifecycle states for mutable zone-type `smc_events` rows (ADR-033), and explicit rules for how a zone moves between them, so historical SMC events are never deleted even once resolved.
+
+Decision
+
+Four lifecycle states, stored in `SMCEvent.status` (`SMCEventStatus`):
+
+```
+ACTIVE ──▶ MITIGATED ──▶ ARCHIVED
+   └────▶ INVALIDATED ──▶ ARCHIVED
+```
+
+- ACTIVE: untouched since detection.
+- MITIGATED: price closed within the zone (order blocks/FVGs) or the level was swept (liquidity).
+- INVALIDATED: price closed cleanly through the zone's far side (order blocks only).
+- ARCHIVED: resolved (MITIGATED/INVALIDATED) for more than 30 days (`_ARCHIVE_AFTER` in `smc_engine.py`) - a housekeeping transition applied on each `analyze()` call, never a deletion.
+
+BOS, CHOCH, and swing-point classification events have no MITIGATED/INVALIDATED transition (they are point-in-time facts) - they remain ACTIVE until archived by age alone.
+
+Reason
+
+An explicit, small, closed set of states and transitions (rather than an open-ended free-text status) makes "is this zone still relevant" a simple, indexed filter for API consumers and future engines, while the never-delete/archive-only rule preserves historical SMC events for audit, backtesting, and future ML validation (docs/09 §22) without unbounded row growth going unacknowledged (ARCHIVED rows are excluded from the default `list_for_asset_timeframe` view, though never removed).
+
+Alternatives Considered
+
+Option A: Two states only (active/resolved) - rejected, loses the meaningful distinction between "worked as expected" (mitigated) and "proven wrong" (invalidated), which future engines (Signal Engine, ML validation) will likely want to distinguish.
+
+Option B: Delete resolved zones after some period - rejected outright per explicit instruction to never delete historical SMC events.
+
+Option C (chosen): Four states, archive-not-delete, as described above.
+
+Trade-offs
+
+Pros
+
+Small, closed, indexed state set - simple filtering, no free-text status drift.
+
+Full historical record preserved for future backtesting/ML work (docs/09 §22).
+
+Cons
+
+The 30-day archive threshold is a considered but not empirically-derived constant, and is time-based rather than candle-count-based (so it behaves differently across timeframes in terms of "how many candles" it represents).
+
+Future Review
+
+Revisit the archive threshold once real usage patterns (or the future Signal Engine's needs) clarify how long a resolved zone remains analytically relevant.
+
+---
+
 # Review Policy
 
 Review ADRs:

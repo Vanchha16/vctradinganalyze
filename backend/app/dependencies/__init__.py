@@ -7,6 +7,7 @@ from app.dependencies.market_data import (
     get_market_data_service,
     get_price_candle_repository,
 )
+from app.dependencies.smc import get_smc_engine
 from app.dependencies.technical_analysis import get_technical_analysis_engine
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "get_market_data_providers",
     "get_market_data_service",
     "get_price_candle_repository",
+    "get_smc_engine",
     "get_technical_analysis_engine",
     "get_user_service",
 ]

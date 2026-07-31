@@ -11,6 +11,7 @@ from app.models.enums import MarketType
 if TYPE_CHECKING:
     from app.models.indicator_result import IndicatorResult
     from app.models.price_candle import PriceCandle
+    from app.models.smc_event import SMCEvent
 
 
 class Asset(Base, UUIDMixin, TimestampMixin):
@@ -37,5 +38,8 @@ class Asset(Base, UUIDMixin, TimestampMixin):
         back_populates="asset", cascade="all, delete-orphan"
     )
     indicator_results: Mapped[list["IndicatorResult"]] = relationship(
+        back_populates="asset", cascade="all, delete-orphan"
+    )
+    smc_events: Mapped[list["SMCEvent"]] = relationship(
         back_populates="asset", cascade="all, delete-orphan"
     )

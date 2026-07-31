@@ -373,25 +373,47 @@ Response
 
 # Smart Money Concepts
 
-GET /analysis/smc/{symbol}
+GET /analysis/smc/{symbol}?timeframe=H1
 
-Returns
+Public (no authentication, matching Technical Analysis's precedent). `{symbol}` is case-insensitive. Deterministic structured evidence only - no BUY/SELL recommendation (docs/09, docs/43).
 
-Order Blocks
+Response
 
-FVG
+{
+  "symbol", "timeframe",
+  "market_structure": { "state", "classifications": [ { "kind", "price", "timestamp", "index" } ] },
+  "bos": [ { "direction", "break_price", "break_time", "strength", "confirmed" } ],
+  "choch": [ { "previous_trend", "new_trend", "confidence", "confirmation_time" } ],
+  "order_blocks": [ { "direction", "zone_high", "zone_low", "created_at", "status", "touched", "mitigated", "broken", "strength_score", "freshness_score", "volume_confirmed", "is_breaker", "breaker_confirmed", "retest_count" } ],
+  "fair_value_gaps": [ { "direction", "gap_high", "gap_low", "created_at", "status", "gap_size", "priority" } ],
+  "liquidity_zones": [ { "side", "level", "touch_count", "status", "created_at" } ],
+  "liquidity_sweeps": [ { "side", "level", "sweep_time", "false_breakout" } ],
+  "premium_discount": { "position", "distance", "range_high", "range_low", "equilibrium" },
+  "confluence": { "factors": [], "confluence_score" },
+  "smc_score",
+  "score_breakdown": { "market_structure", "order_blocks", "fair_value_gaps", "liquidity", "premium_discount", "confluence", "penalties", "total" },
+  "warnings": [],
+  "calculated_at"
+}
 
-Liquidity
+This replaces docs/09 §17's flat example (`"bos": true`, single `smc_score` with no breakdown) - see docs/43 §6 for the correction and rationale. `status` values are `active`/`mitigated`/`invalidated`/`archived` (ADR-037). `smc_score` is never combined with `technical_score` (ADR-036).
 
-CHOCH
+404 if the asset is unknown, or if no candles exist yet for that asset/timeframe.
 
-BOS
+---
 
-Mitigation
+GET /analysis/smc/{symbol}/multi-timeframe
 
-Breaker
+Public. Combines Weekly/Daily/H4/H1/M15 market-structure classifications into one verdict (docs/09 §15, ADR-036) - distinct from the single-timeframe endpoint above.
 
-Premium Discount
+Response
+
+{
+  "symbol",
+  "verdict",
+  "timeframes": [ { "timeframe", "state" } ],
+  "conflict": { "is_pullback", "conflicts": [] }
+}
 
 ---
 

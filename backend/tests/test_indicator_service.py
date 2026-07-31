@@ -12,11 +12,12 @@ from app.models.asset import Asset
 from app.models.enums import MarketType, Timeframe
 from app.models.indicator_result import IndicatorResult
 from app.models.price_candle import PriceCandle
+from app.models.smc_event import SMCEvent
 from app.repositories.indicator_result_repository import IndicatorResultRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.services.indicator_service import IndicatorService
 
-_TABLES = [Asset.__table__, PriceCandle.__table__, IndicatorResult.__table__]
+_TABLES = [Asset.__table__, PriceCandle.__table__, IndicatorResult.__table__, SMCEvent.__table__]
 
 
 @pytest.fixture

@@ -13,11 +13,12 @@ from app.models.asset import Asset
 from app.models.enums import MarketType, Timeframe
 from app.models.indicator_result import IndicatorResult
 from app.models.price_candle import PriceCandle
+from app.models.smc_event import SMCEvent
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.indicator_result_repository import IndicatorResultRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 
-_TABLES = [Asset.__table__, PriceCandle.__table__, IndicatorResult.__table__]
+_TABLES = [Asset.__table__, PriceCandle.__table__, IndicatorResult.__table__, SMCEvent.__table__]
 
 
 def _sqlite_engine_with_fk_enforcement() -> Engine:

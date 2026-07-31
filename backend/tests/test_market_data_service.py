@@ -10,6 +10,7 @@ from app.models.asset import Asset
 from app.models.enums import MarketType, Timeframe
 from app.models.indicator_result import IndicatorResult
 from app.models.price_candle import PriceCandle
+from app.models.smc_event import SMCEvent
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.services.market_data.candle_validator import CandleValidator
 from app.services.market_data.exceptions import PermanentProviderError, TransientProviderError
@@ -17,7 +18,7 @@ from app.services.market_data.providers.base import ProviderCapabilities, RawCan
 from app.services.market_data.providers.mock import MockMarketDataProvider
 from app.services.market_data_service import MarketDataService
 
-_TABLES = [Asset.__table__, PriceCandle.__table__, IndicatorResult.__table__]
+_TABLES = [Asset.__table__, PriceCandle.__table__, IndicatorResult.__table__, SMCEvent.__table__]
 _ALL_TIMEFRAMES_CAPABILITIES = ProviderCapabilities(
     supported_timeframes=frozenset(Timeframe),
     supported_market_types=frozenset(MarketType),

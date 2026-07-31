@@ -24,19 +24,23 @@ JWT Bearer Token
 
 Success
 
+Returned as-is (no envelope wrapper). Example, `GET /auth/me`:
+
 {
-  "success": true,
-  "message": "Operation successful",
-  "data": {}
+  "id": "uuid",
+  "email": "user@example.com",
+  "username": "john",
+  ...
 }
 
 Error
 
 {
-  "success": false,
-  "message": "Validation failed",
-  "errors": []
+  "error": "invalid_credentials",
+  "message": "Invalid email or password."
 }
+
+Note (as of Phase 2C): this corrects an earlier draft of this document, which described a `{"success", "message", "data"/"errors"}` envelope that was never implemented. `docs/33_API_CONTRACTS.md` described a third, different shape. Neither matched the exception-handling code already built in Phase 1 (`app/exceptions/handlers.py`), which returns `{"error": <error_code>, "message": <message>}` on failure and the resource itself (unwrapped) on success — see docs/37_AUTHENTICATION_FLOW.md and BACKLOG.md for the decision record.
 
 ---
 
@@ -53,12 +57,25 @@ Request
 {
   "email": "user@example.com",
   "username": "john",
-  "password": "********"
+  "password": "********",
+  "full_name": "John Doe"
 }
 
 Response
 
 201 Created
+
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "username": "john",
+  "full_name": "John Doe",
+  "role": "registered",
+  "is_active": true,
+  "is_verified": false,
+  "last_login": null,
+  "created_at": "2026-07-31T00:00:00Z"
+}
 
 ---
 
@@ -76,8 +93,10 @@ Response
 {
   "access_token": "...",
   "refresh_token": "...",
-  "expires_in": 3600
+  "expires_in": 900
 }
+
+`expires_in` is always derived from configuration (`settings.jwt_access_expire_minutes`), never hardcoded — currently 900 seconds (15 minutes).
 
 ---
 
@@ -85,25 +104,73 @@ POST /auth/refresh
 
 Generate new access token.
 
+Request
+
+{
+  "refresh_token": "..."
+}
+
+Response
+
+{
+  "access_token": "...",
+  "refresh_token": null,
+  "expires_in": 900
+}
+
+Only a new access token is issued; `refresh_token` is `null` in this response (see docs/37 §4 — refresh-token rotation-on-use is not yet implemented).
+
 ---
 
 POST /auth/logout
 
-Invalidate refresh token.
+Invalidate refresh token (deletes the corresponding session; idempotent).
+
+Request
+
+{
+  "refresh_token": "..."
+}
+
+Response
+
+204 No Content
 
 ---
 
 POST /auth/forgot-password
 
+**Not yet implemented.** Blocked on the email-delivery infrastructure this flow depends on (see BACKLOG.md). Listed here as the target contract for when that phase is built.
+
 ---
 
 POST /auth/reset-password
+
+**Not yet implemented.** Same dependency as above.
 
 ---
 
 GET /auth/me
 
-Return current user profile.
+Return current user profile. Requires `Authorization: Bearer <access_token>`.
+
+Response
+
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "username": "john",
+  "full_name": "John Doe",
+  "role": "registered",
+  "is_active": true,
+  "is_verified": false,
+  "last_login": "2026-07-31T00:00:00Z",
+  "created_at": "2026-07-30T00:00:00Z"
+}
+
+---
+
+Note: session/device-management endpoints (list sessions, revoke one/all — docs/23 §6/§11) are intentionally not yet listed here. The underlying business logic exists (`AuthenticationService.revoke_session`/`revoke_all_sessions`, built in Phase 2B), but no route contract has been designed or approved yet — see BACKLOG.md.
 
 ---
 

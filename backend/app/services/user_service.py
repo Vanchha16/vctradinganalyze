@@ -56,7 +56,9 @@ class UserService:
             password_hash=hash_password(password),
             full_name=full_name,
         )
-        return self._user_repository.create(user)
+        self._user_repository.create(user)
+        self._user_repository.commit()
+        return user
 
     def get_user_by_id(self, user_id: uuid.UUID) -> User:
         user = self._user_repository.get_by_id(user_id)

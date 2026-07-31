@@ -28,6 +28,15 @@ class InvalidRefreshTokenException(AuthenticationException):
         super().__init__(message)
 
 
+class InvalidAccessTokenException(AuthenticationException):
+    """Raised when a bearer access token is malformed, expired, or of the wrong type."""
+
+    error_code = "invalid_access_token"
+
+    def __init__(self, message: str = "Invalid or expired access token.") -> None:
+        super().__init__(message)
+
+
 class DuplicateUserException(BusinessException):
     """Raised when registration is attempted with an email or username already in use."""
 

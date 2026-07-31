@@ -1,6 +1,7 @@
 from app.exceptions.auth import (
     DuplicateUserException,
     InactiveAccountException,
+    InvalidAccessTokenException,
     InvalidCredentialsException,
     InvalidRefreshTokenException,
     WeakPasswordException,
@@ -21,6 +22,7 @@ __all__ = [
     "BusinessException",
     "DuplicateUserException",
     "InactiveAccountException",
+    "InvalidAccessTokenException",
     "InvalidCredentialsException",
     "InvalidRefreshTokenException",
     "PermissionDeniedException",

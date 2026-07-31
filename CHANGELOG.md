@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added - Phase 2C: Authentication API
+
+`docs/37_AUTHENTICATION_FLOW.md` - new architecture document defining registration/login/refresh/logout/session-revocation flows, JWT lifecycle, audit-logging flow, service vs. API responsibilities, and future email-verification integration points
+
+API routes (`app/api/v1/routes/auth.py`): `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`, matching `docs/04_API_SPECIFICATION.md`
+
+Pydantic schemas (`app/schemas/auth.py`): `RegisterRequest`, `LoginRequest`, `RefreshRequest`, `LogoutRequest`, `TokenResponse`, `UserResponse` - all with OpenAPI examples; `TokenResponse.expires_in` always derived from `settings.jwt_access_expire_minutes`, never hardcoded
+
+`app/dependencies/auth.py`: `get_user_service`, `get_authentication_service`, and `get_current_user` - the latter deliberately minimal (extract bearer token → decode → verify `type == "access"` → load user), with no authorization checks
+
+`InvalidAccessTokenException` added to `app/exceptions/auth.py` for `get_current_user`'s token-validation failures
+
+`UserService.register_user` now commits its own transaction (previously relied on the caller/tests to commit)
+
+Response envelope conflict resolved: `docs/04` and `docs/33` each described a different, unimplemented `{"success": ...}` envelope; both were corrected to match the shape already implemented in Phase 1 (`app/exceptions/handlers.py`) - unwrapped success bodies, `{"error", "message"}` on failure
+
+`docs/04_API_SPECIFICATION.md` updated with concrete request/response examples for every route, and marked `POST /auth/forgot-password`/`POST /auth/reset-password` as "not yet implemented"
+
+Deliberately excluded from this phase: forgot/reset-password routes, session/device-management routes, OAuth, email verification, RBAC enforcement, rate limiting, CSRF/CSP, cookies
+
+API-level tests: `test_auth_api.py` (11 tests covering all five routes' success and failure paths)
+
+### Status
+
+Phase 2C (Authentication API) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 2B: Authentication Service Layer
 
 `UserService` - registration business logic: password-policy validation (docs/23 §7 — 12+ chars, upper/lower/number/special), email/username uniqueness checks (`DuplicateUserException`), and lookup helpers (`get_user_by_id`, `get_user_by_email`) raising `ResourceNotFoundException` when missing

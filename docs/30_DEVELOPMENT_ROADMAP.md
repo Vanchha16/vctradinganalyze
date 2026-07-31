@@ -76,6 +76,8 @@ Sub-Phases
 
 2B Authentication Service Layer (UserService, AuthenticationService, audit logging integration, custom auth exceptions; ADR-023) - Completed
 
+2C Authentication API (register/login/refresh/logout/me routes, Pydantic schemas, get_current_user dependency, docs/37_AUTHENTICATION_FLOW.md) - Completed
+
 ---
 
 # Phase 3

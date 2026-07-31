@@ -2,7 +2,7 @@
 
 This document preserves unresolved ideas, deferred architectural decisions, documentation gaps, and future enhancements identified during Phases 1.1 through 2A. It is a backlog, not a plan — nothing here is scheduled or approved for implementation until explicitly revisited.
 
-Last updated: 2026-07-31 (Phase 2B: Authentication Service Layer)
+Last updated: 2026-07-31 (Phase 2C: Authentication API)
 
 ---
 
@@ -11,6 +11,7 @@ Last updated: 2026-07-31 (Phase 2B: Authentication Service Layer)
 - **`docs/02_SYSTEM_ARCHITECTURE.md` §3 vs `docs/06_BACKEND_GUIDELINES.md` §3** — the two documents list slightly different backend folder structures. `docs/06` was declared authoritative (per project decision during Phase 1.1 planning), but `docs/02` was never updated to match. Should be reconciled so the two don't silently drift further.
 - **`docs/03_DATABASE_DESIGN.md` §1 vs per-table field lists (§3–§15)** — §1 states every table needs both `created_at` and `updated_at`, but many per-table field lists show only one timestamp (`audit_logs`, `oauth_accounts`, `user_sessions`, `watchlists`, `watchlist_items`, `notifications`, `price_candles`, `indicator_results`, `smc_events`, `telegram_subscriptions`). We've been resolving this case-by-case with `CreatedAtMixin` vs `TimestampMixin`, but the doc itself still contains the contradiction and could use a clarifying note (e.g. "§1 is the default; append-only tables use created_at only").
 - **`docs/04_API_SPECIFICATION.md` is missing email-verification endpoints.** `docs/23_AUTHENTICATION_AND_RBAC.md` §8 requires email verification before protected access, with resend support, but the API spec has no `POST /auth/verify-email` or `POST /auth/resend-verification`. These need to be added to `docs/04` before (or as part of) building that flow.
+- **Resolved in Phase 2C: three-way response-envelope conflict.** `docs/04` described `{"success", "message", "data"/"errors"}`, `docs/33` described a different `{"success", "data"/"error", "meta"/"code"}`, and neither matched the exception handler actually built in Phase 1 (`app/exceptions/handlers.py`), which returns unwrapped success bodies and `{"error", "message"}` on failure. Resolved by keeping the already-implemented shape and correcting both docs to match it (see docs/04 §"Standard Response", docs/33 §"Standard Response", docs/37 §10). Recorded here so the reasoning isn't lost even though the docs are now consistent.
 - **`docs/05_FRONTEND_GUIDELINES.md` §20 lists a top-level `styles/` folder** whose relationship to Next.js's required `app/globals.css` is ambiguous. We kept `globals.css` in `app/` (Next.js convention) and left `styles/` empty for future design tokens — worth confirming this interpretation before real UI work begins.
 - **Tailwind color palette incomplete.** `docs/05` §4 defines a full color palette (primary/success/warning/danger/background/card/border/text), but `tailwind.config.ts` only wires up a minimal shadcn set (border, background, foreground, primary, muted, ring). The full palette and shadcn token set (secondary, destructive, accent, popover, card, input) aren't wired up yet.
 
@@ -37,7 +38,8 @@ Last updated: 2026-07-31 (Phase 2B: Authentication Service Layer)
 - **Future email delivery architecture** — both email verification and password reset depend on a not-yet-designed email subsystem (SMTP provider choice, templating, Celery task for async send, retry/failure handling). Needs its own design pass before either flow can be built, rather than being bolted on ad hoc to whichever flow is implemented first.
 - **MFA** (TOTP, WebAuthn/passkeys, backup codes, trusted devices) — explicitly marked "(Future)" in docs/23 §10.
 - **RBAC enforcement** — a permission-checking FastAPI dependency doesn't exist yet; blocked on the permission-table design noted above. Revisit `User.role` as a simple enum vs. a full `roles`/`permissions`/`role_permissions` schema if requirements grow.
-- **Session/device management endpoints** (docs/23 §11 — list current/previous devices, logout current/other/all) — `UserSessionRepository.list_for_user` exists, but there's no API surface yet.
+- **Session/device management endpoints** (docs/23 §11 — list current/previous devices, logout current/other/all) — `UserSessionRepository.list_for_user` and `AuthenticationService.revoke_session`/`revoke_all_sessions` exist, but there's no API surface yet. **Deliberately excluded from Phase 2C** since `docs/04` doesn't spec a route contract for these — see §6.
+- **`POST /auth/forgot-password`/`POST /auth/reset-password`** are listed in `docs/04` but **deliberately excluded from Phase 2C** (no underlying service logic exists yet; blocked on email infrastructure, per docs/04's Phase 2C update marking them "not yet implemented").
 - **CAPTCHA after repeated failed logins** — explicitly "(Future)" in docs/23 §17.
 - **Google OAuth login flow itself** (docs/23 §2) — only the `OAuthAccount` linking table + repository exist; the actual redirect/callback flow isn't built.
 - **Token revocation strategy using `jti`** — access tokens carry a `jti` claim (unused) but no revocation mechanism has been designed. Refresh-token invalidation is handled (Phase 2B) by deleting the corresponding `UserSession` row (logout/revoke), but **access tokens themselves cannot be revoked before natural expiry** (15 min) — a compromised access token, or a role change, remains valid until it expires. Needs a decision on an access-token denylist (e.g. `jti` checked against Redis) if this window is judged too wide.
@@ -49,6 +51,8 @@ Last updated: 2026-07-31 (Phase 2B: Authentication Service Layer)
 - **CORS is broader than necessary.** `main.py` currently sets `allow_methods=["*"]` and `allow_headers=["*"]` with `allow_credentials=True` — flagged during the very first architecture review (before Phase 1.1 implementation). Should be scoped down to the actual methods/headers in use once the real API surface stabilizes.
 - **Production JWT secret.** The dev placeholder in `.env.example` (`change_this_secret`, 18 bytes) triggers PyJWT's `InsecureKeyLengthWarning` in tests — expected for a placeholder, but a reminder that production deployments must set a real secret ≥32 bytes.
 - **Additional security hardening ideas surfaced during Phase 2A** (not yet scoped to a phase): refresh-token rotation on use, per-session IP/user-agent binding for anomaly detection, and structured logging of auth failures separate from general app logs for easier SIEM ingestion later.
+- **`email-validator` package is not installed.** Pydantic's `EmailStr` requires it, but it isn't in `pyproject.toml` and `uv` isn't available in this sandbox to add/relock it properly. Phase 2C's `RegisterRequest`/`LoginRequest` schemas use a plain `str` field with a basic regex pattern (`^[^@\s]+@[^@\s]+\.[^@\s]+$`) instead — sufficient for structural validation, but not RFC-compliant. Revisit adding `pydantic[email]` (or `email-validator`) as a real dependency in an environment where `uv add`/`uv lock` can run, then switch to `EmailStr`.
+- **`fastapi.security.HTTPBearer` default behavior (institutional knowledge).** With `auto_error=True` (the default), a missing/malformed `Authorization` header raises `401 Unauthorized` (not `403`, which is a common assumption) in the FastAPI/Starlette version pinned here. Verified in Phase 2C via `test_me_rejects_missing_authorization_header`.
 
 ## 5. Database Refinements and Migration Notes
 
@@ -59,16 +63,17 @@ Last updated: 2026-07-31 (Phase 2B: Authentication Service Layer)
 - **Data retention** (`docs/03` §18 — e.g. notifications deleted after 90 days, price candles archived after 2 years) has no implementation yet; not relevant until the corresponding tables exist, but will need scheduled cleanup jobs (likely Celery beat) eventually.
 - **CI doesn't test the migration path.** `.github/workflows/ci.yml` runs ruff/mypy/pytest but doesn't spin up a real Postgres service container and run `alembic upgrade head` against it — would have caught the `server_default` issue automatically instead of relying on manual verification each time. Worth adding.
 
-## 6. Authentication Improvements (from docs/23, deferred out of Phase 2A/2B)
+## 6. Authentication Improvements (from docs/23, deferred out of Phase 2A/2B/2C)
 
 - RBAC expansion: `roles`/`permissions`/`role_permissions` schema + permission-checking dependency + granular permission strings (`signals.publish`, etc.)
 - Email verification endpoints (`POST /auth/verify-email`, `POST /auth/resend-verification` — also need adding to `docs/04`), 24h token expiry, resend flow, and revisiting the Phase 2B decision that `login` doesn't check `is_verified` (see §4 above)
-- Password reset endpoints (forgot/reset), invalidating old sessions on reset
+- Password reset endpoints (forgot/reset), invalidating old sessions on reset — Phase 2C explicitly excluded `POST /auth/forgot-password`/`POST /auth/reset-password` since no service logic exists yet
 - Failed-login lockout (schema + Redis-backed counter)
 - Google OAuth login flow (redirect/callback) — and re-evaluating whether to store provider tokens
-- Session/device management **API endpoints** (list, revoke one/all) — the underlying business logic (`AuthenticationService.revoke_session`/`revoke_all_sessions`) was built in Phase 2B, but there is no route surface yet
+- Session/device management **API endpoints** (list, revoke one/all) — the underlying business logic (`AuthenticationService.revoke_session`/`revoke_all_sessions`) was built in Phase 2B, but Phase 2C deliberately did not add routes for it (no route contract in `docs/04` yet)
 - Access-token revocation via `jti` denylist (see §4 above) — refresh-token/session revocation is handled, access tokens are not
-- API endpoints themselves — `POST /auth/register`, `/login`, `/refresh`, `/logout`, `GET /auth/me` — still not built; Phase 2B implemented the underlying `UserService`/`AuthenticationService` business logic only, no FastAPI routes/dependencies/middleware/cookies
+- Authorization enforcement (`is_active`/`is_verified`/role checks) on protected routes — `get_current_user` (Phase 2C) intentionally only authenticates (extracts/decodes/verifies the token, loads the user); it performs no authorization checks, by design (see docs/37 §10)
+- **Core auth endpoints are now built (Phase 2C):** `POST /auth/register`, `/login`, `/refresh`, `/logout`, `GET /auth/me` — see docs/37_AUTHENTICATION_FLOW.md §10 for the full contract.
 
 ## 7. Inferred Improvements That Should Eventually Reach Documentation/ADRs
 
@@ -76,6 +81,7 @@ Last updated: 2026-07-31 (Phase 2B: Authentication Service Layer)
 - The Alembic `server_default` dialect-rendering gotcha (§5 above) should get a permanent home in the docs, not just this backlog.
 - `docs/02` vs `docs/06` folder-structure divergence (§1 above) should be reconciled.
 - **Sub-phase tracking convention** (1.1, 1.2A, 1.2B, 2A, ...) has been maintained ad hoc — as a "Sub-Phases" note under Phase 1 in `docs/30`, and only in conversation/commit-message prose for Phase 2. Worth deciding whether this should become a formal, consistently-applied part of `docs/30` going forward, or stay lightweight.
+- **docs/04 and docs/33 response-envelope corrections (Phase 2C)** are another example of fixing documentation to match already-implemented reality rather than the reverse — see §1 above.
 
 ## 9. Development Environment Differences (SQLite vs. PostgreSQL)
 

@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://trading_user:change-me@localhost:5432/trading_app"
     redis_url: str = "redis://localhost:6379/0"
 
+    jwt_secret: str = "change_this_secret"
+    jwt_algorithm: str = "HS256"
+    jwt_access_expire_minutes: int = 15
+    jwt_refresh_expire_days: int = 30
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

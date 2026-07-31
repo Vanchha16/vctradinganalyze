@@ -1,0 +1,77 @@
+# Development Backlog
+
+This document preserves unresolved ideas, deferred architectural decisions, documentation gaps, and future enhancements identified during Phases 1.1 through 2A. It is a backlog, not a plan — nothing here is scheduled or approved for implementation until explicitly revisited.
+
+Last updated: 2026-07-31 (Phase 2A closed out — commit, changelog, roadmap updates)
+
+---
+
+## 1. Documentation Inconsistencies to Resolve
+
+- **`docs/02_SYSTEM_ARCHITECTURE.md` §3 vs `docs/06_BACKEND_GUIDELINES.md` §3** — the two documents list slightly different backend folder structures. `docs/06` was declared authoritative (per project decision during Phase 1.1 planning), but `docs/02` was never updated to match. Should be reconciled so the two don't silently drift further.
+- **`docs/03_DATABASE_DESIGN.md` §1 vs per-table field lists (§3–§15)** — §1 states every table needs both `created_at` and `updated_at`, but many per-table field lists show only one timestamp (`audit_logs`, `oauth_accounts`, `user_sessions`, `watchlists`, `watchlist_items`, `notifications`, `price_candles`, `indicator_results`, `smc_events`, `telegram_subscriptions`). We've been resolving this case-by-case with `CreatedAtMixin` vs `TimestampMixin`, but the doc itself still contains the contradiction and could use a clarifying note (e.g. "§1 is the default; append-only tables use created_at only").
+- **`docs/04_API_SPECIFICATION.md` is missing email-verification endpoints.** `docs/23_AUTHENTICATION_AND_RBAC.md` §8 requires email verification before protected access, with resend support, but the API spec has no `POST /auth/verify-email` or `POST /auth/resend-verification`. These need to be added to `docs/04` before (or as part of) building that flow.
+- **`docs/05_FRONTEND_GUIDELINES.md` §20 lists a top-level `styles/` folder** whose relationship to Next.js's required `app/globals.css` is ambiguous. We kept `globals.css` in `app/` (Next.js convention) and left `styles/` empty for future design tokens — worth confirming this interpretation before real UI work begins.
+- **Tailwind color palette incomplete.** `docs/05` §4 defines a full color palette (primary/success/warning/danger/background/card/border/text), but `tailwind.config.ts` only wires up a minimal shadcn set (border, background, foreground, primary, muted, ring). The full palette and shadcn token set (secondary, destructive, accent, popover, card, input) aren't wired up yet.
+
+## 2. Architectural Decisions Deferred to Later Phases
+
+- **RBAC permission tables.** `docs/23` §12–14 describes a granular permission model (roles *have* permissions, e.g. `signals.publish`), but `docs/03` only has a single `role` string column on `users` — no `roles`, `permissions`, or `role_permissions` tables exist anywhere in the schema. We implemented `User.role` as a simple `UserRole` enum for Phase 2A and explicitly deferred the granular permission-table design until RBAC enforcement is actually built.
+- **OAuth token storage.** `OAuthAccount` currently stores only `user_id`, `provider`, `provider_user_id` — no `access_token`/`refresh_token` columns, per explicit decision during Phase 2A. These can be added later (new migration) if a future OAuth integration needs to call the provider's API beyond initial login. If added, revisit whether they need encryption at rest.
+- **All other `docs/03` domain tables** (assets, price_candles, indicator_results, smc_events, news_sources, news_articles, news_sentiment, economic_events, ai_analysis, signals, watchlists, watchlist_items, notifications, telegram_subscriptions, plans, subscriptions, invoices) are deferred to their respective roadmap phases (3–7), per the explicit phase-boundary decision made when scoping Phase 1.2B.
+- **Session-scope helper for non-request contexts.** Considered during Phase 1.2A planning (e.g. a context-manager session helper for scripts/Celery tasks outside FastAPI's request-scoped `get_db`), but judged unnecessary until a real Celery task actually needs DB access. Revisit when the first Celery task requiring DB access is built.
+
+## 3. Improvements Discussed but Intentionally Postponed
+
+- **`GET /metrics`** (docs/04, docs/06 §25 "Prometheus Ready") — not implemented. Health checks exist (`/health`, `/health/ready`); no metrics endpoint yet.
+- **WebSocket endpoints** (`/ws/prices`, `/ws/signals`, `/ws/news`, `/ws/notifications` per docs/04) — not implemented, tied to features that don't exist yet (market data, signals).
+- **Rate limiting** (docs/23 §16, docs/04 "Rate Limits" section) — not implemented. Redis is available and would back this; ties naturally to the auth-hardening work below.
+- **CSRF protection / Content Security Policy headers** (docs/23 §16) — not implemented.
+
+## 4. Security Enhancements Planned for Future Phases
+
+- **Failed-login lockout** (docs/23 §17) — needs new `users` columns (`failed_login_attempts`, `locked_until` — not in `docs/03` currently) plus Redis-backed attempt tracking/backoff logic.
+- **Email verification flow** (docs/23 §8) — token generation/validation logic can be built, but real delivery is blocked on SMTP/Celery email infrastructure, which doesn't exist yet. Explicitly deferred during Phase 2A scoping.
+- **Password reset flow** (docs/23 §9) — same email-infrastructure dependency as above. Must also invalidate old sessions on reset, per docs/23.
+- **Future email delivery architecture** — both email verification and password reset depend on a not-yet-designed email subsystem (SMTP provider choice, templating, Celery task for async send, retry/failure handling). Needs its own design pass before either flow can be built, rather than being bolted on ad hoc to whichever flow is implemented first.
+- **MFA** (TOTP, WebAuthn/passkeys, backup codes, trusted devices) — explicitly marked "(Future)" in docs/23 §10.
+- **RBAC enforcement** — a permission-checking FastAPI dependency doesn't exist yet; blocked on the permission-table design noted above. Revisit `User.role` as a simple enum vs. a full `roles`/`permissions`/`role_permissions` schema if requirements grow.
+- **Session/device management endpoints** (docs/23 §11 — list current/previous devices, logout current/other/all) — `UserSessionRepository.list_for_user` exists, but there's no API surface yet.
+- **CAPTCHA after repeated failed logins** — explicitly "(Future)" in docs/23 §17.
+- **Google OAuth login flow itself** (docs/23 §2) — only the `OAuthAccount` linking table + repository exist; the actual redirect/callback flow isn't built.
+- **Token revocation strategy using `jti`** — JWTs currently carry standard claims but no revocation mechanism has been designed. Needs a decision on storing/checking a `jti` (JWT ID) claim (e.g. against `UserSession` or a Redis denylist) so access tokens can be invalidated before natural expiry (logout, password reset, role change, compromised-token response).
+- **Audit logging is not yet wired up.** The `AuditLog` model and repository exist, but nothing writes to it yet — needs to be hooked into login/logout/password-reset/role-change flows once those endpoints exist (docs/23 §18).
+- **CORS is broader than necessary.** `main.py` currently sets `allow_methods=["*"]` and `allow_headers=["*"]` with `allow_credentials=True` — flagged during the very first architecture review (before Phase 1.1 implementation). Should be scoped down to the actual methods/headers in use once the real API surface stabilizes.
+- **Production JWT secret.** The dev placeholder in `.env.example` (`change_this_secret`, 18 bytes) triggers PyJWT's `InsecureKeyLengthWarning` in tests — expected for a placeholder, but a reminder that production deployments must set a real secret ≥32 bytes.
+- **Additional security hardening ideas surfaced during Phase 2A** (not yet scoped to a phase): refresh-token rotation on use, per-session IP/user-agent binding for anomaly detection, and structured logging of auth failures separate from general app logs for easier SIEM ingestion later.
+
+## 5. Database Refinements and Migration Notes
+
+- **Alembic `server_default` dialect gotcha (institutional knowledge — do not rediscover).** Column *types* in autogenerated migrations render dialect-neutrally (`sa.Uuid()`, `sa.JSON()`, etc.), but `server_default` SQL expressions are compiled against whatever dialect is *connected* at generation time. Generating against our temporary SQLite verification DB has twice produced `server_default=sa.text('(CURRENT_TIMESTAMP)')`, which is invalid Postgres syntax — both times caught and manually corrected to `sa.func.now()` before committing. **Every future migration must be checked for this before committing.** Worth writing up as a short note in `docs/06` or a dedicated migrations runbook so it's not tribal knowledge only visible in chat history.
+- **SQLite requires the `foreign_keys` pragma to be enabled explicitly for tests.** Unlike Postgres, SQLite does not enforce foreign-key constraints by default — repository/model tests that verify FK behavior (e.g. cascade or restrict on delete) must set `PRAGMA foreign_keys=ON` on the test connection/engine, or the tests will silently pass even if the constraint would fail against real Postgres. Verified during Phase 2A when testing `User`/`OAuthAccount`/`UserSession`/`AuditLog` FK relationships.
+- **No migration has ever been verified against real Postgres.** This sandboxed dev environment has no reachable Postgres server; all migrations (`system_settings`, auth tables) have only been round-trip verified against temporary SQLite databases (upgrade → downgrade → upgrade → `alembic check`). Recommend running the full migration chain against actual Postgres (e.g. `docker compose up -d db` then `alembic upgrade head`) at least once before any real deployment.
+- **`system_settings.value`** is a plain `Text` column since `docs/03` doesn't specify a type. If settings need typed values later (booleans, numbers, structured JSON), may need a `value_type` discriminator column or a switch to a JSON column.
+- **Data retention** (`docs/03` §18 — e.g. notifications deleted after 90 days, price candles archived after 2 years) has no implementation yet; not relevant until the corresponding tables exist, but will need scheduled cleanup jobs (likely Celery beat) eventually.
+- **CI doesn't test the migration path.** `.github/workflows/ci.yml` runs ruff/mypy/pytest but doesn't spin up a real Postgres service container and run `alembic upgrade head` against it — would have caught the `server_default` issue automatically instead of relying on manual verification each time. Worth adding.
+
+## 6. Authentication Improvements (from docs/23, deferred out of Phase 2A)
+
+- RBAC expansion: `roles`/`permissions`/`role_permissions` schema + permission-checking dependency + granular permission strings (`signals.publish`, etc.)
+- Email verification endpoints (`POST /auth/verify-email`, `POST /auth/resend-verification` — also need adding to `docs/04`), 24h token expiry, resend flow
+- Password reset endpoints (forgot/reset), invalidating old sessions on reset
+- Failed-login lockout (schema + Redis-backed counter)
+- Google OAuth login flow (redirect/callback) — and re-evaluating whether to store provider tokens
+- Session/device management endpoints (list, revoke one/all)
+- Audit logging hookup into real auth flows once they exist
+- Core auth endpoints themselves — `POST /auth/register`, `/login`, `/refresh`, `/logout`, `GET /auth/me` — not yet built; Phase 2A was models + security primitives only
+
+## 7. Inferred Improvements That Should Eventually Reach Documentation/ADRs
+
+- **ADR-022** (OAuth `(provider, provider_user_id)` uniqueness) is the first example of documenting an inferred schema decision not explicitly in `docs/03`. Continue this practice — likely candidates: the future `roles`/`permissions` table design, the future `failed_login_attempts`/`locked_until` columns, and the future OAuth token-storage decision if it's revisited.
+- The Alembic `server_default` dialect-rendering gotcha (§5 above) should get a permanent home in the docs, not just this backlog.
+- `docs/02` vs `docs/06` folder-structure divergence (§1 above) should be reconciled.
+- **Sub-phase tracking convention** (1.1, 1.2A, 1.2B, 2A, ...) has been maintained ad hoc — as a "Sub-Phases" note under Phase 1 in `docs/30`, and only in conversation/commit-message prose for Phase 2. Worth deciding whether this should become a formal, consistently-applied part of `docs/30` going forward, or stay lightweight.
+
+## 8. Outstanding Validation Gaps
+
+- **Docker has never actually been run in this environment.** No `docker` CLI is available in this sandbox, so `docker build`, `docker compose up`, and `docker compose config` (beyond static YAML parsing) have never been executed end-to-end across any phase. All Docker-related work has been verified by static review only. This should be validated in a real environment before considering the Docker setup production-ready.

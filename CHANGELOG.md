@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added - Phase 2A: Authentication Data & Security Primitives
+
+`User`, `OAuthAccount`, `UserSession`, and `AuditLog` models, plus `UserRole` and related enums, completing the auth-related domain models deferred from Phase 1.2B
+
+`(provider, provider_user_id)` uniqueness constraint on `OAuthAccount`, documented as ADR-022 since it was inferred rather than explicitly specified in `docs/03`
+
+OAuth token persistence intentionally omitted from `OAuthAccount` for this phase (only linking fields are stored)
+
+`UserRepository`, `OAuthAccountRepository`, `UserSessionRepository`, `AuditLogRepository` - concrete repositories limited to data access, no business logic
+
+`app/core/security.py` - password hashing and UUID-based JWT helpers with standard claims
+
+Alembic migration for auth tables (`a7dad339df2e_create_auth_tables`), verified via upgrade/downgrade/upgrade round-trip and `alembic check`
+
+Tests covering security utilities, user models, and foreign-key behavior
+
+Business logic, API endpoints, and authentication flows (register/login/refresh/logout) intentionally deferred to a later phase; see `BACKLOG.md`
+
+### Status
+
+Phase 2A (Authentication Data & Security Primitives) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 1.2B: Domain Models
 
 `SystemSetting` model - the first real domain model, with a unique/indexed `key`, `value`, `description`, and full created_at/updated_at

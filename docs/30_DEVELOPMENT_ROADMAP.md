@@ -66,6 +66,14 @@ Admin Panel
 
 Feature Flags
 
+Status
+
+In Progress
+
+Sub-Phases
+
+2A Authentication Data & Security Primitives (User, OAuthAccount, UserSession, AuditLog models; JWT/password hashing utilities; ADR-022) - Completed
+
 ---
 
 # Phase 3

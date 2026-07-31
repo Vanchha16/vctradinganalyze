@@ -721,6 +721,48 @@ Review if uv adoption stalls or a superior tool emerges.
 
 ---
 
+# ADR-022
+
+Title
+
+Enforce Uniqueness on OAuthAccount (provider, provider_user_id)
+
+Status
+
+Accepted
+
+Context
+
+docs/03_DATABASE_DESIGN.md §3 defines the `oauth_accounts` table but does not specify a uniqueness constraint on the combination of `provider` and `provider_user_id`.
+
+Decision
+
+Add a unique constraint on `(provider, provider_user_id)` in the `oauth_accounts` table.
+
+Reason
+
+Without this constraint, the same external OAuth identity (e.g. the same Google account) could be linked to a ClaudeTrading account more than once, or linked inconsistently across concurrent requests, producing duplicate or ambiguous account-linking records.
+
+This is an inferred correctness requirement, not an explicit item in docs/03 - recorded here per CLAUDE.md's "never invent architecture" rule so schema decisions beyond the literal documentation stay traceable.
+
+Trade-offs
+
+Pros
+
+Prevents duplicate/ambiguous OAuth identity links.
+
+Matches standard practice for OAuth account-linking tables.
+
+Cons
+
+None identified; a unique constraint on this pair has no legitimate case for duplication.
+
+Future Review
+
+Revisit if a provider requires multiple linked identities per (provider, provider_user_id) pair (not currently anticipated).
+
+---
+
 # Review Policy
 
 Review ADRs:

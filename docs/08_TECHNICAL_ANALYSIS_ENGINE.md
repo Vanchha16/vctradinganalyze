@@ -219,7 +219,9 @@ Bullish Continuation
 
 Each indicator contributes to a technical score.
 
-Example
+**Note (Phase 4A): the example below is illustrative only and does not sum to the stated maximum of 100 (20+15+15+10+10+5 = 75).** The definitive, complete scoring formula actually implemented (a 100-point breakdown across trend/strength/momentum/oscillator/volume/volatility/support-resistance, with per-conflict penalties) is documented in `docs/42_TECHNICAL_ANALYSIS_ARCHITECTURE.md` §7 and **ADR-028** - treat that as canonical, not the example below.
+
+Example (illustrative, superseded by ADR-028 - see above)
 
 EMA Alignment
 
@@ -267,6 +269,8 @@ Mixed Trend
 
 Reduce confidence
 
+**Note (Phase 4A):** implemented as a fixed per-conflict score penalty (docs/42 §8, ADR-028), not a trend-verdict override - the trend classification itself is decided solely by moving-average alignment (docs/42 §9); conflicts affect `technical_score` only.
+
 ---
 
 # 11. Output Format
@@ -275,8 +279,18 @@ Reduce confidence
     "trend": "Bullish",
     "strength": "Strong",
     "technical_score": 82,
-    "support": 1.18400,
-    "resistance": 1.19150,
+    "score_breakdown": {
+        "trend": 25.0,
+        "momentum": 15.0,
+        "oscillator": 15.0,
+        "volume": 15.0,
+        "volatility": 10.0,
+        "support_resistance": 5.0,
+        "penalties": -3.0,
+        "total": 82.0
+    },
+    "support": {"price": 1.18400, "source": "swing_low", "strength": "weak"},
+    "resistance": {"price": 1.19150, "source": "daily_high", "strength": "moderate"},
     "indicators": {
         "ema20": "...",
         "ema50": "...",
@@ -286,6 +300,8 @@ Reduce confidence
     },
     "warnings": []
 }
+
+**Note (Phase 4A):** `score_breakdown` (explainable per-factor components) and structured `support`/`resistance` objects (price + source + strength, not bare numbers) were added per Phase 4A's approved refinements - see docs/42 and `app/schemas/technical_analysis.py` for the exact shape.
 
 ---
 

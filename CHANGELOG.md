@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Added - Phase 4A: Technical Analysis Engine
+
+`docs/42_TECHNICAL_ANALYSIS_ARCHITECTURE.md` - new architecture document defining the data flow, analyzer responsibilities, missing-indicator policy, support/resistance algorithm, scoring formula, and multi-timeframe combination algorithm
+
+`app/services/technical_analysis/` - nine deterministic, stateless analyzers (`MovingAverageAnalyzer`, `TrendAnalyzer`, `MomentumAnalyzer`, `OscillatorAnalyzer`, `VolatilityAnalyzer`, `VolumeAnalyzer`, `SupportResistanceAnalyzer`, `MultiTimeframeAnalyzer`, `ConflictAnalyzer`) plus `TechnicalScoringEngine`, each a pure function over plain dataclasses - no database access, no AI, no probabilistic reasoning (ADR-031)
+
+`TechnicalAnalysisEngine` (`app/services/technical_analysis_engine.py`) - the top-level, fully stateless orchestrator (ADR-027): fetches candles via the existing `PriceCandleRepository`, computes every indicator fresh via the Phase 3A `app/indicators` registry (not persisted `indicator_results`, avoiding staleness), runs every analyzer, and assembles one `TechnicalAnalysisResult`
+
+Definitive 100-point technical scoring formula (ADR-028), superseding docs/08 §9's illustrative example, which only summed to 75 despite the same section stating a maximum of 100 - a genuine internal inconsistency in docs/08, not just an incomplete example. Score reported as a full `ScoreBreakdown` (trend/momentum/oscillator/volume/volatility/support_resistance/penalties/total), not just the single total - Phase 4A refinement for explainability
+
+Support/Resistance evidence extended with `source` and `strength` metadata per level (Phase 4A refinement), not just a bare price; round numbers/psychological levels use a magnitude-aware rounding heuristic (ADR-029) rather than a hardcoded per-symbol table
+
+Multi-timeframe combination algorithm (ADR-030): D1/H4/H1/M15 weighted 40/30/20/10, a ±0.5 net-ratio threshold determines `bullish_alignment`/`bearish_alignment`/`mixed` - a missing timeframe is skipped, not treated as neutral
+
+**ADR-031**: "Technical Analysis Produces Evidence, Not Trading Signals" - makes explicit (beyond ADR-005/006) that this engine never produces a BUY/SELL/WAIT recommendation or entry/stop-loss/take-profit level; that remains the future Signal Engine's job (docs/30 Phase 6)
+
+New public (no auth) endpoints: `GET /analysis/technical/{symbol}?timeframe=` and `GET /analysis/technical/{symbol}/multi-timeframe`, matching the Phase 3C precedent for non-personalized market reference data
+
+docs/04 and docs/08 updated: docs/04 documents the two new endpoints' concrete contracts (previously marked "not yet implemented"); docs/08 §9/§10/§11 annotated to point at docs/42/ADR-028 as the canonical scoring source, rather than leaving the internally-inconsistent example uncorrected
+
+Phase-numbering note: tracked as sub-phase **4A** in docs/30 (SMC Engine = 4B, Market Regime Engine = 4C, Confidence Engine = 4D), per docs/30's existing Phase 4 grouping (which includes SMC, unlike an earlier informal framing that treated SMC as a separate later phase)
+
+A real bug was caught during test-writing, not just implementation: an initial `zip(emas, emas[1:], strict=True)` in `MovingAverageAnalyzer` was wrong - the two sequences are intentionally different lengths to produce sliding pairs, and `strict=True` made that fail immediately once real test data was run
+
+Tests: `test_technical_analysis_analyzers.py`, `test_support_resistance_analyzer.py`, `test_scoring_engine.py`, `test_multi_timeframe_analyzer.py`, `test_technical_analysis_engine.py` (integration), `test_technical_analysis_api.py` (53 new tests total)
+
+Deliberately out of scope: any BUY/SELL/WAIT recommendation, Smart Money Concepts (Phase 4B), News/Economic analysis (Phase 5), AI Orchestrator integration (Phase 6), persisted technical-analysis history
+
+### Status
+
+Phase 4A (Technical Analysis Engine) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 3C: Market Data API
 
 `GET /assets`, `GET /assets/{symbol}`, `GET /market/{symbol}/latest`, `GET /market/{symbol}/candles`, `GET /market/{symbol}/indicators` - all public, no authentication required (per explicit decision: market reference data isn't user-specific, matching docs/04's Guest rate-limit tier and docs/23 §12's "View Public Pages")

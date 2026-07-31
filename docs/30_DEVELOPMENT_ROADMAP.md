@@ -116,6 +116,20 @@ Market Regime Engine
 
 Confidence Engine
 
+Status
+
+In Progress
+
+Sub-Phases
+
+4A Technical Analysis Engine (nine deterministic analyzers, TechnicalScoringEngine, stateless TechnicalAnalysisEngine; docs/42_TECHNICAL_ANALYSIS_ARCHITECTURE.md, ADR-027 through ADR-031) - Completed
+
+4B SMC Engine - Not started
+
+4C Market Regime Engine - Not started
+
+4D Confidence Engine - Not started
+
 ---
 
 # Phase 5

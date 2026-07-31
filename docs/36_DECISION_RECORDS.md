@@ -971,6 +971,248 @@ Revisit if enough providers accumulate near-identical transport classes that a g
 
 ---
 
+# ADR-027
+
+Title
+
+Technical Analysis Engine Is Stateless (No Persisted Snapshot Table)
+
+Status
+
+Accepted
+
+Context
+
+Phase 4A's Technical Analysis Engine (docs/08, docs/42) synthesizes trend/strength/technical-score/support-resistance from candles and indicators. docs/03 has no table for this computed output (only `indicator_results` for raw values, built in Phase 3A). Two options existed: persist each computed analysis as a new table/migration, or compute it fresh on every request.
+
+Decision
+
+`TechnicalAnalysisEngine` is fully stateless. `analyze()` and `analyze_multi_timeframe()` recompute trend/score/support-resistance from live `price_candles` and freshly-calculated indicators (via the existing `app/indicators` registry, not persisted `indicator_results` rows) on every call. No new table, no migration.
+
+Reason
+
+Avoids a second source of truth (a stored snapshot could disagree with what fresh computation would produce, with no clear rule for which is authoritative) and avoids staleness (a persisted snapshot would only be as fresh as its last computation, whereas an on-demand request should reflect the current market state). The existing indicator functions are already fast (proven in Phase 3A), so recomputation cost is low. The future AI Orchestrator (Phase 6, per docs/07) is expected to call this engine directly rather than read a stored result.
+
+Alternatives Considered
+
+Option A: Persist every computed analysis in a new `technical_analysis_snapshots` table - rejected, adds a migration and a second source of truth for no clear benefit at this phase, and nothing downstream needs historical technical-analysis snapshots yet.
+
+Option B (chosen): Fully stateless, computed fresh per request.
+
+Trade-offs
+
+Pros
+
+No schema/migration needed.
+
+Guaranteed freshness - no staleness window between a scheduled computation and a request.
+
+Single source of truth (candles + indicators), not two.
+
+Cons
+
+Every request recomputes rather than reading a cached row - acceptable given docs/08 §13's performance target and the existing indicator functions' proven speed.
+
+No historical audit trail of past technical-analysis snapshots.
+
+Future Review
+
+Revisit if the AI Orchestrator (Phase 6) or a future audit/replay requirement (ADR-015's "Admin Replay Capability" is about AI decisions specifically, not this deterministic engine, but the same instinct could extend here) needs historical technical-analysis snapshots, not just the current one.
+
+---
+
+# ADR-028
+
+Title
+
+Definitive Technical Scoring Formula (100-Point Breakdown)
+
+Status
+
+Accepted
+
+Context
+
+docs/08 §9 gives an illustrative scoring example (EMA Alignment +20, MACD Bullish +15, ADX Strong +15, RSI Healthy +10, VWAP Above Price +10, ATR Stable +5) that sums to 75, not the same section's stated "Maximum Technical Score: 100" - an internal inconsistency, not just an incomplete example. A complete, definitive formula was needed.
+
+Decision
+
+A 100-point breakdown across seven components, implemented in `app/services/technical_analysis/scoring_engine.py`:
+
+- Trend alignment: up to 25 (moving-average alignment score, docs/42 §7)
+- Trend strength: up to 15 (ADX-derived, docs/42 §9)
+- Momentum: up to 15 (MACD direction agreement with trend)
+- Oscillator: up to 15 (RSI/Stochastic RSI/CCI health)
+- Volume: up to 15 (VWAP position agreement with trend)
+- Volatility: up to 10 (Bollinger Band state)
+- Support/Resistance: up to 5 (proximity context available)
+
+Each detected conflict (`ConflictAnalyzer`) subtracts a fixed 10 points, floored at 0 overall (never negative). `ScoreBreakdown` reports every component separately, not just the total (Phase 4A refinement - explainability for future AI reasoning).
+
+Reason
+
+docs/08 §9's example could not be implemented as-is (it doesn't reach its own stated maximum), so a complete formula had to be designed rather than merely filled in. Distributing points by "which factor family" (trend/momentum/oscillator/volume/volatility/support-resistance) rather than by individual indicator keeps the breakdown meaningful and stable even as individual indicator interpretations are refined later.
+
+Alternatives Considered
+
+Option A: Keep docs/08 §9's exact weights and simply accept a max of 75 - rejected, contradicts the doc's own stated maximum and under-uses momentum/oscillator/volume signal.
+
+Option B (chosen): A complete, documented 100-point breakdown per factor family, with per-conflict penalties.
+
+Trade-offs
+
+Pros
+
+Actually reaches the documented maximum of 100.
+
+Explainable per-factor breakdown, not just a single opaque number.
+
+Cons
+
+The exact point allocations (25/15/15/15/15/10/5) are a considered but ultimately somewhat arbitrary judgment call, like docs/08's own example was - not derived from a backtest or statistical model.
+
+Future Review
+
+Revisit the weight allocation once real trading outcomes (via the future Signal Engine, Phase 6) can be correlated against these scores - this is a starting point, not a tuned model.
+
+---
+
+# ADR-029
+
+Title
+
+Magnitude-Aware Rounding Heuristic for Round Numbers / Psychological Levels
+
+Status
+
+Accepted
+
+Context
+
+docs/08 §6 names "Round Numbers" and "Psychological Levels" as support/resistance categories but doesn't define how to compute them. A hardcoded per-symbol table (e.g. "EURUSD rounds to 0.0050, XAUUSD rounds to 5.0") wouldn't generalize to new assets without ongoing maintenance.
+
+Decision
+
+`support_resistance_analyzer._round_number_levels` computes a step size proportional to the current price's order of magnitude (`10^floor(log10(price)) / 20`), rounding to the nearest such step above and below the current price - e.g. ~0.005 for a ~1.10 forex pair, ~100 for a ~2400 gold/index price - rather than a per-symbol lookup table.
+
+Reason
+
+A magnitude-based heuristic generalizes automatically to any asset's price scale without needing a maintained table entry per symbol, consistent with docs/38/40/41's preference for adapter logic over persisted/hardcoded per-asset mapping tables where a general rule suffices.
+
+Alternatives Considered
+
+Option A: Hardcoded per-symbol step table - rejected, doesn't scale to new assets without maintenance, the exact failure mode this project has repeatedly avoided elsewhere (docs/38 §3, docs/41 §3).
+
+Option B (chosen): Magnitude-aware proportional step size.
+
+Trade-offs
+
+Pros
+
+Generalizes to any asset/price scale automatically.
+
+No maintenance burden as new assets are added.
+
+Cons
+
+The specific divisor (÷20) is a considered but somewhat arbitrary constant, not derived from market-microstructure research per asset class.
+
+Future Review
+
+Revisit if a specific asset class's real-world round-number conventions (e.g. crypto's preference for round numbers at different scales than forex) are found to diverge meaningfully from this generic heuristic.
+
+---
+
+# ADR-030
+
+Title
+
+Multi-Timeframe Weighted-Combination Algorithm
+
+Status
+
+Accepted
+
+Context
+
+docs/08 §8 gives one narrative example (Daily Bullish, H4 Bullish, H1 Pullback, M15 Bullish → "Bullish Continuation") establishing that higher timeframes carry more weight, but not a general algorithm for combining four timeframes' trend directions into one verdict.
+
+Decision
+
+Weighted combination scoped to exactly the four timeframes docs/08 §8 names - D1 (weight 40), H4 (30), H1 (20), M15 (10), summing to 100, mirroring the scoring engine's pattern. Each timeframe's trend contributes +weight (bullish), -weight (bearish), or 0 (sideways) to a net total; the ratio of net-to-max-possible determines the verdict: ≥0.5 → `bullish_alignment`, ≤-0.5 → `bearish_alignment`, otherwise → `mixed`. Implemented in `app/services/technical_analysis/multi_timeframe_analyzer.py`.
+
+Reason
+
+A ±0.5 threshold requires a genuine majority (not just any positive lean) before declaring full alignment, which matches the intent of docs/08 §8's example (all four timeframes agreeing, or a clear majority with only a "pullback" dissenting) rather than letting a single dissenting higher-timeframe vote be overridden by a bare plurality of lower-timeframe votes.
+
+Alternatives Considered
+
+Option A: Simple majority vote (3 of 4 agree) ignoring weight - rejected, contradicts docs/08 §8's explicit statement that "Higher timeframe always has greater weight."
+
+Option B (chosen): Weighted net score against a 0.5 alignment threshold.
+
+Trade-offs
+
+Pros
+
+Directly reflects the documented "higher timeframe = more weight" rule.
+
+A single dissenting timeframe (like docs/08's own "H1 Pullback" example) doesn't prevent an otherwise-clear alignment.
+
+Cons
+
+The exact weights (40/30/20/10) and the 0.5 threshold are considered judgment calls, not derived from a formal model.
+
+Future Review
+
+Revisit the weights/threshold alongside ADR-028's scoring weights, once real outcomes can inform tuning (Phase 6+).
+
+---
+
+# ADR-031
+
+Title
+
+Technical Analysis Produces Evidence, Not Trading Signals
+
+Status
+
+Accepted
+
+Context
+
+The Technical Analysis Engine (Phase 4A) computes trend direction, strength, a technical score, and support/resistance levels - output that could superficially resemble a trading recommendation. ADR-005 ("Separate AI from Business Logic") and ADR-006 ("Use Deterministic Technical Engines") already establish that indicators are calculated in code, never by AI, but neither explicitly states what this specific engine's output *is* and *is not* for.
+
+Decision
+
+The Technical Analysis Engine produces **structured evidence only** - `TechnicalAnalysisResult`/`MultiTimeframeResult` (trend, strength, score breakdown, support/resistance, warnings). It never produces a BUY/SELL/WAIT recommendation, an entry/stop-loss/take-profit level, or any other trading decision. It is fully deterministic - no AI, no LLM, no probabilistic reasoning anywhere in `app/services/technical_analysis/`. Generating trading decisions from this (and other engines') evidence is explicitly the future Signal Engine's responsibility (docs/30 Phase 6), not this engine's.
+
+Reason
+
+Making this explicit (rather than relying on it being implied by ADR-005/006) matters specifically for this engine because its output - a 0-100 "technical_score" and a directional "trend" - is the closest thing in the codebase so far to something that *looks* like a recommendation. Future contributors (or a future AI Orchestrator integration) must not conflate "high technical_score, bullish trend" with "a signal to buy" - that inference, if made, belongs to the Signal Engine, which will combine this evidence with SMC/News/Economic/Risk evidence from other engines (docs/07 §3's pipeline) before any recommendation is generated.
+
+Alternatives Considered
+
+Option A: Leave this implicit, relying on ADR-005/006 and docs/08 §1's "DOES NOT generate BUY or SELL signals" - rejected, given how easily a "technical_score" could be mistaken for a readiness-to-trade signal by a future integrator skimming the code rather than the docs.
+
+Option B (chosen): An explicit ADR stating the boundary plainly, alongside docs/08 §1's existing statement.
+
+Trade-offs
+
+Pros
+
+Removes ambiguity for whoever builds the Signal Engine (Phase 6) or AI Orchestrator integration (also Phase 6) about what this engine's output means and doesn't mean.
+
+Cons
+
+None identified - this is a clarifying, not a functional, decision.
+
+Future Review
+
+Revisit only if the project's phase boundaries themselves change (e.g. if a future decision merges signal generation into this engine, which would require superseding this ADR explicitly, not just quietly building around it).
+
+---
+
 # Review Policy
 
 Review ADRs:

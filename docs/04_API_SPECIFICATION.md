@@ -327,29 +327,47 @@ Response
 
 # Technical Analysis
 
-**Not yet implemented** (Phase 4 - Technical Analysis Engine, docs/08). This returns *synthesized* trend detection, technical scoring, and conflict detection built on top of the raw indicator values `GET /market/{symbol}/indicators` (above) already exposes today. Do not confuse the two.
+Implemented (Phase 4A - Technical Analysis Engine, docs/08, docs/42). Deterministic evidence only (ADR-031) - never a BUY/SELL/WAIT recommendation. Public - no authentication required, same rationale as `GET /market/{symbol}/indicators` above (non-personalized reference-style content).
 
-GET /analysis/technical/{symbol}
+GET /analysis/technical/{symbol}?timeframe=H1
 
-Returns
+Query parameters
 
-EMA
+timeframe (required)
 
-RSI
+Response
 
-MACD
+{
+  "symbol", "timeframe",
+  "trend", "strength",
+  "technical_score",
+  "score_breakdown": { "trend", "momentum", "oscillator", "volume", "volatility", "support_resistance", "penalties", "total" },
+  "support": { "price", "source", "strength" },
+  "resistance": { "price", "source", "strength" },
+  "support_levels": [ { "price", "source", "strength" } ],
+  "resistance_levels": [ { "price", "source", "strength" } ],
+  "indicators": { "ema_20": "...", "rsi_14": "...", "...": "..." },
+  "warnings": [],
+  "calculated_at"
+}
 
-ADX
+`score_breakdown` and structured `support`/`resistance` objects (price + source + strength, not bare numbers) are Phase 4A additions beyond docs/08 §11's original sketch - see docs/42 §7/§11 for the full contract and rationale.
 
-ATR
+404 if the asset is unknown, or if no candles exist yet for that asset/timeframe.
 
-VWAP
+---
 
-Support
+GET /analysis/technical/{symbol}/multi-timeframe
 
-Resistance
+Public. Combines Daily/H4/H1/M15 trend classifications into one verdict (docs/08 §8, ADR-030) - distinct from the single-timeframe endpoint above.
 
-Trend
+Response
+
+{
+  "symbol",
+  "verdict",
+  "timeframes": [ { "timeframe", "trend", "strength" } ]
+}
 
 ---
 

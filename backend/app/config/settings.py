@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     jwt_access_expire_minutes: int = 15
     jwt_refresh_expire_days: int = 30
 
+    market_data_providers: list[str] = ["mock"]
+    market_data_retry_max_attempts: int = 3
+    market_data_retry_backoff_seconds: float = 1.0
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

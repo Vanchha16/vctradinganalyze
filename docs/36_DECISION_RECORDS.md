@@ -821,6 +821,56 @@ Revisit if refresh tokens are ever generated with lower entropy, or if a token-r
 
 ---
 
+# ADR-024
+
+Title
+
+Enforce Uniqueness on PriceCandle (asset_id, timeframe, timestamp)
+
+Status
+
+Accepted
+
+Context
+
+docs/03_DATABASE_DESIGN.md §5 specifies an index on `price_candles(asset_id, timeframe, timestamp)` but does not state that the combination must be unique. docs/34_DATA_PROVIDER_SPECIFICATION.md's "Validation" section explicitly requires "Duplicate Detection" for market data, and a candle for a given asset/timeframe/timestamp is logically singular - two rows for the same instant would be ambiguous, not a legitimate case of multiple valid candles.
+
+Decision
+
+Add a unique constraint on `(asset_id, timeframe, timestamp)` in the `price_candles` table. Ingestion (`PriceCandleRepository.upsert`) treats a write to an existing key as a correction (overwrite the OHLCV values), not a rejected duplicate - this handles providers that revise a still-forming candle, and makes re-running a collection job safe to retry.
+
+Reason
+
+Without this constraint, a retried or overlapping collection window could insert duplicate rows for the same candle, corrupting downstream indicator calculations and historical queries.
+
+This is an inferred correctness requirement, not an explicit item in docs/03 - recorded here per CLAUDE.md's "never invent architecture" rule, following the ADR-022/ADR-023 precedent for schema decisions beyond the literal documentation.
+
+Alternatives Considered
+
+Option A: No uniqueness constraint, dedupe only in application logic before insert - rejected, this can't prevent duplicates from concurrent/overlapping collection runs at the database level.
+
+Option B: Unique constraint with hard rejection (reject the whole write on conflict) - rejected, providers legitimately revise still-forming candles, so an overwrite-on-conflict (upsert) is more useful than an error.
+
+Option C (chosen): Unique constraint + upsert-on-conflict in the repository.
+
+Trade-offs
+
+Pros
+
+Prevents duplicate/ambiguous candle rows.
+
+Makes ingestion idempotent and safe to retry.
+
+Cons
+
+None identified; a unique constraint on this triple has no legitimate case for duplication.
+
+Future Review
+
+Revisit if a future provider needs to store multiple revisions of the same candle rather than overwriting (not currently anticipated).
+
+---
+
 # Review Policy
 
 Review ADRs:

@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### Added - Phase 3A: Market Data Foundation
+
+`docs/38_MARKET_DATA_ARCHITECTURE.md` - new architecture document defining the provider abstraction, symbol/timeframe normalization, data validation, duplicate detection, retry/failover, scheduler design, and provider lifecycle for the market-data pipeline
+
+`docs/39_INDICATOR_REFERENCE.md` - new canonical reference for every implemented indicator: mathematical definition, inputs, parameters, output fields, warm-up requirements, numerical precision, and external source, for all 18 registered indicators
+
+`app/models/enums/` restructured from a single `enums.py` into a package (`user_role.py`, `timeframe.py`, `market_type.py`), scaling better as domain enums grow; all existing imports (`from app.models.enums import UserRole`) are unaffected
+
+New models: `Asset` (`TimestampMixin`), `PriceCandle` (`CreatedAtMixin`, unique on `(asset_id, timeframe, timestamp)` - see ADR-024), `IndicatorResult` (own `calculated_at` column) - per docs/03 §5-6
+
+New repositories: `AssetRepository`, `PriceCandleRepository` (`upsert`, `get_latest`, `list_range`, `list_recent`), `IndicatorResultRepository` - data access only
+
+Alembic migration for `assets`/`price_candles`/`indicator_results`, verified via upgrade/downgrade/upgrade round-trip and `alembic check`; the recurring `server_default` SQLite-vs-Postgres gotcha (BACKLOG.md §9) was caught and corrected again before committing
+
+`MarketDataProvider` interface (`app/services/market_data/providers/base.py`) and `MockMarketDataProvider` - a deterministic, seeded synthetic OHLCV generator; no external API integration this phase (Phase 3B adds the first real provider, Twelve Data)
+
+`CandleValidator` - a dedicated component owning candle validation rules (docs/08 §12), kept separate from `MarketDataService`, which only orchestrates the fetch → normalize → validate → persist workflow
+
+`MarketDataService` - retry-with-backoff and provider failover (falling back to already-stored data when every provider fails), idempotent persistence via `PriceCandleRepository.upsert`
+
+Scheduler: a single conceptual Celery task (`market_data.collect_for_timeframe`) parameterized by `Timeframe`, with one Celery Beat schedule entry per timeframe (`app/workers/market_data_tasks.py`) - not a separate task per timeframe
+
+`app/indicators/` package (per docs/06 §3's reserved top-level folder), organized into `trend.py`, `momentum.py`, `volatility.py`, `volume.py`, `trend_strength.py`, with a discovery registry (`app/indicators/registry.py`) - implements the full docs/08 §5 indicator list: EMA (20/50/100/200), SMA (200), RSI (14), MACD (12/26/9), Stochastic RSI (14), CCI (20), Momentum (10), ATR (14), Bollinger Bands (20/2), Standard Deviation (20), VWAP, OBV, Volume SMA (20), Relative Volume (20), ADX/DI+/DI- (14)
+
+`IndicatorService` - populates `indicator_results` with raw indicator values only; deliberately no trend detection, technical scoring, or conflict detection (docs/08 §7-11 remains Phase 4's Technical Analysis Engine)
+
+`ADR-024` - unique constraint + upsert semantics on `PriceCandle`
+
+Tests: `test_indicators.py`, `test_market_data_models.py`, `test_candle_validator.py`, `test_market_data_service.py`, `test_mock_provider.py`, `test_indicator_service.py`, `test_market_data_tasks.py`
+
+Deliberately excluded from this phase: any real market-data provider, a persisted symbol-mapping table, `/health/ready` provider-status integration, indicator synthesis/trend detection/technical scoring, SMC/regime/confidence engines, WebSocket price streaming
+
+### Status
+
+Phase 3A (Market Data Foundation) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 2C: Authentication API
 
 `docs/37_AUTHENTICATION_FLOW.md` - new architecture document defining registration/login/refresh/logout/session-revocation flows, JWT lifecycle, audit-logging flow, service vs. API responsibilities, and future email-verification integration points

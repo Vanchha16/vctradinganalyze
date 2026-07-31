@@ -90,6 +90,16 @@ Indicators
 
 Historical Storage
 
+Status
+
+In Progress
+
+Sub-Phases
+
+3A Market Data Foundation (provider abstraction, MockMarketDataProvider, Asset/PriceCandle/IndicatorResult models, indicator-calculation engine + registry, scheduler; docs/38_MARKET_DATA_ARCHITECTURE.md, ADR-024) - Completed
+
+3B Real Provider Integration (Twelve Data) - Not started
+
 ---
 
 # Phase 4

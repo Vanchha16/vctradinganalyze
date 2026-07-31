@@ -2,7 +2,7 @@
 
 This document preserves unresolved ideas, deferred architectural decisions, documentation gaps, and future enhancements identified during Phases 1.1 through 2A. It is a backlog, not a plan — nothing here is scheduled or approved for implementation until explicitly revisited.
 
-Last updated: 2026-07-31 (Phase 2C: Authentication API)
+Last updated: 2026-07-31 (Phase 3A: Market Data Foundation)
 
 ---
 
@@ -19,7 +19,7 @@ Last updated: 2026-07-31 (Phase 2C: Authentication API)
 
 - **RBAC permission tables.** `docs/23` §12–14 describes a granular permission model (roles *have* permissions, e.g. `signals.publish`), but `docs/03` only has a single `role` string column on `users` — no `roles`, `permissions`, or `role_permissions` tables exist anywhere in the schema. We implemented `User.role` as a simple `UserRole` enum for Phase 2A and explicitly deferred the granular permission-table design until RBAC enforcement is actually built.
 - **OAuth token storage.** `OAuthAccount` currently stores only `user_id`, `provider`, `provider_user_id` — no `access_token`/`refresh_token` columns, per explicit decision during Phase 2A. These can be added later (new migration) if a future OAuth integration needs to call the provider's API beyond initial login. If added, revisit whether they need encryption at rest.
-- **All other `docs/03` domain tables** (assets, price_candles, indicator_results, smc_events, news_sources, news_articles, news_sentiment, economic_events, ai_analysis, signals, watchlists, watchlist_items, notifications, telegram_subscriptions, plans, subscriptions, invoices) are deferred to their respective roadmap phases (3–7), per the explicit phase-boundary decision made when scoping Phase 1.2B.
+- **`docs/03` domain tables not yet built** (smc_events, news_sources, news_articles, news_sentiment, economic_events, ai_analysis, signals, watchlists, watchlist_items, notifications, telegram_subscriptions, plans, subscriptions, invoices) are deferred to their respective roadmap phases (4–7), per the explicit phase-boundary decision made when scoping Phase 1.2B. (`assets`, `price_candles`, `indicator_results` were built in Phase 3A.)
 - **Session-scope helper for non-request contexts.** Considered during Phase 1.2A planning (e.g. a context-manager session helper for scripts/Celery tasks outside FastAPI's request-scoped `get_db`), but judged unnecessary until a real Celery task actually needs DB access. Revisit when the first Celery task requiring DB access is built.
 
 ## 3. Improvements Discussed but Intentionally Postponed
@@ -77,7 +77,7 @@ Last updated: 2026-07-31 (Phase 2C: Authentication API)
 
 ## 7. Inferred Improvements That Should Eventually Reach Documentation/ADRs
 
-- **ADR-022** (OAuth `(provider, provider_user_id)` uniqueness) and **ADR-023** (SHA-256 refresh-token hashing, distinct from Argon2id password hashing) are examples of documenting inferred decisions not explicitly in the docs. Continue this practice — likely candidates: the future `roles`/`permissions` table design, the future `failed_login_attempts`/`locked_until` columns, the future OAuth token-storage decision if it's revisited, and an eventual decision on access-token revocation via `jti`.
+- **ADR-022** (OAuth `(provider, provider_user_id)` uniqueness), **ADR-023** (SHA-256 refresh-token hashing, distinct from Argon2id password hashing), and **ADR-024** (`PriceCandle` `(asset_id, timeframe, timestamp)` uniqueness + upsert semantics) are examples of documenting inferred decisions not explicitly in the docs. Continue this practice — likely candidates: the future `roles`/`permissions` table design, the future `failed_login_attempts`/`locked_until` columns, the future OAuth token-storage decision if it's revisited, an eventual decision on access-token revocation via `jti`, and the Phase 3B provider-selection decision once made.
 - The Alembic `server_default` dialect-rendering gotcha (§5 above) should get a permanent home in the docs, not just this backlog.
 - `docs/02` vs `docs/06` folder-structure divergence (§1 above) should be reconciled.
 - **Sub-phase tracking convention** (1.1, 1.2A, 1.2B, 2A, ...) has been maintained ad hoc — as a "Sub-Phases" note under Phase 1 in `docs/30`, and only in conversation/commit-message prose for Phase 2. Worth deciding whether this should become a formal, consistently-applied part of `docs/30` going forward, or stay lightweight.
@@ -96,3 +96,15 @@ Last updated: 2026-07-31 (Phase 2C: Authentication API)
 ## 10. Outstanding Validation Gaps
 
 - **Docker has never actually been run in this environment.** No `docker` CLI is available in this sandbox, so `docker build`, `docker compose up`, and `docker compose config` (beyond static YAML parsing) have never been executed end-to-end across any phase. All Docker-related work has been verified by static review only. This should be validated in a real environment before considering the Docker setup production-ready.
+- **Celery Beat has never actually been run in this environment either.** `register_market_data_schedule()` (Phase 3A) is unit-tested for its structure and the underlying task is tested by calling it directly, but no real `celery beat`/`celery worker` process has executed the schedule end-to-end. Validate in a real environment before relying on it in production.
+
+## 11. Market Data (Phase 3A) — Deferred Items and Discoveries
+
+- **Phase 3B: real provider integration (Twelve Data).** `MockMarketDataProvider` is the only provider implemented. Adding Twelve Data means: implementing `MarketDataProvider` for it (symbol/timeframe adapters, API-key auth, real retryable-vs-permanent error classification), adding it to `settings.market_data_providers`, and deciding whether Mock stays configured as a last-resort fallback. No changes to `MarketDataService`, repositories, or the scheduler should be needed (docs/38 §10).
+- **A second real fallback provider** (beyond Mock) for the failover chain (docs/34, docs/38 §8) is still an open item once Phase 3B's primary provider is chosen and proven.
+- **No persisted `provider_symbol_map` table.** Symbol translation is a per-provider adapter concern for now (docs/38 §3) — revisit if a future provider's symbol format can't be derived by a simple rule.
+- **Provider health checks are not surfaced through `/health/ready`.** `MarketDataProvider.health_check()` exists but isn't wired into the existing readiness endpoint (docs/38 §10) — no route changes were in Phase 3A's scope.
+- **VWAP is calculated over the entire provided window, not a proper intraday session.** Traditional VWAP resets daily; Phase 3A has no session-boundary concept yet (see `app/indicators/volume.py::vwap` docstring). Revisit once session/day-boundary handling is needed.
+- **Indicator lookback window is a fixed default (`_DEFAULT_LOOKBACK = 500` candles in `IndicatorService`).** Not per-indicator-tuned (e.g. `sma_200` needs at least 200 candles just to produce its first value, `adx_14` needs roughly `2*period`) — 500 comfortably covers every indicator built so far, but revisit if indicators with much longer lookback needs are added later.
+- **Indicator synthesis remains Phase 4's job.** `indicator_results` now holds raw EMA/RSI/MACD/etc. values (Phase 3A); trend detection, technical scoring, conflict detection, and multi-timeframe analysis (docs/08 §7-11) are unbuilt, per the Phase 3/4 boundary decision.
+- **Coverage tooling still not installed** (see §4) — Phase 3A's indicator/service tests were likewise verified by inspection (every indicator and failure branch has a dedicated test) rather than a numeric coverage report.

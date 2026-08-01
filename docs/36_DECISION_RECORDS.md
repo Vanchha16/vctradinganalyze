@@ -3336,6 +3336,370 @@ Revisit the 50-point floor once real usage data exists to inform tuning, consist
 
 ---
 
+# ADR-077
+
+Title
+
+Single `AIOrchestratorEngine` Class Resolves the "AI Orchestrator" vs "AI Reasoning Engine" Naming Ambiguity
+
+Status
+
+Accepted
+
+Context
+
+docs/07_AI_ORCHESTRATOR.md §3's pipeline lists "AI Reasoning Engine" as a distinct step, while §7's priority list separately names "AI Explanation." docs/13_AI_REASONING_ENGINE.md is titled and scoped as its own component ("transforms structured evidence into a professional market analysis"). Read together, the two vision docs describe two conceptually distinct responsibilities - collecting/combining engine outputs (docs/07) and narrating them (docs/13) - but never state whether these are two deployable components or one.
+
+Decision
+
+Phase 6A implements **one** engine class, `AIOrchestratorEngine` (`app/services/ai_orchestrator_engine.py`), combining both responsibilities. "Orchestration" (docs/07: collect context, compute the deterministic recommendation) and "reasoning" (docs/13: narrate that recommendation in prose) are sequential steps inside a single `generate(asset, timeframe)` call, not two separate services calling each other. docs/07's "AI Reasoning Engine" pipeline step and "AI Explanation" priority-list entry, and docs/13's entire scope, all refer to the same component in this implementation.
+
+Reason
+
+Splitting these into two classes would add a service boundary (and likely a second HTTP hop or in-process call) with no corresponding architectural benefit - both steps share the same input (`AnalysisContext`), run in the same request, and have no independent failure mode worth isolating behind a separate interface (unlike, say, the provider abstraction, which genuinely benefits from being swappable). One class keeps the "context in, `AIAnalysisResult` out" contract simple and mirrors every prior phase's single-top-level-engine convention (`RiskManagementEngine`, `StrategyEngine`, etc.).
+
+Alternatives Considered
+
+Option A: Two classes, `AIOrchestrator` (context/decision) and `AIReasoningEngine` (LLM narration), with the orchestrator calling the reasoning engine - rejected; adds an internal service boundary with no corresponding testing or reuse benefit, since nothing else in this codebase calls "reasoning" independently of "orchestration."
+
+Option B (chosen): One `AIOrchestratorEngine` class internally composed of the deterministic modules (§ADR-078 onward) plus the provider call.
+
+Trade-offs
+
+Pros
+
+Simpler dependency graph, one top-level engine to inject and test, consistent with every prior phase's convention.
+
+Resolves the docs/07-vs-docs/13 naming ambiguity explicitly rather than leaving it open to reinterpretation each time this code is touched.
+
+Cons
+
+The class has more internal collaborators (context builder, recommendation decision, candidate setup builder, invalidation builder, evidence extractor, prompt builder, provider, response parser, repository) than any prior single engine - mitigated by each collaborator being its own small, independently-tested module (ADR-078 onward), with the engine class itself only sequencing calls.
+
+Future Review
+
+Revisit only if a genuine need arises to call "reasoning" independently of "orchestration" (e.g. a future batch endpoint that pre-computes context separately) - not anticipated in 6A.
+
+---
+
+# ADR-078
+
+Title
+
+Recommendation (BUY/SELL/WAIT) Is Computed by a Deterministic Decision Module, Never the LLM
+
+Status
+
+Accepted
+
+Context
+
+docs/13_AI_REASONING_ENGINE.md §6 gives BUY/SELL/WAIT conditions only in prose ("Bullish evidence dominates," "Risk acceptable," "No critical conflicts") with no algorithm. This session's explicit constraint states the AI "must NOT... invent strategies" and must "consume deterministic outputs only," and ADR-005/006/007 already establish that business rules remain deterministic and AI receives structured evidence only. Phase 6 is nonetheless the first phase authorized to actually produce a recommendation (BACKLOG.md §19) - the question is whether that recommendation is computed by the LLM (reasoning over evidence) or by code (evaluating evidence against fixed rules), with the LLM only narrating the result.
+
+Decision
+
+A new deterministic module, `recommendation_decision.py` (`app/services/ai_orchestrator/recommendation_decision.py`), computes BUY/SELL/WAIT from the already-built `AnalysisContext` via a fixed decision tree (docs/50 §5): no viable candidate setup → WAIT; `RiskEvaluation.approved is False` → WAIT (honoring ADR-014's pre-existing Risk Engine veto authority); `ConfidenceLevel` in {VERY_LOW, LOW} → WAIT; `conflict_severity is HIGH` → WAIT (directly implementing docs/13 §9's worked conflict example); otherwise BUY or SELL matching the candidate direction. The LLM is never asked to decide the recommendation - it receives the already-decided value and narrates why, mirroring exactly how `ai_summary_generator.py` (ADR-051) never influences News Sentiment's already-computed label.
+
+Reason
+
+This is the single most important boundary decision in Phase 6: it lets the project cross into recommendation-generation (a genuinely new capability) without violating "AI performs reasoning only" (ADR-005) even once. A deterministic decision tree is also testable with fixed inputs/outputs the same way every prior phase's scoring/decision modules have been (`risk_management/decision.py`, `strategy/ranking.py`) - an LLM-generated recommendation would not be.
+
+Alternatives Considered
+
+Option A: Let the LLM generate the recommendation directly from the serialized context, with a prompt instructing it to follow docs/13 §6's rules - rejected; even a well-instructed LLM call is not deterministic or reliably testable, and would be the first place in this entire project where a business decision (not just narrative text) depends on a non-deterministic call, directly contradicting ADR-005/006.
+
+Option B (chosen): Deterministic decision tree computes the recommendation; the LLM narrates it.
+
+Trade-offs
+
+Pros
+
+Recommendation generation is fully deterministic, testable, and auditable - the same value is produced for the same inputs regardless of LLM availability or variance.
+
+The system can still return a complete, correct recommendation even if the LLM call fails entirely (ADR-081's graceful degradation) - only the narrative prose is affected.
+
+Cons
+
+The decision tree's specific thresholds (confidence bands, conflict severity gate) are starting points, not empirically calibrated - same caveat as every prior scoring/threshold ADR in this project.
+
+Future Review
+
+Revisit the decision tree's thresholds once real usage data exists to inform tuning, consistent with every prior scoring engine's Future Review note.
+
+---
+
+# ADR-079
+
+Title
+
+Confidence, Risk Level, and Execution Guidance Are Reused Verbatim, Never Recomputed or AI-Narrated Into a Number
+
+Status
+
+Accepted
+
+Context
+
+docs/07_AI_ORCHESTRATOR.md §11 says "Confidence is calculated from evidence" without specifying by whom or how - this session's explicit constraint states the AI must not "compute confidence" or "compute risk." `AnalysisConfidenceEngine` (Phase 4D) and `RiskManagementEngine` (Phase 5C) already compute these values deterministically and are already fully tested.
+
+Decision
+
+`AIOrchestratorEngine` never recomputes confidence, risk level, or position/execution guidance. `confidence_score`/`confidence_level` come directly from `AnalysisConfidenceEngine.analyze().overall_confidence`/`.confidence_level`; `risk_level` and `execution_guidance` come directly from `RiskManagementEngine.evaluate().risk_level`/`.position_guidance` (only when a candidate setup exists, ADR-080). The LLM's involvement with these values is limited to writing a prose sentence *about* an already-fixed number (e.g. "confidence is 78%, driven by strong technical/SMC alignment") - it never outputs a confidence value of its own, and the response parser (ADR-081) does not accept one even if the model tries.
+
+Reason
+
+Directly satisfies this session's explicit constraint and extends ADR-005/006/007's established boundary (AI never computes what a deterministic engine already computes) to the two fields most likely to be conflated with "AI judgment" in a recommendation system. Reusing Phase 4D/5C's already-shipped, already-tested engines is also simply less work and more reliable than reimplementing equivalent logic inside the orchestrator.
+
+Alternatives Considered
+
+Option A: Let the LLM produce its own confidence estimate to "double-check" or blend with the engine's score - rejected; introduces a second, non-deterministic confidence signal that could disagree with the deterministic one, undermining trust in either, and violates this session's explicit constraint outright.
+
+Option B (chosen): Single source of truth per field, always the deterministic engine, never the LLM.
+
+Trade-offs
+
+Pros
+
+Zero risk of the LLM producing a confidence/risk value that disagrees with, or is more/less conservative than, the deterministic engines' already-validated output.
+
+Cons
+
+None identified - this is a direct extension of an already-established project-wide principle.
+
+Future Review
+
+None expected - revisit only if a future phase deliberately wants an LLM-blended confidence score, which would need its own ADR explicitly overturning this one.
+
+---
+
+# ADR-080
+
+Title
+
+`candidate_setup_builder.py` Deterministically Resolves the Risk-Management-Needs-a-Setup Chicken-and-Egg Problem
+
+Status
+
+Accepted
+
+Context
+
+`RiskManagementEngine.evaluate()` (ADR-062) requires a caller-supplied candidate trade setup (direction, entry price, stop-loss, take-profit) to evaluate - but nothing upstream of the AI Orchestrator produces one. Strategy Engine (Phase 5D) faced the same shape of problem and resolved it by not calling `RiskManagementEngine.evaluate()` at all (ADR-071, reusing only its sub-modules). The AI Orchestrator's job is different: it must actually reach a BUY/SELL/WAIT recommendation, which - if not WAIT - genuinely requires real entry/stop/target prices to be useful at all (docs/07 §5's documented output includes them).
+
+Decision
+
+A new deterministic module, `candidate_setup_builder.py` (`app/services/ai_orchestrator/candidate_setup_builder.py`), builds a candidate trade setup **only if** `StrategyEvaluation.primary_strategy` is non-null and its implied direction (derived from `MarketRegimeResult.trend_regime.direction`) is unambiguous. `entry_price` = latest close; `stop_loss` = beyond the nearest support/resistance level or 1.5x ATR, whichever is more conservative (reuses `TechnicalAnalysisResult.support`/`.resistance`/`.volatility.atr`, invents no new data); `take_profit` = entry ± the greater of a 2:1 risk/reward multiple or the nearest opposing SMC structure. If Strategy Engine rejected every strategy, or direction is ambiguous, no candidate is built and `RiskManagementEngine.evaluate()` is never called - the recommendation is WAIT (ADR-078).
+
+Reason
+
+This is genuinely new deterministic logic this project didn't need before Phase 6, because no prior engine needed to propose a *specific* trade - only evaluate one already given to it (Risk Management, ADR-062) or judge methodology fit in the abstract (Strategy Engine, ADR-071). Building the candidate from already-computed Technical Analysis/SMC evidence (never inventing a price) keeps it consistent with every prior "never invent data" precedent in this project.
+
+Alternatives Considered
+
+Option A: Skip Risk Management entirely in the AI Orchestrator, the same way Strategy Engine does (ADR-071) - rejected; unlike Strategy Engine (which only judges methodology fit), the AI Orchestrator's whole purpose is to reach an actionable recommendation, and docs/07 §7/docs/13 §8 both rank Risk Engine as the highest-priority evidence source - skipping its actual `evaluate()` call (not just its sub-modules) would mean the recommendation never receives a genuine hard-reject check against a real, specific trade.
+
+Option B (chosen): Build a genuine candidate setup deterministically, then call the real `RiskManagementEngine.evaluate()` against it.
+
+Trade-offs
+
+Pros
+
+The recommendation's entry/stop/target prices, when present, have actually passed Risk Management's real hard-reject rules (extreme volatility, extreme spread-if-supplied, critical economic events, R:R below minimum, unrealistic stop distance) - not just Strategy Engine's softer methodology-fit checks.
+
+Cons
+
+The candidate-setup construction rules (stop distance, target multiple) are this project's own reasonable starting point, not sourced from any docs/12/17 formula written for this exact purpose - flagged explicitly, same caveat class as every prior hand-tuned rule table.
+
+Future Review
+
+Revisit the specific stop/target construction rules once real usage data exists to inform tuning.
+
+---
+
+# ADR-081
+
+Title
+
+`AIProvider` Protocol Abstraction; OpenAI Structured Output Enforced; One Retry Then Graceful Template Fallback
+
+Status
+
+Accepted
+
+Context
+
+docs/35_AI_PROMPT_ARCHITECTURE.md names a "Model Routing" concept with categories (Reasoning, Summarization, Educational, Conversation, Future Multi-Agent) but no routing logic, and never names a concrete provider. This session's review explicitly asks for a provider abstraction supporting future providers (Anthropic, Gemini, local) without changing orchestration logic. `app/services/news_sentiment/ai_summary_generator.py` (ADR-051) is this project's only existing LLM-call precedent: an isolated httpx-based OpenAI client with an injectable `transport` for testing, graceful `None` on any failure, never blocking its caller.
+
+Decision
+
+`AIProvider` (`app/services/ai_orchestrator/providers/base.py`) is a `typing.Protocol` (`name`, `generate(request) -> AIGenerationResponse`, `health_check()`), mirroring `NewsProvider`/`EconomicCalendarProvider`'s exact shape. `OpenAIProvider` (`providers/openai_provider.py`) is the sole real implementation for 6A, reusing `ai_summary_generator.py`'s httpx-Client-with-injectable-`transport` pattern, extended to request OpenAI's structured-output mode (`response_format: {"type": "json_schema", ...}`, supported by the already-configured `gpt-4o-mini`) so the model is constrained to the `reasoning` JSON schema at generation time. `MockAIProvider` (`providers/mock.py`) exists purely for test injection, mirroring `httpx.MockTransport`'s role in `test_news_ai_summary_generator.py` - not a production fallback. On a transient failure (timeout, 5xx), the provider is retried once (`ai_retry_max_attempts`/`ai_retry_backoff_seconds` settings, mirroring `market_data_retry_max_attempts`/`..._backoff_seconds`'s naming); on any further failure, or on a still-malformed response after one "return valid JSON" follow-up, the orchestrator falls back to a deterministic template `reasoning` (`summary_fallback.py`, mirrors `analysis_confidence/summary_builder.py`'s no-AI-text precedent) and sets `ai_available=False` - the request never fails outright.
+
+Reason
+
+The Protocol shape directly reuses a pattern already proven twice in this codebase (News, Economic Calendar); a future Anthropic/Gemini/local provider is a pure addition to `_PROVIDER_FACTORIES`, zero change to `AIOrchestratorEngine`. Structured output at the API level is strictly better than prompt-only JSON instructions for reducing malformed-response risk at the source, not just catching it after the fact. Graceful degradation (never a hard failure) is the direct, load-bearing consequence of "AI must never replace deterministic engines" (this session's core principle) - every field except `reasoning` is already fully computed before the provider is even called.
+
+Alternatives Considered
+
+Option A: No retry, fail the whole request if the LLM call fails - rejected; would make the entire recommendation (which is otherwise fully computed and correct) unavailable due to a transient LLM outage, directly contradicting the principle that deterministic engines remain authoritative regardless of AI availability.
+
+Option B: Unlimited retries until success - rejected; unbounded latency/cost for a non-critical-path field (narrative prose only), with no benefit over one retry plus a safe fallback.
+
+Option C (chosen): One retry, then graceful template fallback, never a hard failure.
+
+Trade-offs
+
+Pros
+
+The response is always complete and correct on every field except `reasoning`, regardless of LLM/provider health.
+
+Future providers require zero orchestration-logic changes, mirroring this project's two prior provider-abstraction precedents exactly.
+
+Cons
+
+`OpenAIProvider` is the only real (non-mock) implementation shipped in 6A - Anthropic/Gemini/local remain unimplemented until a real need and API key exist, the same "mock/real-provider split, real one deferred until needed" shape as ADR-050/056, except here the first real provider (OpenAI) already exists from Phase 5A rather than being deferred.
+
+Future Review
+
+Revisit when a second real provider is actually needed (cost, redundancy, or a specific model capability) - add it to `_PROVIDER_FACTORIES` following `OpenAIProvider`'s shape, no orchestration change required.
+
+---
+
+# ADR-082
+
+Title
+
+`ai_analysis` Is Persisted With `CreatedAtMixin` - the First Engine Output This Project Persists for Genuine Non-Reproducibility
+
+Status
+
+Accepted
+
+Context
+
+Every Phase 4/5 engine is stateless (or, for SMC/News/Economic Calendar, persists only genuinely new upstream facts) because re-running the same deterministic code against the same candle/event data reproduces the exact same result - there was never a reason to persist an *engine's own computed output* purely for later retrieval. An LLM call is different: even at low temperature, the exact narrative text is not perfectly reproducible on replay, and ADR-015 already requires "every AI decision must be replayable." `docs/03_DATABASE_DESIGN.md` §1 requires every table to have both `created_at` and `updated_at`, but §10's `ai_analysis` field list shows only `created_at` - the same class of contradiction already resolved case-by-case for `news_articles` (ADR-053), `smc_events`, and others.
+
+Decision
+
+`ai_analysis` (`app/models/ai_analysis.py`) is a new, genuinely persisted table using `UUIDMixin` + `CreatedAtMixin` (not `TimestampMixin`) - once generated, an analysis row represents "what was recommended at time X," never rewritten in place, the same append-only reasoning already applied to `news_articles`. Fields: `id`, `asset_id`, `timeframe`, `recommendation`, `confidence_score`, `confidence_level`, `risk_level`, `entry_price`/`stop_loss`/`take_profit` (nullable - null for WAIT), `reasoning` (JSON, the seven-section structure), `supporting_evidence`/`conflicting_evidence`/`risks`/`invalidation_conditions` (JSON lists), `execution_guidance`, `model_name`, `prompt_version`, `ai_available` (bool), `latency_ms`, `warnings` (JSON list), `created_at`. `signals` (docs/03 §11) is explicitly out of scope for 6A (ADR-084) - a future Signal Engine's own table.
+
+Reason
+
+This is the first engine output in the project where persistence is justified by genuine non-reproducibility, not mere convenience - resolves docs/03 §1's contradiction for this specific table using the same append-only reasoning already established, rather than leaving it open or defaulting to `TimestampMixin` without justification.
+
+Alternatives Considered
+
+Option A: Stay stateless like every prior engine, recompute on every request - rejected; the LLM-narrated portion is not reproducible, so "recompute on demand" would silently change historical analyses' wording on every re-fetch, directly undermining ADR-015's replayability requirement.
+
+Option B (chosen): Persist with `CreatedAtMixin`, append-only.
+
+Trade-offs
+
+Pros
+
+Satisfies ADR-015/ADR-018's replayability/versioning requirements directly (`prompt_version`/`model_name` recorded per row).
+
+Consistent with the project's existing append-only-vs-mutable mixin decision framework (ADR-053/058), not a new convention.
+
+Cons
+
+First new migration since Phase 5B's `economic_events` - a real schema change, unlike every Phase 5C/5D engine (no new table).
+
+Future Review
+
+Revisit if a future need arises to mutate a stored analysis in place (e.g. marking it as acted-upon) - would need `TimestampMixin` or a separate mutable status table at that point, not retrofitted onto this append-only design speculatively now.
+
+---
+
+# ADR-083
+
+Title
+
+`POST /analysis/ai/{symbol}` Requires Authentication - the First Analysis-Family Route to Do So
+
+Status
+
+Accepted
+
+Context
+
+Every analysis-family route built so far (Technical Analysis, SMC, Market Regime, Confidence, News, Economic Calendar, Risk Management, Strategy) is public with no authentication. Phase 6A's endpoint is the first to invoke a real, paid LLM call on every request and the first to persist a new database row per request - both first-of-their-kind cost/abuse surfaces in this project.
+
+Decision
+
+`POST /analysis/ai/{symbol}` and `GET /analysis/ai/{id}` require an authenticated user, reusing the existing `get_current_user` dependency (`app/dependencies/auth.py`, Phase 2C) - no new authentication mechanism is built. `GET /analysis/history` is likewise authenticated and scoped to the requesting user.
+
+Reason
+
+Ties LLM cost to an identifiable account, a reasonable first checkpoint before any dedicated rate-limiting/quota infrastructure exists (BACKLOG.md already tracks that as unimplemented project-wide). Reuses the project's existing, already-tested authentication dependency rather than inventing a new authorization mechanism specific to this one route.
+
+Alternatives Considered
+
+Option A: Keep it public, consistent with every prior analysis route - rejected; unlike every prior route, this one has a real, non-negligible marginal cost per call and writes a new row per call, both of which are reasonable justifications for a different security posture than the free deterministic engines.
+
+Option B (chosen): Require authentication via the existing `get_current_user` dependency.
+
+Trade-offs
+
+Pros
+
+Ties cost to an identifiable account without inventing new rate-limiting infrastructure.
+
+Reuses an already-shipped, already-tested dependency - zero new authentication code.
+
+Cons
+
+Breaks this project's prior "every analysis route is public" pattern - a deliberate, explicitly-flagged first exception, not an oversight.
+
+Future Review
+
+Revisit once real rate-limiting/quota infrastructure exists (tracked in BACKLOG) - authentication may then be paired with a per-user quota rather than being the sole cost-control mechanism.
+
+---
+
+# ADR-084
+
+Title
+
+Phase 6A Scope Boundary: AI Orchestrator and AI Reasoning Only; Signal Engine and AI Chat Assistant Deferred
+
+Status
+
+Accepted
+
+Context
+
+`docs/30_DEVELOPMENT_ROADMAP.md`'s Phase 6 lists four items - AI Orchestrator, AI Reasoning, Signal Engine, AI Chat - as one undifferentiated block, unlike every prior phase (1 through 5), which had explicit sub-phase decomposition (e.g. 5A-5D). The user's request for this session explicitly scoped work to "AI Orchestrator / AI Reasoning Engine."
+
+Decision
+
+Phase 6 is decomposed into sub-phases for the first time, mirroring the 4A-4D/5A-5D convention: **6A** (AI Orchestrator + AI Reasoning Engine, this session, one combined engine per ADR-077), **6B** (Signal Engine, not started), **6C** (AI Chat Assistant, not started), with a **6D** placeholder reserved if a further split proves necessary. `signals` (docs/03 §11), any batch analysis endpoint, and any chat/conversational interface are explicitly out of scope for 6A.
+
+Reason
+
+Every prior multi-part phase in this project was decomposed into sub-phases with their own documentation-first review before implementation (Phase 4: TA/SMC/Regime/Confidence; Phase 5: News/Economic/Risk/Strategy) - applying the same discipline to Phase 6 keeps scope bounded and each sub-phase's ADRs/architecture doc focused on one coherent unit of work, consistent with how this project has operated throughout.
+
+Alternatives Considered
+
+Option A: Build all four Phase 6 items in one undifferentiated pass - rejected; Signal Engine's and AI Chat Assistant's own architecture (persistence model, API surface, guardrails) haven't been documented or reviewed yet, and building them without that review would violate this project's consistent documentation-first practice.
+
+Option B (chosen): Sub-phase decomposition (6A/6B/6C), each with its own documentation-first review.
+
+Trade-offs
+
+Pros
+
+Keeps each sub-phase's scope, ADRs, and architecture doc focused and reviewable, consistent with every prior phase.
+
+Cons
+
+None identified - this is process discipline, not a technical trade-off.
+
+Future Review
+
+None expected - 6B (Signal Engine) and 6C (AI Chat Assistant) each begin with their own documentation review and implementation plan when scheduled, following this same process.
+
+---
+
 # Review Policy
 
 Review ADRs:

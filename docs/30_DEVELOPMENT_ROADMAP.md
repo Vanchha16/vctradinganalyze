@@ -168,6 +168,18 @@ Signal Engine
 
 AI Chat
 
+Status
+
+In Progress
+
+Sub-Phases
+
+6A AI Orchestrator / AI Reasoning Engine (single `AIOrchestratorEngine`, deterministic `recommendation_decision`/`candidate_setup_builder`/`invalidation_builder`/`evidence_extractor`, `AIProvider` Protocol with `OpenAIProvider`, structured JSON output, persisted `ai_analysis` with `CreatedAtMixin`; docs/50_AI_ORCHESTRATOR_ARCHITECTURE.md, ADR-077 through ADR-084) - In Progress
+
+6B Signal Engine - Not Started
+
+6C AI Chat Assistant - Not Started
+
 ---
 
 # Phase 7

@@ -1,3 +1,4 @@
+from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
 from app.models.audit_log import AuditLog
 from app.models.economic_event import EconomicEvent
@@ -10,6 +11,7 @@ from app.models.enums import (
     NewsImportance,
     NewsSentimentLabel,
     NewsSourceTier,
+    Recommendation,
     SMCEventStatus,
     SMCEventType,
     Timeframe,
@@ -28,6 +30,7 @@ from app.models.user import User
 from app.models.user_session import UserSession
 
 __all__ = [
+    "AIAnalysis",
     "Asset",
     "AuditLog",
     "EconomicEvent",
@@ -45,6 +48,7 @@ __all__ = [
     "NewsSourceTier",
     "OAuthAccount",
     "PriceCandle",
+    "Recommendation",
     "SMCEvent",
     "SMCEventStatus",
     "SMCEventType",

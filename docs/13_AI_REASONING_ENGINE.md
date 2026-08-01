@@ -1,6 +1,8 @@
 # AI Reasoning Engine
 
-Version: 1.0
+Version: 1.1
+
+Implementation (Phase 6A): docs/50_AI_ORCHESTRATOR_ARCHITECTURE.md, ADR-077 through ADR-084. This document's "AI Reasoning Engine" and docs/07's "AI Orchestrator" are implemented as one combined `AIOrchestratorEngine` class (ADR-077), not two separate components. §6's BUY/SELL/WAIT rules are implemented as a concrete deterministic decision tree in `recommendation_decision.py` (ADR-078) - the AI never decides the recommendation, only narrates it. §8's evidence-priority ordering (Risk > Economic > SMC > Technical > News) is realized as `recommendation_decision.py`'s hard-reject precedence (Risk Engine's veto checked first, per ADR-014) plus the deterministic evidence bundle's field ordering in the prompt - not a numeric weighting scheme.
 
 ---
 

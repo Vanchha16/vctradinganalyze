@@ -1,6 +1,8 @@
 # AI Orchestrator
 
-Version: 1.0
+Version: 1.1
+
+Implementation (Phase 6A): docs/50_AI_ORCHESTRATOR_ARCHITECTURE.md, ADR-077 through ADR-084. Implemented as a single `AIOrchestratorEngine` class combining this document's "orchestration" role with docs/13's "reasoning" role (ADR-077) - §3's "AI Reasoning Engine" pipeline step and §7's "AI Explanation" priority-list entry both refer to that one component. §11's "confidence is calculated from evidence" is implemented as: confidence is never calculated by this phase at all - it is reused verbatim from `AnalysisConfidenceEngine` (Phase 4D, ADR-079); this document's "calculate" language predates that resolution.
 
 ---
 

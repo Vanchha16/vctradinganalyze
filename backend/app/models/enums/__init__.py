@@ -6,6 +6,7 @@ from app.models.enums.news_category import NewsCategory
 from app.models.enums.news_importance import NewsImportance
 from app.models.enums.news_sentiment_label import NewsSentimentLabel
 from app.models.enums.news_source_tier import NewsSourceTier
+from app.models.enums.recommendation import Recommendation
 from app.models.enums.smc_event_status import SMCEventStatus
 from app.models.enums.smc_event_type import SMCEventType
 from app.models.enums.timeframe import Timeframe
@@ -20,6 +21,7 @@ __all__ = [
     "NewsImportance",
     "NewsSentimentLabel",
     "NewsSourceTier",
+    "Recommendation",
     "SMCEventStatus",
     "SMCEventType",
     "Timeframe",

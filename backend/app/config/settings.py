@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_timeout_seconds: float = 15.0
 
+    ai_orchestrator_providers: list[str] = ["openai"]
+    ai_retry_max_attempts: int = 2
+    ai_retry_backoff_seconds: float = 1.0
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

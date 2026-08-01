@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.routes import (
+    ai_analysis,
     analysis_confidence,
     auth,
     economic_calendar,
@@ -26,3 +27,4 @@ api_router.include_router(news.router)
 api_router.include_router(economic_calendar.router)
 api_router.include_router(risk_management.router)
 api_router.include_router(strategy.router)
+api_router.include_router(ai_analysis.router)

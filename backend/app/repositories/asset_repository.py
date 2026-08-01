@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 from typing import Any
 
@@ -8,6 +9,9 @@ from app.repositories.base import BaseRepository
 
 class AssetRepository(BaseRepository[Asset]):
     model = Asset
+
+    def get_by_id(self, asset_id: uuid.UUID) -> Asset | None:
+        return self.session.get(Asset, asset_id)
 
     def get_by_symbol(self, symbol: str) -> Asset | None:
         query = self._filter_by(self._query(), symbol=symbol)

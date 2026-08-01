@@ -479,9 +479,11 @@ Phase 5D (docs/49_STRATEGY_ARCHITECTURE.md, ADR-070) - the Strategy Engine is li
 
 # 10. AI Analysis
 
+Phase 6A (docs/50_AI_ORCHESTRATOR_ARCHITECTURE.md, ADR-082) - `ai_analysis` is the first genuinely persisted engine output in this project (every Phase 4/5 engine is stateless because deterministic code reproduces identical results on replay; an LLM call does not). Uses `CreatedAtMixin` (not `TimestampMixin`) - resolves §1's created_at/updated_at contradiction the same way `news_articles` did (ADR-053): an analysis row is "what was recommended at time X," never rewritten in place. `market_context`/`technical_summary`/`smc_summary`/`news_summary`/`economic_summary` (docs/03 v1.0's original field list) are superseded by the structured `reasoning` object below, which covers the same narrative ground per section without duplicating it as five separate free-text columns.
+
 ## ai_analysis
 
-Stores every AI response.
+Stores every AI response. Every field except `reasoning` is deterministic - reused verbatim from an existing engine or computed by a new deterministic module (docs/50 §6); the LLM's only output is `reasoning`'s narrative text.
 
 Fields:
 
@@ -491,39 +493,49 @@ asset_id
 
 timeframe
 
-market_context
+recommendation (BUY / SELL / WAIT - computed deterministically, never by the AI, ADR-078)
 
-technical_summary
+confidence_score (reused from `AnalysisConfidenceEngine`, never recomputed, ADR-079)
 
-smc_summary
+confidence_level
 
-news_summary
+risk_level (reused from `RiskManagementEngine`, nullable if no candidate setup was built, ADR-079)
 
-economic_summary
+entry_price (nullable - null for WAIT)
 
-recommendation
+stop_loss (nullable - null for WAIT)
 
-confidence_score
+take_profit (nullable - null for WAIT)
 
-risk_level
+execution_guidance (reused from `RiskManagementEngine.position_guidance`)
 
-entry_price
+reasoning (JSON - seven narrative sections: summary/technical/smc/economic/news/risk/conclusion; the only AI-generated field)
 
-stop_loss
+supporting_evidence (JSON list - deterministic)
 
-take_profit
+conflicting_evidence (JSON list - deterministic, sourced from `ConfidenceResult.conflicts`)
 
-reasoning
+risks (JSON list - deterministic)
+
+invalidation_conditions (JSON list - deterministic template)
 
 model_name
 
-analysis_version
+prompt_version
+
+ai_available (bool - was the LLM call successful, or is `reasoning` the deterministic template fallback)
+
+latency_ms
+
+warnings (JSON list)
 
 created_at
 
 ---
 
 # 11. Trading Signals
+
+**Out of scope for Phase 6A** (docs/50 §2, ADR-084) - Signal Engine's own table, deferred to Phase 6B.
 
 ## signals
 

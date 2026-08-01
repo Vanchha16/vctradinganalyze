@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added - Phase 6A: AI Orchestrator / AI Reasoning Engine
+
+`docs/50_AI_ORCHESTRATOR_ARCHITECTURE.md` - new architecture document defining the deterministic/AI boundary, the `AnalysisContext` data flow, the reuse map across five Phase 4/5 engines, the four new deterministic modules, prompt architecture, provider abstraction, and structured-output recovery ladder
+
+Core boundary (ADR-078/079): the LLM never computes `recommendation`, `confidence`, `risk_level`, `entry_price`/`stop_loss`/`take_profit`, or `execution_guidance` - every one of those fields is either reused verbatim from an existing Phase 4/5 engine or produced by a new deterministic module. The LLM's only output is `reasoning`'s seven-section narrative prose, and even a total LLM failure never blocks the response - it only degrades `reasoning` to a deterministic template and sets `ai_available=False`
+
+`app/services/ai_orchestrator/` - `candidate_setup_builder.py` (ADR-080, resolves the Risk-Management-needs-a-setup chicken-and-egg problem the same way Strategy Engine's ADR-071 did), `recommendation_decision.py` (ADR-078, the core BUY/SELL/WAIT decision tree), `invalidation_builder.py`, `evidence_extractor.py`, `prompt_builder.py`, `response_parser.py`, `summary_fallback.py`, `providers/` (`base.py` Protocol, `openai_provider.py`, `mock.py` test-only)
+
+`AIOrchestratorEngine` (`app/services/ai_orchestrator_engine.py`) - composes `AnalysisConfidenceEngine`, `NewsSentimentEngine`, `EconomicCalendarEngine`, `StrategyEngine`, `RiskManagementEngine` via `ContextBuilder`; one retry on transient provider failure then graceful template fallback (ADR-081), never a hard failure
+
+`ai_analysis` table (`app/models/ai_analysis.py`, `CreatedAtMixin`, append-only) - the first engine output this project persists for genuine non-reproducibility rather than convenience (ADR-082), since an LLM call is not perfectly reproducible the way every Phase 4/5 deterministic engine is
+
+New authenticated endpoints (ADR-083, the first analysis-family routes requiring auth, given real per-call LLM cost): `POST /analysis/ai/{symbol}?timeframe=` (generates and persists one analysis), `GET /analysis/ai/{id}` (retrieve by id), `GET /analysis/history?symbol=&page=&limit=` (paginated history)
+
+**ADR-077** through **ADR-084**: single `AIOrchestratorEngine` class resolving the "AI Orchestrator" vs "AI Reasoning Engine" naming ambiguity; deterministic recommendation computation; confidence/risk/execution-guidance reuse; candidate setup builder; provider abstraction with structured-output enforcement and retry/fallback; `ai_analysis` persistence; authentication requirement; Phase 6 sub-phase scope boundary (Signal Engine 6B and AI Chat Assistant 6C explicitly deferred)
+
+Deliberately excluded (per Phase 6A approval): Signal Engine (6B); AI Chat Assistant (6C); `signals` table; `POST /analysis/ai/batch`; response caching; real rate-limiting/quota infrastructure; Confidence Engine weight-rebalancing to include News/Economic/Risk (ADR-047's boundary respected, untouched); Anthropic/Gemini/local providers (abstraction supports them, none implemented yet)
+
+Tests: one file per deterministic module (`test_ai_candidate_setup_builder.py`, `test_ai_recommendation_decision.py`, `test_ai_invalidation_builder.py`, `test_ai_evidence_extractor.py`), `test_ai_prompt_builder.py`, `test_ai_response_parser.py`, `test_ai_openai_provider.py` (mirrors `test_news_ai_summary_generator.py`'s `httpx.MockTransport` pattern, never a real API call), `test_ai_orchestrator_engine.py` (integration against real upstream engines on a seeded SQLite session), `test_ai_analysis_routes.py` (auth required, 404s, persisted-row shape, pagination)
+
+docs/03, docs/04, docs/07, docs/13, docs/35, docs/30 updated: resolved `ai_analysis`'s field list and mixin contradiction; added the `/analysis/ai/*` and `/analysis/history` API contracts; bumped docs/07/docs/13/docs/35 to v1.1 pointing at docs/50; introduced Phase 6 sub-phase lettering for the first time (6A complete, 6B/6C not started)
+
 ### Added - Phase 5D: Strategy Engine
 
 `docs/49_STRATEGY_ARCHITECTURE.md` - new architecture document defining the reuse-first evidence map, the buildable seven-strategy set, Market Match/Evidence Quality/Historical Performance rule tables, and rejection/ranking rules

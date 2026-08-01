@@ -1,6 +1,8 @@
 # Strategy Engine
 
-Version: 1.0
+Version: 1.1
+
+Implementation (Phase 5D): docs/49_STRATEGY_ARCHITECTURE.md, ADR-069 through ADR-076.
 
 ---
 
@@ -57,9 +59,7 @@ Breakout
 
 Pullback
 
-Range Trading
-
-Mean Reversion
+Range Trading / Mean Reversion
 
 Scalping
 
@@ -72,6 +72,8 @@ Future Strategies
 User Custom Strategies
 
 AI Generated Strategies
+
+**Implementation note (Phase 5D, ADR-072):** "Range Trading" and "Mean Reversion" were never defined as separate strategies anywhere in this document - §11 describes one strategy under both names, implemented as a single `MEAN_REVERSION` strategy. "Momentum Trading" has no requirements defined anywhere in this document and is **not implemented** in Phase 5D - inventing requirements for it would be architecture invention, not implementation. Seven strategies are implemented: Trend Following, SMC, Breakout, Pullback, Mean Reversion, Scalping, Swing Trading.
 
 ---
 
@@ -162,6 +164,8 @@ Daily
 Best Market
 
 Institutional Trend
+
+**Implementation note (Phase 5D, ADR-072):** "Institutional Trend" is not a defined `MarketRegimeState` value (docs/16 §3's eleven values). Resolved to `{Trending Bullish, Trending Bearish, Accumulation, Distribution}` - the regime values most consistent with SMC's own structural-trend and accumulation/distribution vocabulary (docs/49 §4).
 
 Requirements
 

@@ -10,6 +10,7 @@ from app.api.v1.routes import (
     news,
     risk_management,
     smc,
+    strategy,
     technical_analysis,
 )
 
@@ -24,3 +25,4 @@ api_router.include_router(analysis_confidence.router)
 api_router.include_router(news.router)
 api_router.include_router(economic_calendar.router)
 api_router.include_router(risk_management.router)
+api_router.include_router(strategy.router)

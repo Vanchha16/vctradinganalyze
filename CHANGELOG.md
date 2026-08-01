@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added - Phase 5D: Strategy Engine
+
+`docs/49_STRATEGY_ARCHITECTURE.md` - new architecture document defining the reuse-first evidence map, the buildable seven-strategy set, Market Match/Evidence Quality/Historical Performance rule tables, and rejection/ranking rules
+
+`app/services/strategy/` - `market_match.py`, `historical_performance.py`, `strategy_scorer.py`, `ranking.py`, plus seven deterministic per-strategy requirements checklists (`requirements/trend_following.py`, `smc.py`, `breakout.py`, `pullback.py`, `mean_reversion.py`, `scalping.py`, `swing_trading.py`) - fully deterministic, zero AI/GPT, no trade recommendations
+
+`StrategyEngine` (`app/services/strategy_engine.py`) - the strongest reuse-first design in this project yet: `AnalysisConfidenceEngine` is the primary dependency (transitively yields Technical Analysis/SMC/Market Regime evidence in one call, ADR-071), and `app.services.risk_management`'s `session_classifier`/`liquidity_filter`/`economic_filter` sub-modules are reused directly rather than calling `RiskManagementEngine.evaluate()` (which needs a candidate trade setup this engine doesn't have, ADR-062/ADR-071)
+
+Resolves a documentation ambiguity in ADR-043's Future Review note (ADR-069): the Strategy Engine (Phase 5D), not the Signal Engine (Phase 6), is the consumer of strategy-compatibility classification ADR-043 anticipated - `MarketRegimeEngine` itself remains unchanged, ADR-043 stands exactly as written
+
+Resolves three internal inconsistencies in docs/17_STRATEGY_ENGINE.md (ADR-072): "Range Trading"/"Mean Reversion" (never separately defined) merged into one `MEAN_REVERSION` strategy; "Momentum Trading" (zero requirements defined anywhere) deferred rather than invented; SMC strategy's undefined "Institutional Trend" best-market resolved to the four `MarketRegimeState` values most consistent with SMC's own vocabulary
+
+Fully stateless (ADR-070) - no new table, mirrors Risk Management's ADR-063 precedent; Historical Performance (10 of 100 points) is a uniform neutral placeholder (ADR-075) - no trade-outcomes dataset exists anywhere in this project, mirrors the Confidence Engine's docs/15 v1.0 §10 deferred-calibration precedent
+
+New public (no auth) endpoint: `GET /strategy/evaluate/{symbol}?timeframe=` - classifies strategy-methodology compatibility only, never a BUY/SELL/trade-level recommendation (ADR-069, extends ADR-031/ADR-043)
+
+**ADR-069** through **ADR-076**: ADR-043 clarification; statelessness; reuse-first dependency design; buildable strategy set; Market Match regime-compatibility gate with timeframe partial credit; Evidence Quality deterministic per-strategy checklists (ungateable requirements like Spread/RR excluded from the denominator, never fabricated); Historical Performance placeholder; rejection/ranking rules (Market-Match-zero OR sub-50-total rejection, deterministic tie-break)
+
+Deliberately excluded (per Phase 5D approval): Momentum Trading (undefined requirements); User Custom/AI Generated strategies; persistence of evaluations; any trade-level recommendation; AI-generated explanation of strategy selection (Phase 6's job); a true multi-timeframe scan for Swing Trading's "Higher Timeframe Trend"; Confidence Engine integration in the reverse direction; real historical/backtest-based strategy performance
+
+Tests: one file per module (`test_strategy_market_match.py`, `test_strategy_historical_performance.py`, `test_strategy_requirements_*.py` × 7, `test_strategy_scorer.py`, `test_strategy_ranking.py`), `test_strategy_engine.py` (integration against real upstream engines on a seeded SQLite session), `test_strategy_routes.py`
+
+docs/03, docs/04, docs/17, docs/30 updated: noted Strategy Engine's evidence flows into future `ai_analysis`; added the `/strategy/evaluate/{symbol}` API contract; resolved docs/17's strategy-list inconsistencies and "Institutional Trend" gap inline; marked Phase 5D (and all of Phase 5) complete
+
 ### Added - Phase 5C: Risk Management Engine
 
 `docs/48_RISK_MANAGEMENT_ARCHITECTURE.md` - new architecture document defining the reuse-first dependency design, session/spread/liquidity/correlation rule tables, R:R and stop-loss validation, the Trade Quality Score, and hard-reject decision precedence

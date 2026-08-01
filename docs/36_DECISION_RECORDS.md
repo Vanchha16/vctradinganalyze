@@ -2966,6 +2966,376 @@ None expected - revisit only if a specific hard-reject rule's precedence or thre
 
 ---
 
+# ADR-069
+
+Title
+
+Strategy Engine (Phase 5D) Is the Consumer ADR-043 Anticipated - `MarketRegimeEngine` Remains Unchanged
+
+Status
+
+Accepted
+
+Context
+
+ADR-043 (Phase 4C) excluded `compatible_strategies`/`recommendation` fields from `MarketRegimeEngine`'s own output, and its Future Review note said this mapping should be "implemented [when] the Signal Engine (Phase 6) is built... not retrofitted onto this engine." But `docs/30_DEVELOPMENT_ROADMAP.md` lists the Strategy Engine as its own Phase 5D sub-phase, distinct from and prior to Phase 6's Signal Engine - and docs/17 §1 itself frames Strategy Engine as providing "structured recommendations *to* the Signal Engine," i.e. upstream of it, not identical to it. ADR-043's loose "Signal Engine (Phase 6)" phrasing didn't anticipate this intermediate phase.
+
+Decision
+
+The Strategy Engine (Phase 5D) is the consumer ADR-043's Future Review note anticipated - strategy-methodology classification (which of docs/17 §4's strategies fits current market evidence) is implemented here, as this engine's sole purpose. `MarketRegimeEngine` itself is **unchanged** - ADR-043 stands exactly as written; `MarketRegimeResult`/`MarketRegimeResponse` still have no `compatible_strategies` or recommendation field. Strategy Engine's own output is strategy-*methodology* classification only (e.g. "Trend Following fits current conditions with score 94") - never a BUY/SELL/WAIT or trade-level recommendation (ADR-031/ADR-043's principle extended here, not relaxed).
+
+Reason
+
+This is a documentation clarification, not an architectural reversal - it resolves an ambiguity in ADR-043's own wording (which conflated "a future engine" with "Phase 6" specifically) using information that didn't exist when ADR-043 was written (Phase 5D's scope wasn't yet defined). The underlying principle ADR-043 protects - deterministic engines don't issue recommendations - is preserved and extended, not weakened: Strategy Engine still stops short of BUY/SELL.
+
+Alternatives Considered
+
+Option A: Retrofit `compatible_strategies` onto `MarketRegimeEngine` directly, treating ADR-043 as overturned - rejected; `MarketRegimeEngine` already shipped (Phase 4C) with a specific evidence-only contract, and adding strategy-selection logic to a regime *classifier* would blur the same boundary ADR-043 was written to protect.
+
+Option B (chosen): Build the classification in a new, dedicated Strategy Engine; leave `MarketRegimeEngine` untouched; clarify ADR-043's intent via this ADR.
+
+Trade-offs
+
+Pros
+
+No breaking change to `MarketRegimeEngine`'s already-shipped, already-tested contract.
+
+Resolves the documentation ambiguity explicitly, for future readers who might otherwise assume ADR-043 blocks Phase 5D entirely.
+
+Cons
+
+None identified - this is a clarification of intent, not a new constraint.
+
+Future Review
+
+None expected - revisit only if a future phase needs `MarketRegimeEngine` itself to expose strategy compatibility, which would require its own new ADR overturning ADR-043 directly.
+
+---
+
+# ADR-070
+
+Title
+
+Strategy Engine Is Stateless - No New Table
+
+Status
+
+Accepted
+
+Context
+
+Like Risk Management (ADR-063), docs/03_DATABASE_DESIGN.md reserves no table for the Strategy Engine - its output is evidence for a future Signal Engine/AI Orchestrator (Phase 6) to consume, not a domain entity this project persists itself. docs/17 §19 requires "Logging" (Selected Strategy, Rejected Strategies, Score, Execution Time, Version).
+
+Decision
+
+`StrategyEngine` is fully stateless (mirrors ADR-045/063) - no new model, no migration, no repository. Every `evaluate()` call recomputes fresh from `AnalysisConfidenceEngine`, `EconomicCalendarEngine`, and current candle data. docs/17 §19's logging requirement is satisfied by structured `structlog` logging of every evaluation, not a new database table.
+
+Reason
+
+Same reasoning as ADR-063: inventing an interim table now would either need migrating later (once Phase 6 defines where this evidence actually lands) or maintain two homes for the same evidence. Consistent with "don't invent unnecessary tables."
+
+Alternatives Considered
+
+Option A: A new `strategy_evaluations` audit table - rejected; no query need for historical evaluations has been demonstrated, and docs/03 gives no indication this engine owns persisted state.
+
+Option B (chosen): Stateless, structured logging only.
+
+Trade-offs
+
+Pros
+
+No schema to maintain, no migration.
+
+Consistent with Risk Management's identical precedent (ADR-063), keeping Phase 5's stateless-engine pattern uniform.
+
+Cons
+
+No queryable history of past evaluations until a future phase defines where this evidence should live.
+
+Future Review
+
+Revisit when Phase 6 (Signal Engine/AI Orchestrator) is built and needs a persisted record of strategy evaluations feeding a signal.
+
+---
+
+# ADR-071
+
+Title
+
+Strategy Engine Reuses Risk Management's Sub-Modules Directly, Not `RiskManagementEngine.evaluate()`
+
+Status
+
+Accepted
+
+Context
+
+docs/17 §3 lists "Risk Management Engine" as an input, but `RiskManagementEngine.evaluate()` (ADR-062) requires a caller-supplied candidate trade setup (direction, entry price, stop-loss, take-profit) - data the Strategy Engine does not have and should not fabricate, since it evaluates *which methodology fits current conditions*, not a specific trade. Fabricating placeholder price levels purely to satisfy `evaluate()`'s signature would violate this project's "never invent data" principle (the same principle that kept `spread` optional rather than defaulted, ADR-065).
+
+Decision
+
+`StrategyEngine` imports and calls `app.services.risk_management`'s deterministic sub-modules directly - `session_classifier.classify()`, `liquidity_filter.classify()`, `economic_filter.analyze()` - none of which require a candidate trade setup, only asset/timeframe-level market evidence already available. `MarketRegimeResult.volatility.state` (already returned by `AnalysisConfidenceEngine.analyze()`) supplies the remaining risk-relevant evidence docs/17 needs. `RiskManagementEngine.evaluate()` itself is never called.
+
+Reason
+
+This satisfies docs/17 §3's "Risk Management Engine" input as "the risk-relevant evidence Risk Management is built from," which is what the vision doc's spirit actually needs (session/liquidity/economic-event/volatility context, not a specific trade's R:R or stop-loss validity) - without inventing data to force-fit a method signature designed for a different purpose (ADR-062's caller-supplied-setup scope).
+
+Alternatives Considered
+
+Option A: Call `RiskManagementEngine.evaluate()` with synthetic/placeholder entry-stop-target values derived from ATR - rejected; any such placeholder would be fabricated data flowing into hard-reject rules (R:R validation, stop-loss-too-tight) that were designed to evaluate a real trade, not a synthetic stand-in - directly against this project's "never invent data" principle.
+
+Option B (chosen): Import and reuse `risk_management`'s asset/timeframe-scoped sub-modules directly; skip `RiskManagementEngine.evaluate()` entirely.
+
+Trade-offs
+
+Pros
+
+No fabricated data anywhere in the evaluation path.
+
+Reuses already-tested, already-shipped deterministic modules (`session_classifier`, `liquidity_filter`, `economic_filter`) with zero duplication.
+
+Cons
+
+Strategy Engine does not get Risk Management's trade-level checks (R:R validation, stop-loss-too-tight, spread) - by design, since those require a specific trade this engine doesn't evaluate.
+
+Future Review
+
+Revisit only if a future Signal Engine (Phase 6) needs Strategy Engine's output combined with a real `RiskManagementEngine.evaluate()` call once it has an actual candidate setup - that composition belongs in the Signal Engine, not retrofitted here.
+
+---
+
+# ADR-072
+
+Title
+
+Buildable Strategy Set: Merge Range Trading/Mean Reversion, Defer Momentum Trading, Resolve "Institutional Trend"
+
+Status
+
+Accepted
+
+Context
+
+docs/17_STRATEGY_ENGINE.md §4 lists 9 strategy names (Trend Following, SMC, Breakout, Pullback, Range Trading, Mean Reversion, Scalping, Swing Trading, Momentum Trading) but only 7 have a requirements section (§7-§13). "Range Trading" and "Mean Reversion" are never separately defined - §11's "Mean Reversion" section (Range Market, Strong/Weak Support-Resistance, Low Trend Strength) is clearly describing one strategy under two names. "Momentum Trading" has zero requirements defined anywhere. §8's SMC strategy names its best market as "Institutional Trend" - no such value exists in `MarketRegimeState`'s eleven values (docs/16 §3).
+
+Decision
+
+Seven strategies are implemented, one enum value each: `TREND_FOLLOWING`, `SMC`, `BREAKOUT`, `PULLBACK`, `MEAN_REVERSION` (merging "Range Trading"/"Mean Reversion" into one, since docs/17 never defines them separately), `SCALPING`, `SWING_TRADING`. `MOMENTUM_TRADING` is explicitly **not implemented** - no requirements exist anywhere in docs/17 to build it from, and inventing thresholds from scratch would violate "never invent architecture." §8's "Institutional Trend" is resolved to the regime set `{TRENDING_BULLISH, TRENDING_BEARISH, ACCUMULATION, DISTRIBUTION}` for the SMC strategy's Market Match gate (docs/49 §4) - the four `MarketRegimeState` values most consistent with SMC's own vocabulary (structural trend and accumulation/distribution phases, ADR-040's existing definition), not an invented fifth regime value.
+
+Reason
+
+Building only what docs/17 actually specifies (rather than inventing Momentum Trading's requirements or guessing which single regime value "Institutional Trend" meant) keeps this phase's deterministic rules traceable to the source document, consistent with every prior phase's practice of flagging vision-doc gaps rather than silently filling them with invented specifics.
+
+Alternatives Considered
+
+Option A: Invent requirements for Momentum Trading (e.g. RSI/MACD momentum thresholds) - rejected; nothing in docs/17 specifies what "Momentum Trading" requires beyond its name, and inventing a full requirements checklist from nothing would be architecture invention, not implementation.
+
+Option B: Treat "Institutional Trend" as literally matching zero regime values (SMC strategy always gets 0 Market Match) - rejected; unhelpful, and inconsistent with docs/17 §8's clear intent that SMC strategy is meant to be viable under real market conditions.
+
+Option C (chosen): Seven strategies with docs/17-sourced requirements; Momentum Trading deferred; "Institutional Trend" mapped to the four most SMC-consistent regime values.
+
+Trade-offs
+
+Pros
+
+Every implemented strategy's requirements trace directly to docs/17's text - no invented thresholds.
+
+Momentum Trading being absent is an honest gap, not a silently-wrong guess.
+
+Cons
+
+Users expecting all 9 named strategies (docs/17 §4) will find "Range Trading" and "Momentum Trading" unavailable as distinct results - documented explicitly in docs/17's own update (docs/49 §3) and the API's out-of-scope note.
+
+Future Review
+
+Revisit Momentum Trading once docs/17 is updated with real, specific requirements (not this project's own invention) - likely alongside a broader Strategy Engine v2 pass.
+
+---
+
+# ADR-073
+
+Title
+
+Market Match Scoring: Regime-Compatibility Gate With Timeframe Partial Credit
+
+Status
+
+Accepted
+
+Context
+
+docs/17 §14 allocates 30 of 100 points to "Market Match" but never specifies how it's computed - only §15's worked example implies a mismatched strategy still scores nonzero overall (Mean Reversion scores 42 in what's presumably a trending market, not 0), meaning Market Match itself, or the overall score, isn't a hard binary gate to zero.
+
+Decision
+
+`market_match.py` scores each strategy 0-30 via: 30 points if the current `MarketRegimeState` (from `AnalysisConfidenceEngine`'s `.market_regime`) is in the strategy's compatible-regime set (docs/49 §4's table) AND the requested timeframe is in the strategy's preferred-timeframes list (docs/17 §7/§8/§12/§13); 20 points if regime-compatible but the timeframe isn't preferred; 0 points if the regime itself is incompatible. A strategy scoring 0 on Market Match is not automatically rejected outright (ADR-076 handles rejection via the *total* score and Market Match specifically) - its Evidence Quality/Confidence/Risk/Historical Performance components still contribute, matching docs/17 §15's own worked example.
+
+Reason
+
+A hard "Market Match=0 means total=0" rule would make docs/17 §15's Mean Reversion=42 example impossible to reproduce - the components must be independently additive, with Market Match as one weighted contribution among several, not a multiplicative gate.
+
+Alternatives Considered
+
+Option A: Market Match=0 forces total score to 0 (multiplicative gate) - rejected, contradicts docs/17 §15's own worked example directly.
+
+Option B (chosen): Market Match is one additive component (0/20/30); rejection (ADR-076) is a separate downstream decision based on the total score and/or Market Match specifically being 0.
+
+Trade-offs
+
+Pros
+
+Reproduces docs/17 §15's own worked example's shape (a regime-mismatched strategy still scores meaningfully above zero).
+
+Timeframe partial credit (20 vs 30) rewards regime-correct-but-suboptimal-timeframe strategies more than a binary pass/fail would.
+
+Cons
+
+The 20-point partial-credit threshold is a starting point, not calibrated against real trading outcomes - same caveat as every prior scoring table.
+
+Future Review
+
+Revisit the partial-credit split (20/30) once real usage data exists to inform tuning, consistent with every prior scoring ADR's caveat.
+
+---
+
+# ADR-074
+
+Title
+
+Evidence Quality Scoring: Deterministic Per-Strategy Checklists From Already-Computed Evidence
+
+Status
+
+Accepted
+
+Context
+
+docs/17 §7-§13 give each strategy a bullet-point "Requirements" list (e.g. Trend Following: EMA Alignment, Strong ADX, Healthy Volume, High Confidence) but no scoring formula. A code audit (docs/49 §2) found every requirement maps onto an already-computed field from Technical Analysis, SMC, or Market Regime - none require new computation.
+
+Decision
+
+Each of the seven strategies (ADR-072) gets a dedicated requirements-checklist module (`app/services/strategy/requirements/<strategy>.py`) that checks its docs/17-specified requirements against the shared `AnalysisConfidenceEngine` evidence bundle, returning `(met_count, total_count)` for Evidence Quality's 25-point component (`25 * met_count / total_count`). Requirements docs/17 mentions but this project has no data source for (Spread for Scalping, Risk/Reward for Swing Trading) are **excluded from the denominator entirely** - never defaulted to met or unmet, since fabricating either would misrepresent unavailable data as evidence (mirrors ADR-065's "never fabricate spread" precedent).
+
+Reason
+
+Consistent with every deterministic-rule-table ADR in this project (051/055/059/060/064) - build from what's genuinely computable, exclude what isn't, never fabricate. Excluding ungateable requirements from the denominator (rather than counting them as automatically failed) avoids unfairly penalizing every strategy for a project-wide data gap that has nothing to do with that specific evaluation.
+
+Alternatives Considered
+
+Option A: Count Spread/RR as automatically "not met" since no data exists - rejected; this would systematically and artificially lower Scalping's and Swing Trading's Evidence Quality scores for a project-wide data gap unrelated to actual market conditions, not a genuine strategy mismatch.
+
+Option B (chosen): Exclude ungateable requirements from the denominator; score is `met / (total - ungateable)`.
+
+Trade-offs
+
+Pros
+
+No strategy is unfairly penalized for a project-wide data gap (no spread/RR source) that isn't specific to its own requirements quality.
+
+Every requirement actually checked traces directly to docs/17's own bullet list for that strategy.
+
+Cons
+
+Scalping's and Swing Trading's Evidence Quality is measured against a smaller checklist than docs/17 literally lists - documented explicitly here and in docs/49, not silently narrowed.
+
+Future Review
+
+Revisit once a market-data provider reports live spread (ADR-065's follow-up) - Scalping's Spread requirement could then rejoin the denominator.
+
+---
+
+# ADR-075
+
+Title
+
+Historical Performance Defaults to a Uniform Neutral Score - No Data Source Exists
+
+Status
+
+Accepted
+
+Context
+
+docs/17 §14 allocates 10 of 100 points to "Historical Performance," but this project has no persisted trade outcomes, signals, or backtest data anywhere (confirmed: no `signals`/`trades` table exists, Phase 6/7 territory) - there is nothing to compute a real historical performance score from for any strategy.
+
+Decision
+
+`historical_performance.py` returns a uniform neutral score (5 of 10 points) for every strategy, regardless of which strategy is being evaluated - not tuned per-strategy, since there's no data to differentiate them by.
+
+Reason
+
+Mirrors the Confidence Engine's docs/15 v1.0 §10 deferred-historical-calibration precedent exactly: "requires a persisted trade-outcomes dataset that doesn't exist... needs its own design pass (and likely a Signal Engine, Phase 6) before it's buildable" (BACKLOG.md §15). A uniform neutral placeholder is honest about the absence of real data, unlike a fabricated per-strategy score that would look like real historical evidence but isn't.
+
+Alternatives Considered
+
+Option A: Omit the Historical Performance component entirely, rescaling the other four to sum to 100 - rejected; docs/17 §14 explicitly allocates 10 points to it, and silently redistributing weights would diverge from the documented formula without an ADR specifically justifying that redistribution.
+
+Option B (chosen): Keep the 10-point component in the formula; populate it with a uniform neutral placeholder (5/10) until real data exists.
+
+Trade-offs
+
+Pros
+
+Preserves docs/17 §14's documented 100-point formula shape exactly (30/25/20/15/10), so a future real implementation is a drop-in replacement, not a formula redesign.
+
+Explicit and honest about the placeholder nature - never presented as if it were real historical data.
+
+Cons
+
+Every strategy's total score is currently capped at 95 (100 - 5 points of "used but uninformative" placeholder), a minor but real ceiling until real data exists.
+
+Future Review
+
+Revisit once a trade-outcomes/backtest dataset exists (likely alongside a future Signal Engine, Phase 6/7) - implement real historical performance scoring then, replacing this placeholder.
+
+---
+
+# ADR-076
+
+Title
+
+Strategy Rejection and Ranking Rules
+
+Status
+
+Accepted
+
+Context
+
+docs/17 §15/§16 show worked examples of ranking (Trend Following 94, SMC 91, Pullback 82, Breakout 78, Mean Reversion 42) and a primary/alternative/rejected split, but never specifies the actual rejection threshold or ranking tie-break rule.
+
+Decision
+
+`ranking.py` rejects a strategy if either its Market Match component (ADR-073) is 0 (regime-incompatible - a strategy fundamentally wrong for current conditions, regardless of its other components) or its total score falls below 50 (a strategy that's regime-compatible but weak on every other dimension). Every rejected strategy carries an explicit reason string (e.g. "Market regime (ranging) is incompatible with Trend Following" or "Total score 38 is below the minimum threshold of 50"). Among non-rejected strategies, the primary strategy is the highest-scoring one; all other non-rejected strategies become `alternative_strategies`, ranked by score descending. Ties are broken by enum declaration order (deterministic, no randomness).
+
+Reason
+
+A dual rejection rule (regime-incompatible OR too-weak-overall) matches docs/17 §16's own worked example, where Mean Reversion (score 42, presumably regime-mismatched) is explicitly listed as "Rejected" while Breakout (score 78) is not - a single fixed score threshold alone wouldn't distinguish "wrong methodology for this market" from "right methodology, mediocre setup," but this project's evidence-quality/confidence/risk components could theoretically produce a low total for a regime-compatible strategy too, which the 50-point floor catches independently.
+
+Alternatives Considered
+
+Option A: Reject only below a fixed score threshold (e.g. 60, matching docs/12's Trade Quality Reject tier) - rejected; doesn't independently catch a Market-Match=0 strategy that happens to score above the threshold from its other components alone, which would misleadingly present a regime-incompatible strategy as viable.
+
+Option B (chosen): Reject on Market Match=0 OR total score below 50; rank remaining by score descending.
+
+Trade-offs
+
+Pros
+
+Catches both failure modes (wrong methodology for the regime; right methodology but weak setup) independently.
+
+Deterministic tie-breaking (enum order) avoids nondeterministic output for equal scores.
+
+Cons
+
+The 50-point floor is a starting point, not empirically calibrated - same caveat as every prior scoring/threshold ADR.
+
+Future Review
+
+Revisit the 50-point floor once real usage data exists to inform tuning, consistent with every prior scoring engine's Future Review note.
+
+---
+
 # Review Policy
 
 Review ADRs:

@@ -655,6 +655,35 @@ Out of scope for Phase 5C: any endpoint that stores/retrieves past evaluations (
 
 ---
 
+# Strategy
+
+Phase 5D (docs/49_STRATEGY_ARCHITECTURE.md, ADR-069 through ADR-076). Public (no authentication).
+
+GET /strategy/evaluate/{symbol}?timeframe=H1
+
+Classifies which of seven strategy methodologies fits current market evidence - never a BUY/SELL/trade-level recommendation (ADR-069, extends ADR-031/ADR-043). `{symbol}` is case-insensitive.
+
+Response
+
+{
+  "symbol": "EURUSD", "timeframe": "h1",
+  "primary_strategy": "trend_following",
+  "alternative_strategies": [ { "strategy", "score" } ],
+  "rejected_strategies": [ { "strategy", "score", "reason" } ],
+  "strategy_score": 94,
+  "breakdown": { "market_match", "evidence_quality", "confidence", "risk", "historical_performance", "total" },
+  "warnings": [],
+  "calculated_at"
+}
+
+`breakdown` describes the `primary_strategy` only. A strategy is rejected if its `market_match` is 0 (regime-incompatible) or its total score falls below 50 (docs/49 §8) - `rejected_strategies` always carries an explicit reason. `historical_performance` is currently a uniform placeholder (ADR-075) - no trade-outcomes dataset exists yet. 404 only if the asset symbol is unknown.
+
+Momentum Trading (docs/17 §4) is not available as a result - undefined requirements in docs/17, ADR-072.
+
+Out of scope for Phase 5D: any endpoint returning a trade-level recommendation; AI-generated explanation of the selection (docs/17 §18, Phase 6's job); persistence of evaluations (stateless).
+
+---
+
 # AI Analysis
 
 POST /analysis/ai

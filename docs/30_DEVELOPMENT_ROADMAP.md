@@ -154,7 +154,7 @@ Sub-Phases
 
 5C Risk Management Engine (`RiskManagementEngine`, stateless, reuse-first design over `AnalysisConfidenceEngine`/`NewsSentimentEngine`/`EconomicCalendarEngine`, deterministic session/spread/liquidity/correlation/RR/stop-loss filters, hard-reject decision + Trade Quality Score; docs/48_RISK_MANAGEMENT_ARCHITECTURE.md, ADR-062 through ADR-068) - Completed
 
-5D Strategy Engine - Not Started
+5D Strategy Engine (`StrategyEngine`, stateless, reuse-first design over `AnalysisConfidenceEngine`/`EconomicCalendarEngine`/`risk_management` sub-modules, seven deterministic strategy-requirements checklists, Market Match + Evidence Quality + Confidence + Risk + Historical Performance scoring, rejection/ranking; docs/49_STRATEGY_ARCHITECTURE.md, ADR-069 through ADR-076) - Completed
 
 ---
 

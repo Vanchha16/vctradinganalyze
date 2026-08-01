@@ -1,12 +1,16 @@
 # Risk Management Engine
 
-Version: 1.0
+Version: 1.1
+
+Implementation (Phase 5C): docs/48_RISK_MANAGEMENT_ARCHITECTURE.md, ADR-062 through ADR-068.
 
 ---
 
 # 1. Objective
 
-The Risk Management Engine evaluates whether a potential trading signal is safe enough to recommend.
+The Risk Management Engine evaluates whether a potential trading setup is safe enough to recommend.
+
+**Implementation note (Phase 5C, ADR-062):** "signal" here refers to a caller-supplied candidate trade setup (asset, timeframe, direction, entry/stop/target prices), passed directly in the API request - not a persisted `Signal` entity. No Signal Engine exists yet (docs/03 §11's `signals` table is Phase 6/7); this engine evaluates whatever specific setup it's asked about.
 
 It does NOT generate BUY or SELL signals.
 
@@ -141,6 +145,8 @@ Reduce confidence
 ---
 
 # 7. Spread Filter
+
+**Implementation note (Phase 5C, ADR-065):** no spread data source exists anywhere in this project (see docs/03 §5's `CandleResponse` docstring). `spread` is an optional field on the evaluation request - supplied by the caller if it has a live quote. This filter is skipped (never defaulted/fabricated) when omitted.
 
 Spread
 

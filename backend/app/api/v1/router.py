@@ -8,6 +8,7 @@ from app.api.v1.routes import (
     market_data,
     market_regime,
     news,
+    risk_management,
     smc,
     technical_analysis,
 )
@@ -22,3 +23,4 @@ api_router.include_router(market_regime.router)
 api_router.include_router(analysis_confidence.router)
 api_router.include_router(news.router)
 api_router.include_router(economic_calendar.router)
+api_router.include_router(risk_management.router)

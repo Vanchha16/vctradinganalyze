@@ -2640,6 +2640,332 @@ None expected - revisit only if risk-window evaluation becomes expensive enough 
 
 ---
 
+# ADR-062
+
+Title
+
+Risk Management Engine Evaluates a Caller-Supplied Candidate Trade Setup, Not a Persisted Signal
+
+Status
+
+Accepted
+
+Context
+
+docs/12_RISK_MANAGEMENT_ENGINE.md §1 frames the engine as evaluating "a potential trading signal" - but `signals` (docs/03 §11) is a Phase 6/7 table that doesn't exist yet, and no Signal Engine exists to produce one. This is the same category of gap ADR-047 resolved for the Confidence Engine: docs/15 v1.0 assumed inputs (News Sentiment, Economic Calendar, Risk Management) that didn't exist yet when Phase 4D was scoped.
+
+Decision
+
+`RiskManagementEngine.evaluate()` (`app/services/risk_management_engine.py`) takes a caller-supplied candidate trade setup directly as parameters - `asset`, `timeframe`, `direction`, `entry_price`, `stop_loss`, `take_profit`, and an optional `spread` - passed in the `POST /risk/evaluate` request body (docs/48 §4). No `Signal` object, persisted or otherwise, is read or required.
+
+Reason
+
+Restricting scope to what's actually buildable, and stating the assumption explicitly rather than silently, keeps the boundary clear for whoever builds the Signal Engine (Phase 6/7) later - the same reasoning ADR-047 used. A caller (a future Signal Engine, or a human testing a hypothesis) supplies the specific price levels it wants evaluated; this engine's job is exactly what docs/12 §1 says - judging whether *that* setup is safe, not inventing one.
+
+Alternatives Considered
+
+Option A: Wait until the Signal Engine exists and consume its output - rejected, blocks Phase 5C indefinitely on a phase (6/7) with no defined timeline, and the Risk Engine's own filters (volatility/spread/liquidity/correlation/RR/stop-loss) don't actually require a persisted Signal to evaluate - they only need specific price levels, which any caller can supply directly.
+
+Option B (chosen): Accept the candidate setup as direct request parameters.
+
+Trade-offs
+
+Pros
+
+Phase 5C is buildable and testable now, independent of the Signal Engine's timeline.
+
+When the Signal Engine is eventually built, it becomes just another caller of this same `evaluate()` method - no redesign needed, it already accepts exactly the parameters a signal would carry (direction, entry, stop, target).
+
+Cons
+
+Until a Signal Engine exists, this endpoint's only callers are human/manual testing or a future Phase 6+ integration - no automated production caller yet.
+
+Future Review
+
+Revisit only if the eventual Signal Engine's candidate-setup shape diverges from `evaluate()`'s current parameters in a way that needs a wrapper or adapter.
+
+---
+
+# ADR-063
+
+Title
+
+Risk Management Engine Is Stateless - No New Table
+
+Status
+
+Accepted
+
+Context
+
+Unlike News (Phase 5A) and Economic Calendar (Phase 5B), which persist real entities, docs/03_DATABASE_DESIGN.md reserves no table for Risk Management at all - `risk_level`/`risk_reward` exist only as fields on `ai_analysis` (§10) and `signals` (§11), both Phase 6/7 tables. docs/12 §18 requires "Logging" (Trade Quality, Risk Level, Warnings, Rejected Reason, Execution Time) for every evaluation.
+
+Decision
+
+`RiskManagementEngine` is fully stateless (mirrors ADR-045's Confidence Engine precedent) - no new model, no migration, no repository. Every `evaluate()` call recomputes fresh from `AnalysisConfidenceEngine`, `NewsSentimentEngine`, `EconomicCalendarEngine`, and current candle data. docs/12 §18's logging requirement is satisfied by structured `structlog` logging of every evaluation (asset, setup, trade_quality, risk_level, warnings, rejected_reasons, execution time) - not a new database table.
+
+Reason
+
+docs/03 already tells us where this evidence eventually lives (`ai_analysis`/`signals`, Phase 6/7) - inventing an interim `risk_evaluations` table now would mean either migrating that data later or maintaining two homes for the same evidence. Consistent with "don't invent unnecessary tables" (ADR-057's precedent).
+
+Alternatives Considered
+
+Option A: A new `risk_evaluations` audit table, mirroring News/Economic's persisted pattern - rejected; docs/03 gives no indication this engine owns persisted state, and a query need for historical evaluations hasn't been demonstrated.
+
+Option B (chosen): Stateless, structured logging only.
+
+Trade-offs
+
+Pros
+
+No schema to maintain, no migration, no risk of stale/orphaned evaluation rows.
+
+Matches the eventual home for this evidence (`ai_analysis`/`signals`) rather than creating a table that would need retiring later.
+
+Cons
+
+No queryable history of past evaluations until Phase 6/7 builds `ai_analysis`/`signals` and starts writing to them.
+
+Future Review
+
+Revisit when Phase 6/7 builds `ai_analysis`/`signals` - Risk Management's evidence becomes an input to what gets written there, not a table of its own even then.
+
+---
+
+# ADR-064
+
+Title
+
+Risk Management Engine Is Reuse-First: `AnalysisConfidenceEngine` Is the Primary Dependency
+
+Status
+
+Accepted
+
+Context
+
+docs/12 §3 lists Technical Score, SMC Score, Volatility, and Confidence Score as inputs. A code audit found every one of these already computed: `TechnicalAnalysisResult.technical_score`/`.strength` (`TrendStrengthLevel`), `SMCAnalysisResult.smc_score`/`.order_blocks`/`.liquidity_zones`, and - critically - `MarketRegimeResult.volatility.state` (`VolatilityRegimeState`: VERY_LOW/LOW/NORMAL/HIGH/EXTREME), which is an *exact* match for docs/12 §6's Volatility Filter scale, already built in Phase 4C. `AnalysisConfidenceEngine.analyze()` already computes all three (TA, SMC, Market Regime) in one call via ADR-049's pre-computation chaining, plus `overall_confidence`.
+
+Decision
+
+`RiskManagementEngine`'s primary dependency is `AnalysisConfidenceEngine`, not `TechnicalAnalysisEngine`/`SMCEngine`/`MarketRegimeEngine` individually. One `AnalysisConfidenceEngine.analyze(asset, timeframe)` call yields Technical Score, Trend Quality (`TrendStrengthLevel`), SMC Score, Order Blocks/Liquidity Zones, Volatility (`VolatilityRegimeState`), and Confidence Score in a single call. Docs/12 §6's Volatility Filter reuses `VolatilityRegimeState` directly - no new volatility classification is invented. Docs/12 §11's Trend Quality reuses `TrendStrengthLevel` (WEAK/MODERATE/STRONG/VERY_STRONG - four levels) rather than inventing docs/12's illustrative fifth "Very Weak" tier, which no upstream engine produces.
+
+Reason
+
+Mirrors docs/44 §5's "Market Regime is almost entirely derived from Technical Analysis's and SMC's already-computed evidence" reuse-first philosophy, and ADR-049's precedent of accepting pre-computed upstream results rather than re-deriving them. Inventing a second volatility or trend-strength classification scale that happens to look similar to an existing one would be a maintenance liability (two sources of truth for the same concept) for no benefit.
+
+Alternatives Considered
+
+Option A: Call `TechnicalAnalysisEngine`/`SMCEngine`/`MarketRegimeEngine` independently and re-derive a Risk-Engine-specific volatility/trend scale - rejected, duplicates already-solved classification work and risks the two scales silently drifting apart over time.
+
+Option B (chosen): Depend on `AnalysisConfidenceEngine`, reuse its evidence and enums directly.
+
+Trade-offs
+
+Pros
+
+Zero duplicate computation - `AnalysisConfidenceEngine` already computes TA/SMC/Regime exactly once each per call (ADR-049).
+
+`VolatilityRegimeState`'s five values map onto docs/12 §6 with no translation layer needed.
+
+Cons
+
+`RiskManagementEngine` inherits `AnalysisConfidenceEngine`'s graceful-degradation behavior (missing upstream data becomes `None`, not a 404) - filters that need TA/SMC/Regime evidence must handle `None` gracefully too, propagating the same pattern one level further.
+
+Docs/12 §11's five-level Trend Quality illustration is simplified to the four levels `TrendStrengthLevel` actually has - a deliberate simplification, not a literal implementation of the vision doc's example scale.
+
+Future Review
+
+None expected - revisit only if a Risk-Engine-specific need for volatility/trend granularity beyond `VolatilityRegimeState`/`TrendStrengthLevel` is demonstrated.
+
+---
+
+# ADR-065
+
+Title
+
+Spread Is an Optional Caller-Supplied Request Field, Never Internally Sourced
+
+Status
+
+Accepted
+
+Context
+
+docs/12 §7's Spread Filter requires a spread value, but no `spread` field exists anywhere in this project's data model - `app/schemas/market_data.py`'s `CandleResponse` docstring already documents this explicitly ("No `spread` field - it isn't part of the data model... so it's omitted rather than fabricated"). Spread is a live bid/ask-quote concept this platform has never sourced from any provider.
+
+Decision
+
+`spread` is an optional field on the `POST /risk/evaluate` request body (`app/schemas/risk_management.py`) - the caller supplies a live quote if it has one. `spread_filter.py` classifies it via price-relative percentage bands (Excellent/Acceptable/High/Extreme, docs/48 §5) when provided. When omitted, the Spread Filter is skipped entirely (neutral contribution to the Risk component, a `warnings` entry noting it was skipped) - never fabricated or defaulted to an assumed value.
+
+Reason
+
+Directly extends this project's existing "never invent data" precedent (the same reasoning that already kept `spread` out of `CandleResponse`) to the Risk Engine specifically. Classifying by price-relative percentage (not absolute pips) keeps the bands asset-class-agnostic without needing a per-symbol threshold table this project has no sourced data to calibrate.
+
+Alternatives Considered
+
+Option A: Silently default spread to zero or omit the filter's existence from the response - rejected; zero would misrepresent an unknown value as "excellent," and silently omitting the filter without a `warnings` note would hide that a real input was unavailable.
+
+Option B (chosen): Optional request field, skipped-with-warning when absent.
+
+Trade-offs
+
+Pros
+
+Consistent with `CandleResponse`'s existing "never fabricate spread" precedent.
+
+Callers with a real live quote (e.g. a future broker-integrated caller) get full spread-aware evaluation; callers without one still get a complete evaluation of everything else.
+
+Cons
+
+Without a real market-data provider that reports spread, most callers in this phase will omit it and never exercise the Spread Filter's reject/reduce paths outside of tests.
+
+Future Review
+
+Revisit if/when a market-data provider integration (Phase 3B follow-up or beyond) starts reporting live spread - `PriceCandle`/quote data could then supply it automatically instead of requiring the caller to.
+
+---
+
+# ADR-066
+
+Title
+
+Liquidity Filter Uses a Relative-Volume-Ratio Proxy; True Liquidity and Holiday-Calendar Data Are Out of Scope
+
+Status
+
+Accepted
+
+Context
+
+docs/12 §10's Liquidity Filter needs Low/Normal/High/Excellent liquidity classification and rejects trading during "Holiday Sessions, Market Close, Abnormal Conditions" - but no order-book, market-depth, or holiday-calendar data source exists anywhere in this project. `PriceCandle.volume` is the closest available proxy, and it is itself optional/`None` for some providers (Technical Analysis already established a `VolumeState.UNAVAILABLE` precedent for exactly this situation).
+
+Decision
+
+`liquidity_filter.py` classifies liquidity via a relative-volume ratio (the latest candle's volume vs. its own recent rolling average) into Low/Normal/High/Excellent bands (docs/48 §5) when volume data is available; when `PriceCandle.volume` is `None`, the result is `UNKNOWN` (neutral contribution, not fabricated - mirrors `VolumeState.UNAVAILABLE`). "Market Close" is approximated via `session_classifier.py`'s `CLOSED` state (outside every named session) and triggers a hard reject, honoring ADR-014's veto authority. True holiday-calendar detection ("Holiday Sessions") is explicitly out of scope - no such data source exists to build it from.
+
+Reason
+
+A relative-volume ratio is fully deterministic and reuses data this project already stores, rather than fabricating a liquidity score with no underlying data. Approximating "Market Close" via session boundaries is a reasonable, buildable stand-in for a concept docs/12 never fully specifies how to detect.
+
+Alternatives Considered
+
+Option A: Skip the Liquidity Filter entirely until real order-book data exists - rejected; the volume-ratio proxy is a legitimate, deterministic, already-available signal, and skipping it entirely would leave docs/12 §10 completely unaddressed rather than partially and honestly addressed.
+
+Option B (chosen): Volume-ratio proxy + session-based Market-Close approximation; true liquidity/holiday-calendar out of scope.
+
+Trade-offs
+
+Pros
+
+Fully deterministic, uses only data this project already stores.
+
+Consistent with the existing `VolumeState.UNAVAILABLE` precedent rather than inventing a different "missing data" convention for this engine.
+
+Cons
+
+A volume-ratio proxy is a coarser signal than genuine market depth/liquidity - flagged explicitly as a starting point, not a real liquidity model.
+
+Future Review
+
+Revisit if a market-data provider ever supplies genuine liquidity/depth data, or if a holiday-calendar data source is integrated.
+
+---
+
+# ADR-067
+
+Title
+
+Correlation Filter Computes Real Pearson Correlation for a Fixed Curated Pair List, Advisory-Only
+
+Status
+
+Accepted
+
+Context
+
+docs/12 §9's Correlation Filter needs to "avoid multiple highly correlated signals" (examples: EURUSD+GBPUSD, XAUUSD+Silver, BTC+ETH; reduce quality score if correlation > 0.85) - but this project has no portfolio or open-position tracking, so it cannot know whether the caller actually holds a correlated position elsewhere. No correlation data or model exists yet.
+
+Decision
+
+`correlation_analyzer.py` computes real Pearson correlation from stored `PriceCandle.close`-price return series (not raw closes, to avoid trivial correlation from shared scale/trend) over a fixed lookback window, for a fixed curated pair list matching docs/12 §9's own named examples (EURUSD↔GBPUSD, XAUUSD↔XAGUSD, BTCUSD↔ETHUSD). A pair is skipped if its counterpart asset isn't seeded in this deployment. Correlation above 0.85 contributes a `warnings` entry and a minor Risk-component score reduction - **never a hard reject**, since there is no position data to justify blocking a trade outright over a mathematical correlation alone.
+
+Reason
+
+Computing real correlation from real stored data (rather than a static hand-entered coefficient table) keeps this fully deterministic and grounded in this project's "never invent data" principle. Advisory-only (not a hard reject) directly matches docs/12 §9's own wording ("reduce quality score," not "reject") and is honest about what this project can and cannot know (correlation between two assets' price history, yes; whether the caller is actually exposed to both, no).
+
+Alternatives Considered
+
+Option A: A general market-wide correlation matrix computed across every asset pair - rejected as unnecessary complexity and computational cost for a filter that's advisory-only; docs/12 §9 itself only names three illustrative pairs, not a general model.
+
+Option B (chosen): Fixed curated pair list, real Pearson correlation, advisory-only.
+
+Trade-offs
+
+Pros
+
+Fully deterministic, real data, matches docs/12 §9's own illustrative scope exactly.
+
+Bounded, predictable cost (three pair checks, not a market-wide scan) - docs/48 §14's performance note.
+
+Cons
+
+Only catches correlation within the three named pairs - a genuinely correlated pair outside this list (e.g. two minor forex crosses) isn't checked. Accepted as an explicit Phase 5C limitation.
+
+Future Review
+
+Revisit the pair list, or generalize to a broader/dynamic correlation model, once real usage demonstrates a need beyond the three docs/12 §9 examples - and revisit advisory-vs-reject once/if portfolio or open-position tracking exists to justify a harder rule.
+
+---
+
+# ADR-068
+
+Title
+
+Hard-Reject Rules Precede the Trade Quality Score Decision Matrix
+
+Status
+
+Accepted
+
+Context
+
+docs/12 defines both independent hard-reject conditions (§6 Extreme volatility, §7 Extreme spread, §8 Critical event <30min, §12 R:R below minimum, plus §10's Market Close via ADR-066) and a separate score-tier Decision Matrix (§16: 90+ Excellent ... below 60 Reject). ADR-014 already establishes "The Risk Engine has veto authority." Docs/12 doesn't specify how these two mechanisms combine, or whether multiple simultaneous hard-reject reasons should all be reported or just the first found.
+
+Decision
+
+`decision.py` evaluates every hard-reject rule first, independent of and prior to computing the Trade Quality Score's tier: extreme volatility (`VolatilityRegimeState.EXTREME`), extreme spread (only if `spread` was supplied), a critical economic event inside its risk window (`EconomicEventImportance.CRITICAL` + `risk_window=True`), risk/reward below the 1:2 minimum, an unrealistically tight stop-loss (< 0.5x ATR), and session `CLOSED`. **All** triggered hard-reject reasons are collected into `rejected_reasons` (not just the first match), and `approved=False` if the list is non-empty, regardless of the computed Trade Quality Score. Only when no hard-reject rule triggers does the score-tier Decision Matrix (§16) determine the tier (Excellent/Very Good/Good/Average) or a score-based Reject (<60). `trade_quality_aggregator.py` computes the 100-point score (Trend Quality 20 / Technical 20 / SMC 20 / Risk 20 / News 10 / Economic 10, docs/12 §15) independently of the hard-reject outcome, so the response always includes an explainable breakdown even when a setup is hard-rejected (mirrors ADR-041's "Confidence Must Be Explainable" principle extended to this engine).
+
+Reason
+
+Collecting all triggered reasons (not first-match) gives the caller a complete picture of why a setup was rejected in one response, rather than requiring them to fix one issue and resubmit only to discover another. Computing the score even on a hard-rejected setup preserves explainability (ADR-041's precedent) - a rejected setup's breakdown still shows *how close* it was, which is useful diagnostic information.
+
+Alternatives Considered
+
+Option A: First-match-wins hard-reject (stop at the first triggered rule) - rejected, less useful to the caller and inconsistent with how this project's other engines (e.g. `conflict_analyzer.py`) already collect every triggered condition rather than stopping at the first.
+
+Option B: Skip score computation entirely once a hard-reject triggers (short-circuit) - rejected, loses explainability for rejected setups, which is exactly when a caller most wants to understand *why*.
+
+Option C (chosen): Evaluate all hard-reject rules, collect every triggered reason, always compute the full score breakdown.
+
+Trade-offs
+
+Pros
+
+Complete diagnostic information in every response, whether approved or rejected.
+
+Consistent with this project's existing "collect all triggered conditions" pattern (`conflict_analyzer.py`) rather than introducing a new first-match convention.
+
+Cons
+
+Slightly more computation per rejected setup (the full score is still computed even though the setup is already rejected) - negligible given this engine's bounded, single-call cost profile (docs/48 §14).
+
+Future Review
+
+None expected - revisit only if a specific hard-reject rule's precedence or threshold needs adjustment based on real usage.
+
+---
+
 # Review Policy
 
 Review ADRs:

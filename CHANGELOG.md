@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added - Phase 5C: Risk Management Engine
+
+`docs/48_RISK_MANAGEMENT_ARCHITECTURE.md` - new architecture document defining the reuse-first dependency design, session/spread/liquidity/correlation rule tables, R:R and stop-loss validation, the Trade Quality Score, and hard-reject decision precedence
+
+`app/services/risk_management/` - nine deterministic modules (`session_classifier`, `spread_filter`, `liquidity_filter`, `correlation_analyzer`, `economic_filter`, `risk_reward_validator`, `stop_loss_validator`, `news_scorer`, `trade_quality_aggregator`) plus `decision` - fully deterministic, zero AI/GPT usage, no trade recommendations, matching the user's explicit constraint for this phase
+
+`RiskManagementEngine` (`app/services/risk_management_engine.py`) - reuse-first (ADR-064): `AnalysisConfidenceEngine` is the primary dependency, transitively yielding Technical Analysis/SMC/Market Regime evidence in one call (reusing ADR-049's pre-computation chaining); `MarketRegimeResult.volatility.state` is reused directly for the Volatility Filter (an exact match for docs/12 §6's scale, already built in Phase 4C) and `TechnicalAnalysisResult.strength` for Trend Quality - no new classification scale invented. `NewsSentimentEngine` and `EconomicCalendarEngine` (Phase 5A/5B) are called directly - the first engine in this project to depend on a Phase 5 peer rather than deferring it
+
+Evaluates a caller-supplied candidate trade setup (ADR-062) - not a persisted Signal, since no Signal Engine exists yet; the same category of scope-narrowing ADR-047 already applied to the Confidence Engine
+
+Fully stateless (ADR-063) - no new table; `docs/03`'s `risk_level`/`risk_reward` fields already show this evidence's eventual home is the future `ai_analysis`/`signals` tables (Phase 6/7), not a table of its own
+
+New public (no auth) endpoint: `POST /risk/evaluate` - the first POST-based endpoint in this engine family, since a candidate setup (direction/entry/stop/target) is inherently a request body; `spread` is optional and never fabricated (ADR-065, no spread data source exists anywhere in this project)
+
+**ADR-062** through **ADR-068**: caller-supplied-setup scope; statelessness; reuse-first dependency design; spread as optional never-fabricated input; liquidity via relative-volume proxy with session-based Market Close approximation; correlation via real Pearson correlation for a fixed curated pair list, advisory-only; hard-reject rule precedence (all triggered reasons collected, not first-match) ahead of the score-tier Decision Matrix, honoring the project's pre-existing ADR-014 veto-authority decision
+
+Deliberately excluded (per Phase 5C approval): persistence of evaluations; position-size-in-lots calculation (guidance only); Signal Engine/AI Orchestrator integration; Confidence Engine integration in the reverse direction (ADR-047's boundary respected); true liquidity/order-book data; true holiday-calendar detection (weekend-based approximation only); portfolio/daily/weekly exposure limits; a general market-wide correlation model
+
+Tests: one file per deterministic module (`test_risk_session_classifier.py`, `test_risk_spread_filter.py`, `test_risk_liquidity_filter.py`, `test_risk_correlation_analyzer.py`, `test_risk_economic_filter.py`, `test_risk_reward_validator.py`, `test_risk_stop_loss_validator.py`, `test_risk_news_scorer.py`, `test_risk_trade_quality_aggregator.py`, `test_risk_decision.py`), `test_risk_management_engine.py` (integration against real upstream engines on a seeded SQLite session), `test_risk_management_routes.py`
+
+docs/03, docs/04, docs/12, docs/30 updated: noted Risk Management's evidence flows into future `ai_analysis`/`signals` tables; added the `/risk/evaluate` API contract; resolved docs/12's "Signal" premise conflict and documented spread as an optional input; marked Phase 5C complete
+
 ### Added - Phase 5B: Economic Calendar Engine
 
 `docs/47_ECONOMIC_CALENDAR_ARCHITECTURE.md` - new architecture document defining the upsert-based ingestion path, the read path, the category/importance/market-bias rule tables, and the read-time-only risk window computation

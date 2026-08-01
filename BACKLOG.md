@@ -2,7 +2,7 @@
 
 This document preserves unresolved ideas, deferred architectural decisions, documentation gaps, and future enhancements identified during Phases 1.1 through 2A. It is a backlog, not a plan — nothing here is scheduled or approved for implementation until explicitly revisited.
 
-Last updated: 2026-08-01 (Phase 5B: Economic Calendar Engine)
+Last updated: 2026-08-01 (Phase 5C: Risk Management Engine)
 
 ---
 
@@ -195,3 +195,15 @@ Last updated: 2026-08-01 (Phase 5B: Economic Calendar Engine)
 - **`GET /calendar` has no `timeframe` parameter, unlike every Phase 4 `/analysis/*` route** - deliberate (docs/47 §9), same reasoning as News's equivalent note in §16: this engine is date/window scoped, not candle-timeframe scoped.
 - **`/calendar/today`, `/calendar/week`, `/calendar/high-impact`, `/calendar/currency/{currency}` were explicitly decided against as separate routes**, not just deferred vaguely - `GET /calendar`'s `country`/`currency`/`importance`/`category`/`from`/`to`/`range` filters absorb all four, per the same "filters absorb variants" reasoning already applied to News's `/multi-asset` decision (§16).
 - **Coverage tooling still not installed** (see §4) - Phase 5B's new tests were likewise verified by inspection (every deterministic module, the upsert/revision pipeline behavior, the engine, and every API path has a dedicated test) rather than a numeric coverage report.
+
+## 18. Risk Management Engine (Phase 5C) — Deferred Items and Discoveries
+
+- **This engine has no dedicated table** (ADR-063) - unlike every other Phase 5 engine, `docs/03` never reserved one; `risk_level`/`risk_reward` live on the future `ai_analysis`/`signals` tables (Phase 6/7). If those tables are ever built with different field shapes than `RiskEvaluation` currently produces, reconcile the mapping then - don't assume the current dataclass shape is what those tables will store verbatim.
+- **`RiskManagementEngine` is the first engine in this project to call another Phase 5 peer engine as a real runtime dependency** (`NewsSentimentEngine`, `EconomicCalendarEngine`), not just a documented future integration - worth remembering as the precedent if a future engine (e.g. Strategy Engine, Phase 5D) also needs to compose multiple Phase 4/5 engines together.
+- **Correlation Filter's curated pair list is fixed** (EURUSD↔GBPUSD, XAUUSD↔XAGUSD, BTCUSD↔ETHUSD, ADR-067) - not a general market-wide correlation model. A pair outside this list is never checked, even if genuinely correlated. Revisit only if real usage demonstrates a need beyond docs/12 §9's own three named examples.
+- **No portfolio/open-position tracking exists**, which is *why* the Correlation Filter is advisory-only rather than a hard reject (ADR-067) - this engine has no way to know whether the caller is actually exposed to a correlated pair elsewhere. Revisit the advisory-vs-reject decision if/when position tracking is ever built.
+- **Liquidity Filter's relative-volume-ratio proxy and "Market Close via weekend session detection" are both coarse approximations** (ADR-066) - no genuine order-book/liquidity data or holiday-calendar data source exists anywhere in this project. The weekend approximation also doesn't account for real market holidays (e.g. Christmas, New Year) within a normal trading week.
+- **Spread Filter is effectively untested outside unit tests in this phase** (ADR-065) - no market-data provider in this project reports live spread, so real callers will almost always omit it and the Spread Filter's reject/reduce paths won't be exercised outside of `test_risk_spread_filter.py`'s synthetic inputs. Revisit once a provider that reports spread is integrated.
+- **Session/spread/liquidity/correlation/trend-quality-mapping thresholds are hand-tuned starting points, not empirically calibrated** - same caveat as every prior scoring table (ADR-028/030/035/036/037/042/046/055/059/060). The Trade Quality Score's exact component weights (20/20/20/20/10/10, docs/12 §15) came from the vision doc directly, but the *sub*-penalties within the Risk component (spread/liquidity/correlation/session) are this project's own extrapolation.
+- **Docs/12's illustrative 5-level Trend Quality scale (Very Weak…Very Strong) was simplified to `TrendStrengthLevel`'s existing 4 levels** (ADR-064) rather than inventing a 5th tier no upstream engine produces - a deliberate reuse-over-invention trade-off, not an oversight.
+- **Coverage tooling still not installed** (see §4) - Phase 5C's new tests were likewise verified by inspection (every deterministic module, the engine's integration paths, and every API path has a dedicated test) rather than a numeric coverage report.

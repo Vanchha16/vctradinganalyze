@@ -473,6 +473,8 @@ Not persisted (computed at read time, ADR-061): `risk_window`. Not persisted (co
 
 ---
 
+Phase 5C (docs/48_RISK_MANAGEMENT_ARCHITECTURE.md, ADR-063) - the Risk Management Engine is stateless and owns no table of its own. `risk_level`/`entry_price`/`stop_loss`/`take_profit` below are where its evidence eventually lands, once Phase 6/7 build `ai_analysis`/`signals` and start writing to them - not a table Risk Management persists to itself.
+
 # 10. AI Analysis
 
 ## ai_analysis

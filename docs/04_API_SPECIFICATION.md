@@ -617,6 +617,44 @@ Out of scope for Phase 5B: `POST /admin/calendar`-style manual ingestion, `/ws/c
 
 ---
 
+# Risk Management
+
+Phase 5C (docs/48_RISK_MANAGEMENT_ARCHITECTURE.md, ADR-062 through ADR-068). Public (no authentication).
+
+POST /risk/evaluate
+
+The first POST-based endpoint in the analysis-engine family - a candidate trade setup (direction/entry/stop/target) is inherently a request body, not query params. Evaluates a caller-supplied candidate setup (ADR-062) - not a persisted Signal, since no Signal Engine exists yet.
+
+Request
+
+{
+  "symbol": "EURUSD", "timeframe": "H1", "direction": "long",
+  "entry_price": 1.17540, "stop_loss": 1.17120, "take_profit": 1.18150,
+  "spread": 0.00012
+}
+
+`spread` is optional (ADR-065) - omitted rather than fabricated when the caller has no live quote; the Spread Filter is skipped (not defaulted) in that case.
+
+Response
+
+{
+  "approved": true,
+  "risk_level": "medium",
+  "trade_quality": 88,
+  "breakdown": { "trend_quality", "technical", "smc", "risk", "news", "economic", "total" },
+  "risk_reward": 3.15,
+  "rejected_reasons": [],
+  "warnings": [ "High Impact News in 90 minutes" ],
+  "position_guidance": "conservative",
+  "calculated_at"
+}
+
+`rejected_reasons` collects every triggered hard-reject rule (not just the first, ADR-068) - `approved` is `false` if this list is non-empty, or if `trade_quality` falls below 60 with no hard-reject rule triggered (docs/48 §8's Decision Matrix). `breakdown` is always populated, even when rejected, for explainability. 404 only if the asset symbol is unknown.
+
+Out of scope for Phase 5C: any endpoint that stores/retrieves past evaluations (stateless, no persistence); any position-size-in-lots calculation (`position_guidance` is qualitative only).
+
+---
+
 # AI Analysis
 
 POST /analysis/ai

@@ -152,7 +152,7 @@ Sub-Phases
 
 5B Economic Calendar Engine (`EconomicCalendarEngine`/`EconomicCalendarIngestionPipeline`, persisted `economic_events` with upsert-by-natural-key, deterministic category/importance/bias/risk-window rules, `MockEconomicCalendarProvider`; docs/47_ECONOMIC_CALENDAR_ARCHITECTURE.md, ADR-056 through ADR-061) - Completed
 
-5C Risk Management Engine - Not Started
+5C Risk Management Engine (`RiskManagementEngine`, stateless, reuse-first design over `AnalysisConfidenceEngine`/`NewsSentimentEngine`/`EconomicCalendarEngine`, deterministic session/spread/liquidity/correlation/RR/stop-loss filters, hard-reject decision + Trade Quality Score; docs/48_RISK_MANAGEMENT_ARCHITECTURE.md, ADR-062 through ADR-068) - Completed
 
 5D Strategy Engine - Not Started
 

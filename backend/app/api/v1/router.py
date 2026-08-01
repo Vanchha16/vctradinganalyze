@@ -6,6 +6,7 @@ from app.api.v1.routes import (
     health,
     market_data,
     market_regime,
+    news,
     smc,
     technical_analysis,
 )
@@ -18,3 +19,4 @@ api_router.include_router(technical_analysis.router)
 api_router.include_router(smc.router)
 api_router.include_router(market_regime.router)
 api_router.include_router(analysis_confidence.router)
+api_router.include_router(news.router)

@@ -1,7 +1,20 @@
 from app.models.asset import Asset
 from app.models.audit_log import AuditLog
-from app.models.enums import MarketType, SMCEventStatus, SMCEventType, Timeframe, UserRole
+from app.models.enums import (
+    MarketType,
+    NewsCategory,
+    NewsImportance,
+    NewsSentimentLabel,
+    NewsSourceTier,
+    SMCEventStatus,
+    SMCEventType,
+    Timeframe,
+    UserRole,
+)
 from app.models.indicator_result import IndicatorResult
+from app.models.news_article import NewsArticle
+from app.models.news_sentiment import NewsSentiment
+from app.models.news_source import NewsSource
 from app.models.oauth_account import OAuthAccount
 from app.models.price_candle import PriceCandle
 from app.models.smc_event import SMCEvent
@@ -15,6 +28,13 @@ __all__ = [
     "AuditLog",
     "IndicatorResult",
     "MarketType",
+    "NewsArticle",
+    "NewsCategory",
+    "NewsImportance",
+    "NewsSentiment",
+    "NewsSentimentLabel",
+    "NewsSource",
+    "NewsSourceTier",
     "OAuthAccount",
     "PriceCandle",
     "SMCEvent",

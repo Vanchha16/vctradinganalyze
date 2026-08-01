@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Added - Phase 5A: News Sentiment Engine
+
+`docs/46_NEWS_SENTIMENT_ARCHITECTURE.md` - new architecture document defining the two-path data flow (scheduled ingestion write path, on-demand read path), deterministic scoring algorithm, evidence schema, and the explicit divergence from Phase 4's `timeframe`-scoped engine pattern
+
+`docs/10_NEWS_SENTIMENT_ENGINE.md` bumped to v1.1 - removed the internally-inconsistent free-text sentiment example (`"Bullish USD"`), replaced the undefined "AI Hash" duplicate-detection language with a reference to the concrete deterministic algorithm actually implemented
+
+`app/services/news_sentiment/` - six deterministic modules (`dedup_detector`, `category_classifier`, `importance_scorer`, `sentiment_scorer`, `asset_detector`, `scoring_engine`) plus the isolated `ai_summary_generator` - only the last touches an LLM (OpenAI, narrative summary text only); sentiment/category/importance/affected-assets remain fully deterministic and unit-tested without live API calls
+
+`NewsSentimentEngine` (`app/services/news_sentiment_engine.py`, read path) and `NewsIngestionPipeline` (`app/services/news_ingestion_pipeline.py`, Celery-scheduled write path) - split because News persists real entities and has a producer/ingestion shape unlike Phase 4's pure read-only engines
+
+`app/services/news/providers/` - `NewsProvider` Protocol, `MockNewsProvider` (deterministic, seeded); no real vendor in this phase (ADR-050), mirrors the Phase 3A/3B Market Data provider split
+
+New persisted tables `news_sources`, `news_articles`, `news_sentiment` (`app/models/news_source.py`, `news_article.py`, `news_sentiment.py`; migration `3636f44102c0_create_news_tables.py`) - `news_sources` uses `TimestampMixin`, `news_articles` uses `CreatedAtMixin` + its own `published_at`, `news_sentiment` uses `TimestampMixin` (ADR-053); one `news_sentiment` row per article with `affected_assets` as a JSON list, not a normalized per-asset table (ADR-052)
+
+**ADR-050** through **ADR-055**: News provider abstraction is mock-first (real vendor deferred); sentiment scoring is deterministic-lexicon, with AI reserved solely for the narrative summary (tension with the Confidence Engine's no-AI-summary precedent, resolved by isolating the LLM call to one module); persistence model and mixin choices per table; deterministic duplicate detection (exact URL or title-similarity-within-window, replacing docs/10's undefined "AI Hash"); deterministic category/importance rule tables
+
+New public (no auth) endpoints: `GET /news`, `GET /news/{id}`, `GET /analysis/news/{symbol}?since=` - the last has no `timeframe` parameter (News is asset/time-window scoped, not candle-timeframe scoped, docs/46 §10); 404 only on an unknown asset/article, never on an empty result set
+
+Celery Beat task `news_sentiment.ingest` (`app/workers/news_sentiment_tasks.py`), merged into the existing `celery_app.conf.beat_schedule` alongside market data's per-timeframe schedule
+
+docs/03, docs/04, docs/30 updated: resolved the News tables' field/timestamp gaps, added concrete API contracts (replacing the previously stale "Bullish/Bearish"-only response), introduced Phase 5 sub-phase lettering (5A-5D) for the first time
+
+Deliberately excluded (per Phase 5A approval): real news vendor integration; Confidence Engine integration/weight rebalancing (ADR-047's boundary respected); `/ws/news`; true sub-30-second breaking-news SLA validation (unvalidatable against a mock provider); translation/multi-language; social/X sentiment; FinBERT/ML sentiment upgrade; `POST /admin/news`; a `/multi-asset` endpoint
+
+Tests: one file per deterministic analyzer (`test_news_dedup_detector.py`, `test_news_category_classifier.py`, `test_news_importance_scorer.py`, `test_news_sentiment_scorer.py`, `test_news_asset_detector.py`), `test_news_ai_summary_generator.py` (OpenAI client mocked via `httpx.MockTransport`, never a real API call), `test_mock_news_provider.py`, `test_news_ingestion_pipeline.py`, `test_news_sentiment_engine.py`, `test_news_routes.py`
+
 ### Added - Phase 4D: Confidence Engine
 
 `docs/45_CONFIDENCE_ARCHITECTURE.md` - new architecture document defining the data flow, modular scoring algorithm, alignment/conflict detection, freshness/completeness evaluation, and multi-timeframe strategy

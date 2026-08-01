@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     twelve_data_base_url: str = "https://api.twelvedata.com"
     twelve_data_timeout_seconds: float = 10.0
 
+    news_providers: list[str] = ["mock"]
+    news_ingestion_interval_seconds: int = 300
+    news_lookback_hours: int = 24
+
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4o-mini"
+    openai_timeout_seconds: float = 15.0
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

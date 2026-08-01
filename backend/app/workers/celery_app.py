@@ -14,8 +14,11 @@ def _configure_worker_logging(*_: object, **__: object) -> None:
     configure_logging(settings.log_level)
 
 
-# Imported after `celery_app` is defined above (the task module imports it
-# back) - registers the market-data collection task and its Beat schedule.
-from app.workers import market_data_tasks  # noqa: E402
+# Imported after `celery_app` is defined above (the task modules import it
+# back) - registers each domain's task(s) and Beat schedule.
+from app.workers import market_data_tasks, news_sentiment_tasks  # noqa: E402
 
-celery_app.conf.beat_schedule = market_data_tasks.register_market_data_schedule()
+celery_app.conf.beat_schedule = {
+    **market_data_tasks.register_market_data_schedule(),
+    **news_sentiment_tasks.register_news_schedule(),
+}

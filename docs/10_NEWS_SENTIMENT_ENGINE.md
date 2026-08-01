@@ -1,6 +1,8 @@
 # News Sentiment Engine
 
-Version: 1.0
+Version: 1.1
+
+Implementation (Phase 5A): docs/46_NEWS_SENTIMENT_ARCHITECTURE.md, ADR-050 through ADR-055.
 
 ---
 
@@ -262,13 +264,11 @@ Confidence
 
 Duplicate when
 
-Same URL
+Same URL (normalized)
 
-Same Headline
+Same Headline (normalized-title similarity above threshold, within a time window)
 
-Same Event
-
-Same AI Hash
+Implemented as a deterministic algorithm - see docs/46_NEWS_SENTIMENT_ARCHITECTURE.md §7, ADR-054. No ML/LLM-based hash or similarity is used.
 
 Keep only highest-quality source.
 
@@ -302,7 +302,7 @@ Immediate Processing
     "headline": "...",
     "category": "Inflation",
     "importance": "Critical",
-    "sentiment": "Bullish USD",
+    "sentiment": "Bullish",
     "confidence": 91,
     "affected_assets": [
         "EURUSD",

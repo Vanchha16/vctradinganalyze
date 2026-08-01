@@ -351,6 +351,8 @@ Breaker Block
 
 # 8. News
 
+Phase 5A (docs/46_NEWS_SENTIMENT_ARCHITECTURE.md, ADR-052/ADR-053) resolves the mixin/timestamp gap this section previously left contradicting §1: `news_sources` uses `TimestampMixin` (mutable, admin-managed), `news_articles` uses `CreatedAtMixin` + its own `published_at` (append-only once ingested), `news_sentiment` uses `TimestampMixin` (recomputable on re-scoring).
+
 ## news_sources
 
 Fields:
@@ -361,9 +363,15 @@ name
 
 website
 
+tier (Tier1/Tier2/Tier3, per docs/10 §3)
+
 priority
 
 is_active
+
+created_at
+
+updated_at
 
 ---
 
@@ -379,13 +387,19 @@ title
 
 summary
 
-url
+content (nullable, full body if provided by the source)
+
+url (unique, indexed - dedup exact-match key)
+
+category (12 values, per docs/10 §5)
 
 published_at
 
 language
 
 importance
+
+created_at
 
 ---
 
@@ -395,15 +409,21 @@ Fields:
 
 id
 
-article_id
+article_id (unique FK - one sentiment row per article, ADR-052)
 
-sentiment
+sentiment (Very Bullish/Bullish/Neutral/Bearish/Very Bearish - enum only, no free-text variant)
 
 confidence
 
-ai_summary
+reason
 
-processed_at
+affected_assets (JSON list of asset symbols)
+
+ai_summary (nullable - populated only when the AI summary call succeeds, ADR-051)
+
+created_at
+
+updated_at
 
 ---
 

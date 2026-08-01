@@ -142,6 +142,20 @@ Risk Engine
 
 Strategy Engine
 
+Status
+
+In Progress
+
+Sub-Phases
+
+5A News Sentiment Engine (`NewsSentimentEngine`/`NewsIngestionPipeline`, persisted `news_sources`/`news_articles`/`news_sentiment`, deterministic dedup/category/importance/sentiment analyzers, isolated AI-only narrative summary, `MockNewsProvider`; docs/46_NEWS_SENTIMENT_ARCHITECTURE.md, ADR-050 through ADR-055) - Completed
+
+5B Economic Calendar Engine - Not Started
+
+5C Risk Management Engine - Not Started
+
+5D Strategy Engine - Not Started
+
 ---
 
 # Phase 6

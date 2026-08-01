@@ -507,6 +507,8 @@ Response
 
 # News
 
+Phase 5A (docs/46_NEWS_SENTIMENT_ARCHITECTURE.md, ADR-050 through ADR-055). Public (no authentication) - matches the analysis routes' no-auth convention. `MockNewsProvider`-ingested data only in Phase 5A; no real vendor yet (ADR-050).
+
 GET /news
 
 Parameters
@@ -515,33 +517,54 @@ page
 
 limit
 
-importance
+importance (Critical/High/Medium/Low/Ignore)
 
-currency
+category (one of docs/10 §5's 12 values)
+
+Response
+
+{
+  "items": [ { "id", "source", "title", "summary", "category", "importance", "published_at", "sentiment", "confidence" } ],
+  "page", "limit", "total"
+}
+
+`currency` filtering is dropped - no `news_articles`/`news_sentiment` column ever backed it (this doc's own prior gap). Asset-scoped filtering is `GET /analysis/news/{symbol}` below, not a filter on this list endpoint.
 
 ---
 
 GET /news/{id}
 
-Return article details.
+Return full article + sentiment detail.
+
+Response
+
+{
+  "id", "source", "title", "summary", "content", "url", "category", "importance", "published_at",
+  "sentiment": { "sentiment", "confidence", "reason", "affected_assets", "ai_summary" }
+}
+
+404 if the article id is unknown. `ai_summary` is `null` if the AI summary call failed or was skipped (ADR-051) - never blocks the rest of the response.
 
 ---
 
 # News Sentiment
 
-GET /analysis/news/{symbol}
+GET /analysis/news/{symbol}?since=24h
+
+Public. `{symbol}` is case-insensitive. Returns already-ingested sentiment evidence for the asset over the requested window - **no `timeframe` parameter** (News is asset/time-window scoped, not candle-timeframe scoped, docs/46 §10).
 
 Response
 
-Bullish
+{
+  "symbol", "since",
+  "articles": [ { "id", "headline", "category", "importance", "sentiment", "confidence", "reason", "affected_assets", "ai_summary", "published_at", "source" } ],
+  "warnings": [],
+  "calculated_at"
+}
 
-Bearish
+`sentiment` is one of `very_bullish`/`bullish`/`neutral`/`bearish`/`very_bearish` (docs/10 §7's 5-value enum) - never the free-text `"Bullish USD"` shape this doc previously (incorrectly) implied, and never the binary `Bullish`/`Bearish` this section previously documented. 404 only if the asset symbol is unknown - an empty `articles` list (no matching news in the window) is a valid 200, not a 404. No `/multi-asset` variant exists (deliberately not built, docs/46 §12).
 
-Neutral
-
-Confidence
-
-AI Summary
+Out of scope for Phase 5A: `POST /admin/news` (deferred - not built), `/ws/news` (deferred - not built, tracked in BACKLOG.md).
 
 ---
 

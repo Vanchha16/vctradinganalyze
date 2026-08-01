@@ -150,7 +150,7 @@ Sub-Phases
 
 5A News Sentiment Engine (`NewsSentimentEngine`/`NewsIngestionPipeline`, persisted `news_sources`/`news_articles`/`news_sentiment`, deterministic dedup/category/importance/sentiment analyzers, isolated AI-only narrative summary, `MockNewsProvider`; docs/46_NEWS_SENTIMENT_ARCHITECTURE.md, ADR-050 through ADR-055) - Completed
 
-5B Economic Calendar Engine - Not Started
+5B Economic Calendar Engine (`EconomicCalendarEngine`/`EconomicCalendarIngestionPipeline`, persisted `economic_events` with upsert-by-natural-key, deterministic category/importance/bias/risk-window rules, `MockEconomicCalendarProvider`; docs/47_ECONOMIC_CALENDAR_ARCHITECTURE.md, ADR-056 through ADR-061) - Completed
 
 5C Risk Management Engine - Not Started
 

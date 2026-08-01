@@ -1,6 +1,8 @@
 # Economic Calendar Engine
 
-Version: 1.0
+Version: 1.1
+
+Implementation (Phase 5B): docs/47_ECONOMIC_CALENDAR_ARCHITECTURE.md, ADR-056 through ADR-061.
 
 ---
 
@@ -264,6 +266,8 @@ Medium Risk
   "risk_window": true
 }
 
+`risk_window` is **computed at read time** from `(now, release_time, importance)`, never stored (docs/47 §7, ADR-061) - it changes continuously as real time passes, so persisting it would go stale the instant it was written.
+
 ---
 
 # 10. AI Rules
@@ -287,6 +291,8 @@ If a critical event is within the configured risk window:
 - Reduce confidence
 - Warn the user
 - Recommend WAIT when appropriate
+
+**Not implemented by this engine (Phase 5B).** The Economic Calendar Engine exposes `risk_window: bool` as structured evidence only (docs/47 §7) - confidence reduction, user warnings, and WAIT recommendations are a future Risk Engine's/AI Orchestrator's responsibility to derive from this evidence, consistent with this project's no-recommendation principle for every deterministic engine (ADR-031, ADR-043, extended here).
 
 ---
 

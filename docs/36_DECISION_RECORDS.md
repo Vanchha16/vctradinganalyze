@@ -2364,6 +2364,282 @@ Revisit once real usage data exists to inform rule-table tuning, consistent with
 
 ---
 
+# ADR-056
+
+Title
+
+Economic Calendar Provider Abstraction Uses `fetch_events(start, end)`, Not News's `fetch_latest(since)`
+
+Status
+
+Accepted
+
+Context
+
+`NewsProvider.fetch_latest(since)` (ADR-050) fetches articles already published - news only exists once it happens. Economic events are fundamentally different: a provider publishes a *schedule* of known future release times (with `forecast`/`previous` populated and `actual` still `None`) well before the event occurs, and the same event's `actual`/`status` change in place once released (and occasionally again on revision). A `fetch_latest(since)`-shaped provider interface cannot express "give me both the events already released in the recent past and the events scheduled in the near future" in one call.
+
+Decision
+
+`EconomicCalendarProvider` (`app/services/economic_calendar/providers/base.py`) is a `typing.Protocol` with `fetch_events(start: datetime, end: datetime) -> list[RawEconomicEvent]`, `health_check()`, and `capabilities()` - mirroring `MarketDataProvider`'s/`NewsProvider`'s shape everywhere except this one method's window-based signature. `MockEconomicCalendarProvider` is the only implementation shipped in Phase 5B (mirrors ADR-050's mock-first pattern); a real vendor (TradingEconomics, per the user's earlier stated preference) is explicitly deferred to a follow-up sub-phase.
+
+Reason
+
+Reusing `fetch_latest(since)` verbatim would either miss upcoming scheduled events entirely (if `since` is interpreted as "articles published after this time," there's no way to also ask for events scheduled ahead) or require a second, differently-shaped method bolted on - both worse than naming the actual contract this domain needs from the start. The rest of the provider abstraction (exception hierarchy, capabilities dataclass, mock-first-then-real-vendor pattern, skipping `RateLimitedProvider` for the mock) is reused unchanged from News (ADR-050) - only this one method's signature diverges, and only because the domain genuinely requires it.
+
+Alternatives Considered
+
+Option A: Reuse `fetch_latest(since)` and let the provider internally decide how far ahead to look - rejected, hides a meaningful behavioral parameter (the lookahead window) inside the provider instead of the caller, making the ingestion pipeline's window-tuning (ADR-058) impossible to control from one place.
+
+Option B (chosen): `fetch_events(start, end)`, an explicit window.
+
+Trade-offs
+
+Pros
+
+The ingestion pipeline (not the provider) controls the lookback/lookahead window, matching where `settings.economic_calendar_lookback_days`/`..._lookahead_days` actually live (ADR-058).
+
+Every other part of the provider abstraction (exceptions, capabilities, mock-first) is reused unchanged from News, minimizing new surface area.
+
+Cons
+
+`EconomicCalendarProvider` is not a drop-in duck-type-compatible replacement for `NewsProvider` - a hypothetical shared `Provider` protocol across domains isn't possible without further abstraction, which isn't attempted here since it isn't needed.
+
+Future Review
+
+Revisit if a third data-source domain needs yet another window/latest shape - only generalize into a shared base Protocol once three real domains exist to compare, not speculatively from two.
+
+---
+
+# ADR-057
+
+Title
+
+`economic_events` Is a Single Mutable Table, No Separate `economic_sources` Table
+
+Status
+
+Accepted
+
+Context
+
+News Sentiment (ADR-052) has a normalized `news_sources` table because different outlets have genuinely different credibility tiers (Reuters vs. an unverified blog) that matter for scoring (ADR-055's importance rule table uses source tier as an axis). Economic data has no equivalent: a country's CPI release has exactly one canonical actual/forecast/previous value regardless of which provider reports it - there's no competing-outlet credibility question to model.
+
+Decision
+
+`EconomicEvent` (`app/models/economic_event.py`) is the only new table - `UUIDMixin` + `TimestampMixin`, with a plain `source: str` column (the ingesting provider's name, e.g. `"mock"`, later `"trading_economics"`) instead of a normalized sources table. `TimestampMixin` (not `CreatedAtMixin`, unlike News's `news_articles`) because `actual`/`surprise`/`status` are updated in place as an event moves through its lifecycle (ADR-058) - the closest persistence analog is `SMCEvent`'s mutable pattern (ADR-032/033), not News's append-only articles.
+
+Reason
+
+Per the project's "don't invent unnecessary tables" principle: a `economic_sources` table would exist only to hold a name and would add a join to every calendar query for no behavioral benefit, since importance/category classification here doesn't have a source-tier axis (ADR-059) the way News's does.
+
+Alternatives Considered
+
+Option A: Normalized `economic_sources` table, mirroring `news_sources` exactly for consistency - rejected; consistency-for-its-own-sake isn't a reason to model a distinction (source credibility tiers) that doesn't exist in this domain.
+
+Option B (chosen): Single `economic_events` table with a plain `source: str` column.
+
+Trade-offs
+
+Pros
+
+One fewer table and join for every query in this engine.
+
+`TimestampMixin`'s mutability matches the domain directly - no contradiction between the mixin and the table's actual update pattern (the same "does this table's real mutability match its mixin" test already applied in ADR-053).
+
+Cons
+
+If a genuine multi-vendor-with-diverging-values scenario arises later (e.g. two providers reporting different `actual` values for the same release), this schema has no place to record provenance beyond the single `source` string - would need a follow-up migration.
+
+Future Review
+
+Revisit only if a second real provider is integrated and reports materially different values for the same event - until then, one canonical row per event is sufficient.
+
+---
+
+# ADR-058
+
+Title
+
+Ingestion Is Upsert-by-Natural-Key, Not News's Skip-on-Duplicate
+
+Status
+
+Accepted
+
+Context
+
+News's ingestion pipeline (ADR-054) skips a candidate article if it's a duplicate of an already-stored one - articles are immutable once published, so "already have it" means "nothing to do." Economic events are the opposite: the *same* event (identified by `(country, currency, event_name, release_time)`) is expected to be re-fetched repeatedly as it moves `SCHEDULED -> RELEASED` (actual value populates) and occasionally `-> REVISED` (a later re-fetch reports a changed `actual`) - re-fetching and skipping would mean forecast/actual/status data is silently never captured after the initial scheduling fetch.
+
+Decision
+
+`EconomicCalendarIngestionPipeline` fetches a window `[now - lookback_days, now + lookahead_days]` on every scheduled run (defaults: 7 days back, 30 days forward - `settings.economic_calendar_lookback_days`/`..._lookahead_days`) and **upserts** each returned event by its natural key via `EconomicEventRepository.get_by_natural_key` + update-in-place-or-create, rather than skip-if-exists. Only columns that actually changed are written (avoiding a no-op `updated_at` bump on every re-fetch of an unchanged scheduled event). A `status` transition to `REVISED` is set when `actual` changes on a row that already had a non-null `actual`.
+
+Reason
+
+This is the single most important behavioral divergence from News's ingestion pattern, and it exists because the domain's write semantics are genuinely different (mutable lifecycle vs. immutable published fact) - not a stylistic choice. The bounded window keeps the upsert payload small regardless of how much historical data eventually accumulates (docs/47 §14 performance note).
+
+Alternatives Considered
+
+Option A: Skip-if-exists, matching News exactly - rejected; would mean `actual`/`surprise`/`status` are never populated after an event's first (schedule-only) fetch, defeating the entire purpose of the engine.
+
+Option B (chosen): Upsert-by-natural-key on every scheduled run.
+
+Trade-offs
+
+Pros
+
+Correctly captures the full lifecycle (scheduled → released → occasionally revised) of every event with one simple, idempotent operation.
+
+Bounded window keeps each run's payload small and predictable regardless of how far back historical data grows.
+
+Cons
+
+Every scheduled run re-writes/re-compares every event in the window, more DB work per run than News's insert-only-new-articles pattern - acceptable given the low event volume (dozens per day, not thousands) and the 15-minute default interval (ADR §6).
+
+Future Review
+
+Revisit the window sizes once real usage data shows how far in advance providers reliably schedule events and how often revisions occur.
+
+---
+
+# ADR-059
+
+Title
+
+Category and Importance Classification via Event-Name/Category Rule Tables, No Source-Tier Axis
+
+Status
+
+Accepted
+
+Context
+
+docs/14_ECONOMIC_CALENDAR_ENGINE.md §3 defines 7 category buckets (Inflation, Employment, Growth, Central Banks, Consumer, Housing, Other) and §4 defines 4 importance levels with worked examples only (e.g. "FOMC -> Critical", "PMI -> High"), not a formula - the same class of gap ADR-055 resolved for News, but without News's source-tier dimension (ADR-057: economic data has one canonical value per event, not competing outlets).
+
+Decision
+
+`category_classifier.classify(event_name) -> EconomicEventCategory` matches standardized event names/keywords (`"CPI"`, `"Non-Farm Payroll"`, `"FOMC"`, etc.) against the 7 buckets - closer to an exact/keyword lookup than News's scored classifier, since provider-supplied event names are standardized, not free-text headlines. `importance_scorer.score(category, event_name) -> EconomicEventImportance` derives importance from a rule table with event-name-specific overrides checked first (FOMC/Rate Decision/NFP/CPI/GDP always `CRITICAL` even though their bare categories alone wouldn't guarantee it), falling back to category-level defaults otherwise - the concrete rule table is specified in docs/47_ECONOMIC_CALENDAR_ARCHITECTURE.md §5.
+
+Reason
+
+Consistent with ADR-055's deterministic-classification precedent and every other analyzer in this codebase - and it directly encodes docs/14 §4's worked examples as testable rule-table entries instead of prose illustrations, the same benefit ADR-055 established for News.
+
+Alternatives Considered
+
+Option A: Reuse `NewsImportance`/a shared importance enum across News and Economic Calendar - rejected; ADR-048 already established that similarly-purposed types get disambiguated names to prevent conflation across engines with genuinely different scoring inputs (News: source tier + category; Economic Calendar: event-name overrides + category, no tier). `EconomicEventImportance` is a distinct enum.
+
+Option B (chosen): Deterministic event-name/category rule tables, dedicated enum.
+
+Trade-offs
+
+Pros
+
+Testable directly against docs/14 §4's own worked examples.
+
+No source-tier axis to maintain, since it doesn't apply to this domain (ADR-057).
+
+Cons
+
+Rule tables are hand-tuned starting points, not empirically calibrated - consistent with every prior scoring ADR's caveat (028/030/035/036/037/042/046/055).
+
+Future Review
+
+Revisit once real usage data exists to inform rule-table tuning, consistent with every prior scoring engine's Future Review note.
+
+---
+
+# ADR-060
+
+Title
+
+Market Bias Is a Deterministic `(category, surprise_direction)` Rule Table, "Potentially" Language Only
+
+Status
+
+Accepted
+
+Context
+
+docs/14_ECONOMIC_CALENDAR_ENGINE.md §7 ("Market Bias") gives only two worked examples (lower CPI -> potentially weaker USD/stronger Gold/stronger Equities; higher CPI -> the inverse) and explicitly states "the engine stores the potential impact rather than guaranteeing market direction" - but no general algorithm exists for categories beyond Inflation, and no formal schema exists for the bias output beyond the §9 output example's ad hoc `{"USD": "Potentially Bearish", ...}` shape.
+
+Decision
+
+`bias_analyzer.analyze(category, surprise_direction) -> dict[str, MarketBias]` is a deterministic table keyed by `(category, surprise_direction)` generalizing docs/14 §7's CPI example across all 7 categories, returning a currency/asset-class-keyed bias map using only `POTENTIALLY_BULLISH`/`POTENTIALLY_BEARISH`/`NEUTRAL` values (never a bare `BULLISH`/`BEARISH`, preserving docs/14 §7's own "potential impact, not guaranteed direction" language) - the concrete table is specified in docs/47_ECONOMIC_CALENDAR_ARCHITECTURE.md §5. This is evidence output only - never a BUY/SELL/WAIT recommendation, consistent with ADR-031/ADR-043's project-wide precedent, and explicitly reserved from Confidence Engine/Risk Engine integration in this phase (ADR-047's boundary, docs/14 §11's "Risk Rules" belong to a future Risk Engine, not this one).
+
+Reason
+
+Without this table, docs/14 §7's concept would remain an unbuildable two-example illustration - the same situation ADR-051/ADR-055 resolved for News's sentiment/category/importance scoring. Generalizing the CPI example to all 7 categories, rather than only implementing Inflation and leaving the rest unhandled, keeps the engine's behavior uniform across every event category it classifies.
+
+Alternatives Considered
+
+Option A: Only implement bias for Inflation (the one category docs/14 §7 actually gives an example for), leave other categories without a bias output - rejected, would make the API's bias field unpredictably present/absent depending on category, worse than a uniform (if hand-tuned) table.
+
+Option B (chosen): Generalize docs/14 §7's example into a full `(category, surprise_direction)` table covering all 7 categories.
+
+Trade-offs
+
+Pros
+
+Uniform behavior across every event category the engine classifies.
+
+Stays strictly in "potentially" language, preserving docs/14 §7's own stated boundary and this project's no-recommendation principle.
+
+Cons
+
+Bias mappings beyond the one documented CPI example are this project's own hand-tuned extrapolation, not sourced from docs/14 - flagged here explicitly as a starting point, not an authoritative macro-finance claim.
+
+Future Review
+
+Revisit once real usage/feedback exists to refine the bias table, and explicitly when a future Confidence Engine/Risk Engine integration ADR (per ADR-047) needs this evidence reframed into a weighted component.
+
+---
+
+# ADR-061
+
+Title
+
+Risk Window Is Computed at Read Time, Never Persisted
+
+Status
+
+Accepted
+
+Context
+
+docs/14_ECONOMIC_CALENDAR_ENGINE.md §8 defines a pre-event "risk window" (Critical: ±30min around release, High: -60min before) and §9's output example shows `"risk_window": true` as if it were a stored field. But whether "now" falls inside an event's risk window is a function of `(current time, release_time, importance)` that changes continuously as real time passes - a boolean column would be correct only at the instant it was last computed and stale immediately after, with no write ever triggered to keep it current (nothing "happens" at the moment a risk window opens or closes that would prompt an update).
+
+Decision
+
+`risk_window.is_in_risk_window(now: datetime, release_time: datetime, importance: EconomicEventImportance) -> bool` is a pure function with no persistence - computed fresh in the read path (`EconomicCalendarEngine`/the API response) every time an event is returned, never written to the `economic_events` table or cached.
+
+Reason
+
+Storing a time-relative boolean would be a correctness bug waiting to happen (return a stale `true` long after the window closed, or a stale `false` moments before it opens) for a value that costs nothing to compute on every read. This mirrors the general principle already applied to `MarketRegimeResult`/`ConfidenceResult`'s `calculated_at`-relative freshness reasoning (docs/45 §10) - anything that changes with wall-clock time and doesn't need to survive between requests shouldn't be a DB column.
+
+Alternatives Considered
+
+Option A: Store `risk_window: bool`, updated by a periodic job re-evaluating every row - rejected, adds a redundant background job and staleness window for a value that's already trivially cheap to compute per-read.
+
+Option B (chosen): Pure read-time function.
+
+Trade-offs
+
+Pros
+
+Always correct at the instant it's read - no staleness window, no extra background job.
+
+Trivially unit-testable with fixed `now`/`release_time` inputs (`test_economic_risk_window.py`).
+
+Cons
+
+None identified - this is strictly simpler than the persisted alternative.
+
+Future Review
+
+None expected - revisit only if risk-window evaluation becomes expensive enough to need caching, which a boolean-from-two-timestamps comparison never will.
+
+---
+
 # Review Policy
 
 Review ADRs:

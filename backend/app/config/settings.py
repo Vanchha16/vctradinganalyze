@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     news_ingestion_interval_seconds: int = 300
     news_lookback_hours: int = 24
 
+    economic_calendar_providers: list[str] = ["mock"]
+    economic_calendar_ingestion_interval_seconds: int = 900
+    economic_calendar_lookback_days: int = 7
+    economic_calendar_lookahead_days: int = 30
+
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"

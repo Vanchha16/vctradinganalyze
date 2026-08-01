@@ -570,7 +570,9 @@ Out of scope for Phase 5A: `POST /admin/news` (deferred - not built), `/ws/news`
 
 # Economic Calendar
 
-GET /economic/events
+Phase 5B (docs/47_ECONOMIC_CALENDAR_ARCHITECTURE.md, ADR-056 through ADR-061). Public (no authentication). Replaces the stale `/economic/*` draft this section previously held - `/calendar` is the final prefix (shorter, matches the user-requested candidate list, mirrors `/analysis/news` not needing an `/economic` echo of the data domain).
+
+GET /calendar
 
 Parameters
 
@@ -578,15 +580,40 @@ country
 
 currency
 
-impact
+importance (Critical/High/Medium/Low)
 
-date
+category (one of docs/14 §3's 7 values)
+
+from, to (date range)
+
+range (`today` or `week` - a shortcut over `from`/`to`; `/calendar/today`, `/calendar/week`, `/calendar/high-impact`, `/calendar/currency/{currency}` are deliberately **not** separate routes - this one endpoint's filters absorb them, docs/47 §11)
+
+page, limit
+
+Response
+
+{
+  "items": [ { "id", "country", "currency", "event_name", "category", "importance", "forecast", "previous", "actual", "surprise", "unit", "status", "release_time", "risk_window", "market_bias" } ],
+  "page", "limit", "total"
+}
+
+`risk_window` and `market_bias` are computed at read time, never stored (ADR-061/ADR-060) - `market_bias` is `null` until `actual` is known (no surprise to compute a direction from yet).
 
 ---
 
-GET /economic/upcoming
+GET /calendar/{id}
 
-Upcoming high-impact events.
+Return full event detail (same shape as one list item). 404 if the id is unknown.
+
+---
+
+GET /calendar/upcoming
+
+Public. Next N high-impact (Critical/High) events ordered by `release_time` ascending - a dedicated convenience route distinct from `GET /calendar`'s general filtering (docs/47 §11).
+
+Response: same item shape as `GET /calendar`.
+
+Out of scope for Phase 5B: `POST /admin/calendar`-style manual ingestion, `/ws/calendar`, any endpoint exposing a trade recommendation derived from calendar evidence.
 
 ---
 

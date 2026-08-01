@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Added - Phase 5B: Economic Calendar Engine
+
+`docs/47_ECONOMIC_CALENDAR_ARCHITECTURE.md` - new architecture document defining the upsert-based ingestion path, the read path, the category/importance/market-bias rule tables, and the read-time-only risk window computation
+
+`docs/14_ECONOMIC_CALENDAR_ENGINE.md` bumped to v1.1 - clarified `risk_window` is computed at read time and never stored, and that §11's "Risk Rules" (confidence reduction, WAIT recommendations) belong to a future Risk Engine, not this engine
+
+`app/services/economic_calendar/` - five deterministic modules (`category_classifier`, `importance_scorer`, `surprise_calculator`, `bias_analyzer`, `risk_window`) - fully deterministic, no AI/GPT anywhere in this engine, consistent with the user's explicit constraint for this phase
+
+`EconomicCalendarEngine` (`app/services/economic_calendar_engine.py`, read path) and `EconomicCalendarIngestionPipeline` (`app/services/economic_calendar_ingestion_pipeline.py`, Celery-scheduled write path) - ingestion is **upsert-by-natural-key** (ADR-058), not News's insert-skip-on-duplicate, since the same event is re-fetched repeatedly as it moves SCHEDULED → RELEASED → (rarely) REVISED
+
+`app/services/economic_calendar/providers/` - `EconomicCalendarProvider` Protocol with `fetch_events(start, end)` (not News's `fetch_latest(since)` - ADR-056, since economic events are scheduled ahead of time), `MockEconomicCalendarProvider` (deterministic, seeded, spans past+future); no real vendor in this phase (TradingEconomics deferred to a follow-up sub-phase)
+
+New persisted table `economic_events` (`app/models/economic_event.py`; migration `1e4e1b3c8c7c_create_economic_events_table.py`) - single mutable table (`TimestampMixin`), no separate sources table (ADR-057, `source` is a plain column); unique natural-key index on `(country, currency, event_name, release_time)` plus `(currency, release_time)`/`(importance, release_time)` composite indexes
+
+**ADR-056** through **ADR-061**: provider abstraction shape divergence from News; single-table persistence with no sources table; upsert-by-natural-key ingestion; deterministic category/importance rule tables (no source-tier axis, unlike News); deterministic market-bias rule table generalizing docs/14 §7's CPI example across all 7 categories, "potentially" language only; risk window as a read-time-computed property, never persisted
+
+New public (no auth) endpoints: `GET /calendar` (filters: country/currency/importance/category/from/to/range), `GET /calendar/{id}`, `GET /calendar/upcoming` - `/calendar/today`, `/calendar/week`, `/calendar/high-impact`, `/calendar/currency/{currency}` deliberately not built as separate routes (`GET /calendar`'s filters absorb them)
+
+Celery Beat task `economic_calendar.ingest` (`app/workers/economic_calendar_tasks.py`), merged into the existing `celery_app.conf.beat_schedule`
+
+docs/03, docs/04, docs/30 updated: resolved `economic_events`' field/timestamp gaps, added concrete `/calendar/*` API contracts (replacing the stale `/economic/*` draft), marked Phase 5B complete
+
+Deliberately excluded (per Phase 5B approval): real vendor integration (TradingEconomics); Confidence Engine integration/weight rebalancing (ADR-047's boundary respected); revision-history audit trail (single mutable row only); automated stale-event cleanup; any Risk Engine logic (docs/14 §11); any AI/GPT usage anywhere in this engine; any trade recommendation
+
+Tests: one file per deterministic module (`test_economic_category_classifier.py`, `test_economic_importance_scorer.py`, `test_economic_surprise_calculator.py`, `test_economic_bias_analyzer.py`, `test_economic_risk_window.py`), `test_mock_economic_calendar_provider.py`, `test_economic_calendar_ingestion_pipeline.py` (upsert/revision behavior), `test_economic_calendar_engine.py`, `test_economic_calendar_routes.py`
+
 ### Added - Phase 5A: News Sentiment Engine
 
 `docs/46_NEWS_SENTIMENT_ARCHITECTURE.md` - new architecture document defining the two-path data flow (scheduled ingestion write path, on-demand read path), deterministic scoring algorithm, evidence schema, and the explicit divergence from Phase 4's `timeframe`-scoped engine pattern

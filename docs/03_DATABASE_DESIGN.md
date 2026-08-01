@@ -429,29 +429,47 @@ updated_at
 
 # 9. Economic Calendar
 
+Phase 5B (docs/47_ECONOMIC_CALENDAR_ARCHITECTURE.md, ADR-057/ADR-058) resolves the mixin/timestamp gap this section previously left contradicting §1, and adds the fields docs/14's classification/scoring output requires. `economic_events` uses `TimestampMixin` (mutable - `actual`/`surprise`/`status` update in place as an event moves through its lifecycle, ADR-058), not a separate sources table (ADR-057 - `source` is a plain column, since this domain has no source-credibility-tier axis unlike News).
+
 ## economic_events
 
 Fields:
 
 id
 
-country
+country (ISO 3166-1 alpha-2)
 
-currency
+currency (ISO 4217)
 
 event_name
 
-impact
+category (7 values, docs/14 §3, per ADR-059)
 
-forecast
+importance (renamed from `impact`; 4 values, distinct from `NewsImportance` per ADR-059/ADR-048)
 
-previous
+forecast (nullable)
 
-actual
+previous (nullable)
+
+actual (nullable - null until released)
+
+surprise (nullable - `actual - forecast`, stored once known)
+
+unit (nullable - e.g. `%`, `K`, `B`)
+
+status (SCHEDULED / RELEASED / REVISED / CANCELLED)
+
+source (provider name)
 
 release_time
 
-status
+created_at
+
+updated_at
+
+Unique natural key: `(country, currency, event_name, release_time)` - upsert target (ADR-058). Indexes: `(currency, release_time)`, `(importance, release_time)`.
+
+Not persisted (computed at read time, ADR-061): `risk_window`. Not persisted (computed at read time, ADR-060): `market_bias`.
 
 ---
 

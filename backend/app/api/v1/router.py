@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.routes import (
     analysis_confidence,
     auth,
+    economic_calendar,
     health,
     market_data,
     market_regime,
@@ -20,3 +21,4 @@ api_router.include_router(smc.router)
 api_router.include_router(market_regime.router)
 api_router.include_router(analysis_confidence.router)
 api_router.include_router(news.router)
+api_router.include_router(economic_calendar.router)

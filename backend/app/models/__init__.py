@@ -1,6 +1,10 @@
 from app.models.asset import Asset
 from app.models.audit_log import AuditLog
+from app.models.economic_event import EconomicEvent
 from app.models.enums import (
+    EconomicEventCategory,
+    EconomicEventImportance,
+    EconomicEventStatus,
     MarketType,
     NewsCategory,
     NewsImportance,
@@ -26,6 +30,10 @@ from app.models.user_session import UserSession
 __all__ = [
     "Asset",
     "AuditLog",
+    "EconomicEvent",
+    "EconomicEventCategory",
+    "EconomicEventImportance",
+    "EconomicEventStatus",
     "IndicatorResult",
     "MarketType",
     "NewsArticle",

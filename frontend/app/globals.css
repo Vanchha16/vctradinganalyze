@@ -3,21 +3,46 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light mode - docs/05_FRONTEND_GUIDELINES.md §4's brand accents (primary/
+     destructive) applied to shadcn's default light-neutral scale, since the
+     spec only names one (dark-first) set of neutrals. */
   :root {
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
     --border: 214.3 31.8% 91.4%;
-    --primary: 222.2 47.4% 11.2%;
+    --primary: 217 91% 60%;
     --primary-foreground: 210 40% 98%;
     --muted: 210 40% 96.1%;
     --muted-foreground: 215.4 16.3% 46.9%;
-    --ring: 222.2 84% 4.9%;
+    --ring: 217 91% 60%;
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
+  }
+
+  /* Dark mode - docs/05_FRONTEND_GUIDELINES.md §4's palette verbatim
+     (Background #0B1220, Card #111827, Border #1F2937, Text Primary
+     #F9FAFB, Text Secondary #9CA3AF, Primary #3B82F6, Danger #EF4444),
+     converted to HSL. The default theme (ADR-102, docs/05 §3 "dark mode
+     first"). */
+  .dark {
+    --background: 220 49% 8%;
+    --foreground: 210 20% 98%;
+    --border: 215 28% 17%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 210 20% 98%;
+    --muted: 221 39% 14%;
+    --muted-foreground: 218 11% 65%;
+    --ring: 217 91% 60%;
+    --card: 221 39% 11%;
+    --card-foreground: 210 20% 98%;
+    --secondary: 221 39% 14%;
+    --secondary-foreground: 210 20% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 20% 98%;
   }
 
   * {

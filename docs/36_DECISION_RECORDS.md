@@ -4016,6 +4016,518 @@ Revisit if a future phase's outcome-tracking work (ADR-088's deferred states) fi
 
 ---
 
+# ADR-092
+
+Title
+
+AI Chat Extends the Existing `AIProvider` Protocol with `generate_chat_reply()`, Not a New OpenAI Client
+
+Status
+
+Accepted
+
+Context
+
+`AIProvider.generate()` (Phase 6A, ADR-081) always forces OpenAI's structured-output JSON-schema mode and always sends exactly a fixed system+user message pair - built specifically for the seven-section `reasoning` document. AI Chat needs free-text, multi-turn replies (system prompt + prior conversation turns + a new question) - a genuinely different request shape, not a variant that could reuse `AIGenerationRequest`/`generate()` unmodified. The user's explicit instruction for this phase: reuse the existing OpenAI integration, do not build a second client, do not duplicate prompt-building logic.
+
+Decision
+
+Add one new method to the same `AIProvider` Protocol and the same `OpenAIProvider` class: `generate_chat_reply(request: AIChatRequest) -> AIChatResponse`, where `AIChatRequest` carries a `messages: list[ChatTurn]` (role + content) and `max_tokens`, with no `json_schema` field. `OpenAIProvider.generate_chat_reply()` shares the exact same `httpx.Client` construction (base URL, auth header, timeout, injectable transport) and the exact same status-code-to-exception classification as `generate()`, factored into a shared private helper - the two methods differ only in the request body sent to `/chat/completions` (a full message list, no `response_format`). `MockAIProvider` gains a matching method for test injection, mirroring its existing `generate()` mock.
+
+Reason
+
+`generate()` and `generate_chat_reply()` are two capabilities of the same integration (same API key, same base URL, same timeout, same error taxonomy), not two integrations - splitting them into a separate `ChatOpenAIProvider` class would duplicate every line of connection/error-handling logic that already exists and is already tested (`test_ai_openai_provider.py`). Extending the Protocol additively (a new method, `generate()` untouched) mirrors this project's established pattern for growing an interface without breaking existing callers (`MarketRegimeEngine.analyze()`'s optional keyword-only parameters, ADR-049).
+
+Alternatives Considered
+
+Option A: Force chat replies through `generate()`'s existing structured-output shape (e.g. a trivial one-field JSON schema wrapping the reply text) - rejected, forces every chat call through response_format machinery that exists specifically to constrain the seven-section reasoning document, and awkwardly encodes a free-text multi-turn conversation as a single user_prompt string, losing genuine multi-turn structure.
+
+Option B: A new, separate `ChatAIProvider`/`ChatOpenAIProvider` class with its own `httpx.Client` construction - rejected, explicitly against this phase's brief ("do not create another OpenAI client"); would duplicate `OpenAIProvider`'s connection/auth/timeout/error-classification code for no benefit.
+
+Option C (chosen): One new Protocol method, one shared client, one shared error-classification helper.
+
+Trade-offs
+
+Pros
+
+Zero duplicated HTTP/auth/error-handling code. `AIProvider` remains the single interface every AI-dependent engine (`AIOrchestratorEngine`, now `AIChatEngine`) depends on, never a concrete provider class.
+
+Cons
+
+`AIProvider` now has two methods instead of one - a caller implementing the Protocol (e.g. a future Anthropic/Gemini provider, docs/50 §8) must implement both, even if a given use case only needs one. Judged acceptable since both existing use cases (Phase 6A, Phase 6C) are core to this project, not optional extensions.
+
+Consequences
+
+Positive
+
+`AIOrchestratorEngine`'s existing `generate()` call path and every Phase 6A test are completely unaffected - purely additive.
+
+Negative
+
+None identified beyond the Protocol-surface growth noted above.
+
+Future Review
+
+Revisit if a third, materially different AI capability (e.g. embeddings, image analysis) is ever needed - at that point, consider whether `AIProvider` should split into narrower, capability-specific Protocols rather than continuing to grow one interface.
+
+---
+
+# ADR-093
+
+Title
+
+AI Chat Reuses `ContextBuilder` for All Engine Grounding - No New Evidence-Gathering Code
+
+Status
+
+Accepted
+
+Context
+
+This phase's brief requires AI Chat to be able to explain Technical Analysis, SMC, Market Regime, Analysis Confidence, News Sentiment, Economic Calendar, Risk Management, and Strategy Engine output - eight engines. `app.services.ai_orchestrator.context_builder.ContextBuilder.build(asset, timeframe)` (Phase 6A, docs/50 §3) already composes exactly this set (via `AnalysisConfidenceEngine`, which itself composes Technical Analysis/SMC/Market Regime; plus `NewsSentimentEngine`, `EconomicCalendarEngine`, `StrategyEngine`, and conditionally `RiskManagementEngine`) into one `AnalysisContext`, calling each engine at most once.
+
+Decision
+
+`AIChatEngine` calls `ContextBuilder.build(asset, timeframe)` directly - the identical call `AIOrchestratorEngine` itself makes - whenever a message resolves to a symbol/timeframe. No new evidence-gathering module, no bespoke per-engine calls, no re-derivation of any evidence field.
+
+Reason
+
+`ContextBuilder` already solves "give me everything Technical/SMC/Regime/Confidence/News/Economic/Strategy/Risk currently know about this asset/timeframe" - the exact question Chat needs answered before it can ground a reply. Writing a second context-assembly module would duplicate `ContextBuilder`'s composition logic (which engine to call, in what order, with what lookback windows) for no functional difference, directly contradicting this phase's explicit reuse-first instruction.
+
+Alternatives Considered
+
+Option A: Have `AIChatEngine` call each of the eight engines individually, selecting only what a given question seems to need - rejected, requires inventing a "which engines does this question need" classifier (no such taxonomy exists anywhere in this project, and building one is explicitly deferred per docs/22 §14's "Question Type" logging, ADR-098) and would still duplicate `ContextBuilder`'s existing composition.
+
+Option B (chosen): Always call the same `ContextBuilder.build()` AI Orchestrator already calls, when a symbol/timeframe is resolved.
+
+Trade-offs
+
+Pros
+
+Zero new evidence-gathering code. Grounding data is guaranteed to be exactly as fresh/consistent as what `AIOrchestratorEngine` itself would compute right now, since it's the literal same call.
+
+Cons
+
+Every symbol-scoped chat message pays the same computation cost as a full `AIOrchestratorEngine` context build (Technical/SMC/Regime/Confidence/News/Economic/Strategy, plus Risk if a candidate exists) even for a narrow question - judged acceptable given docs/50 §10's precedent that this cost is already fast enough not to need caching, and consistent scope beats a speculative "only fetch what's needed" optimization with no specified selection rule.
+
+Future Review
+
+Revisit if real usage shows most chat questions only need a small subset of `AnalysisContext` and the full build's cost becomes measurable - at that point, a documented question-classification rule (not an invented one) would be needed first.
+
+---
+
+# ADR-094
+
+Title
+
+AI Chat Explains Persisted `ai_analysis`/`signals` Rows - It Never Computes a New Recommendation
+
+Status
+
+Accepted
+
+Context
+
+"Why is this a BUY?" and "Explain this signal" both require an already-decided recommendation to explain. `AIOrchestratorEngine`/`SignalEngine` already own recommendation computation (ADR-078/085) - `AnalysisConfidenceEngine`'s confidence and `ContextBuilder`'s `AnalysisContext` (reused per ADR-093) do not by themselves include a BUY/SELL/WAIT verdict, since that verdict is `recommendation_decision.py`'s deterministic output, computed only inside `AIOrchestratorEngine.generate()`.
+
+Decision
+
+When a question is about a recommendation or a signal, `AIChatEngine` looks up the most recent persisted `ai_analysis`/`signals` row for the resolved asset/timeframe (via `AIAnalysisRepository`/`SignalRepository`, both read-only lookups) and gives that row's already-decided fields to the model as fixed facts to narrate - it never calls `AIOrchestratorEngine.generate()` or `SignalEngine.generate()` itself, and never re-derives a recommendation from `AnalysisContext`. If no persisted row exists yet, the assistant states that explicitly (docs/22 §13) rather than computing one on the fly.
+
+Reason
+
+Calling `AIOrchestratorEngine.generate()`/`SignalEngine.generate()` from inside a chat turn would mean every "why is this a BUY" question silently spends real LLM budget on a second, redundant reasoning generation (Phase 6A's own narration) just to answer a question about an *existing* decision, and could in principle produce an `ai_analysis` row with different reasoning prose than the one the user is actually asking about (a live market re-evaluation could disagree with the analysis from five minutes ago). Reading the already-persisted row, unmodified, is the only way to guarantee Chat's explanation matches what was actually decided.
+
+Alternatives Considered
+
+Option A: Trigger a fresh `AIOrchestratorEngine.generate()`/`SignalEngine.generate()` call whenever a question needs a recommendation, so the answer is always "current" - rejected, doubles LLM cost per relevant question, and risks the explained recommendation drifting from whatever the user is actually looking at on a dashboard (which would show the most recent persisted row, not a chat-triggered fresh one).
+
+Option B (chosen): Read the most recent persisted row only; explicitly state unavailability if none exists.
+
+Trade-offs
+
+Pros
+
+No duplicate recommendation-computation entry point. Guaranteed consistency between what Chat explains and what `GET /analysis/ai/{id}`/`GET /signals/{id}` would themselves return for the same row.
+
+Cons
+
+If no `ai_analysis`/`signals` row has ever been generated for an asset/timeframe, Chat cannot answer "why is this a BUY" - it can only state that no analysis exists yet and suggest generating one via the existing endpoints. Judged acceptable and honest (docs/22 §13's explicit unavailability-over-guessing rule) rather than silently triggering a hidden generation.
+
+Future Review
+
+Revisit only if a future UX requirement wants Chat to be able to trigger `POST /analysis/ai/{symbol}`/`POST /signals/generate/{symbol}` on the user's behalf mid-conversation - that would be a new, explicit action-taking capability requiring its own design and cost/authorization review, not a quiet default.
+
+---
+
+# ADR-095
+
+Title
+
+Two-Level Symbol/Timeframe Scoping - Conversation-Level "Current" (Mutable) + Message-Level "Referenced" (Immutable); Client-Supplied, Never NLP-Parsed
+
+Status
+
+Accepted
+
+Context
+
+docs/22 §10 expects the assistant to remember a "current asset"/"current timeframe" across a session (multi-turn continuity, e.g. "Compare with GBPUSD" after discussing EURUSD). This phase's brief (§6) separately requires each message to store its own "referenced symbol/timeframe." Neither document specifies how a symbol is identified from a user's free-text question (e.g. resolving "Gold" to `XAUUSD`, or extracting "EURUSD" from a full sentence) - no entity-recognition/symbol-resolution component exists anywhere in this project.
+
+Decision
+
+Two distinct fields, at two levels: `conversations.current_symbol`/`current_timeframe` (mutable - the conversation's current focus, updated whenever a message explicitly supplies a symbol/timeframe) and `messages.symbol`/`timeframe` (immutable once written - an audit-trail record of what actually grounded that specific exchange). The API accepts `symbol`/`timeframe` as **explicit, optional request fields** on `POST /chat/conversations/{id}/messages` - never parsed out of the free-text `content` string. If omitted, a message inherits the conversation's current values; if neither is ever set, the question is treated as general/educational, with no market grounding.
+
+Reason
+
+Building free-text symbol extraction (fuzzy-matching "Gold" to `XAUUSD`, disambiguating a bare "EURUSD" substring from surrounding prose) is a real NLP component this project has no precedent for and no specification of - inventing one now, un-reviewed, would violate "never invent architecture." Requiring the caller (the frontend, which already has a symbol picker for every other analysis endpoint) to supply the symbol explicitly is both simpler and matches every other endpoint in this project, none of which parse a symbol out of natural language.
+
+Alternatives Considered
+
+Option A: NLP-based symbol extraction from message text - rejected, no specification, no precedent, real risk of silent mis-resolution (extracting the wrong asset) feeding into a response the user trusts as grounded fact.
+
+Option B: Single symbol/timeframe field on `conversations` only, no per-message record - rejected, doesn't satisfy this phase's explicit requirement (§6) that each message store its own referenced symbol/timeframe, and would make conversation history ambiguous once `current_symbol` changes mid-conversation (a past message's grounding would become unrecoverable).
+
+Option C (chosen): Two-level fields, client-supplied only.
+
+Trade-offs
+
+Pros
+
+No invented NLP component. Conversation history stays an accurate, non-retroactively-ambiguous record even as the "current" focus changes turn by turn.
+
+Cons
+
+The calling client is responsible for supplying `symbol`/`timeframe` explicitly (e.g. via UI selection) rather than the assistant "figuring it out" from a free-text question the way a more sophisticated system might - a real UX limitation versus docs/22's more conversational examples ("Analyze EURUSD" implicitly extracting "EURUSD").
+
+Multi-asset comparison ("Compare Gold and Silver," docs/22 §5) is out of scope for the same reason - grounding is single-symbol-per-message.
+
+Future Review
+
+Revisit if a real symbol-resolution/entity-recognition component is designed and reviewed for this project (would likely also benefit search/watchlist features, not just Chat) - at that point free-text symbol inference could be layered on top of this same explicit-field mechanism as a convenience, not a replacement for it.
+
+---
+
+# ADR-096
+
+Title
+
+`conversations` and `messages` Are Inferred Tables, Not Specified in docs/03
+
+Status
+
+Accepted
+
+Context
+
+`docs/03_DATABASE_DESIGN.md` has no entry for a chat/conversation table anywhere, unlike `ai_analysis`/`signals`, which docs/03 v1.0 at least stubbed out before their respective phases built them. This phase's brief (§6) specifies what must be stored (conversation, messages, prompts/responses, timestamps, referenced symbol/timeframe, optional linked `ai_analysis`, optional linked `signal`) without a schema.
+
+Decision
+
+Add `conversations` (`UUIDMixin` + `TimestampMixin` - `title`/`current_symbol`/`current_timeframe`/`status` all mutate after creation, unlike every append-only table in this project) and `messages` (`UUIDMixin` + `CreatedAtMixin` - a sent message is never edited). `messages.ai_analysis_id`/`signal_id` are nullable FKs with `ON DELETE SET NULL` (not `CASCADE`) - see docs/52 §6 for the full field list and the reasoning for `SET NULL` specifically.
+
+Reason
+
+Follows this project's established practice (ADR-022/024/032/090/091) of building inferred schema explicitly, documented via ADR, when a phase's brief requires persistence docs/03 never specified - never invented silently.
+
+Alternatives Considered
+
+Option A: Single `messages` table with no separate `conversations` parent (each message a standalone row with a `session_id` string) - rejected, this phase's brief explicitly asks for `create conversation`/`list conversations`/`get conversation`/`delete conversation` API operations (§7), which need a first-class `conversations` entity with its own lifecycle (title, status, current focus), not just a grouping key on `messages`.
+
+Option B (chosen): `conversations` parent + `messages` child, standard one-to-many.
+
+Trade-offs
+
+Pros
+
+Matches every other parent/child persistence shape in this project (`ai_analysis` has no children, but `smc_events`/`price_candles` are asset-scoped the same way `messages` are conversation-scoped). Conversation-level mutable state (`current_symbol`, `title`, `status`) has an obvious home.
+
+Cons
+
+None identified.
+
+Future Review
+
+None expected unless a future requirement needs conversation-level metadata beyond what's listed here (e.g. shared/collaborative conversations) - not currently anticipated.
+
+---
+
+# ADR-097
+
+Title
+
+Conversation Deletion Supports Both Hard Delete and Archive
+
+Status
+
+Accepted
+
+Context
+
+This phase's brief (§7) asks for a "delete/archive conversation" endpoint without specifying which, or both. Every prior soft-deletable entity in this project (`SMCEvent`, `EconomicEvent`) uses status-transition-only, never a real SQL delete, because that data is market evidence this project's own architecture never lets a user destroy. Conversations are different: they are private, per-user data (like a user's own account, docs/23's `DELETE /users/account`, listed in docs/04 though not yet built) - a user has a legitimate interest in genuinely removing their own conversation history, not merely hiding it.
+
+Decision
+
+Both are implemented: `POST /chat/conversations/{id}/archive` (soft - `status=ARCHIVED`, excluded from the default `GET /chat/conversations` listing, still retrievable by id) and `DELETE /chat/conversations/{id}` (hard - a real delete, cascading to every `messages` row via `ON DELETE CASCADE`).
+
+Reason
+
+"Archive" and "delete" answer different real needs (declutter a conversation list vs. genuinely remove private data) and this project already has a clean precedent for each shape (`SMCEvent`'s status lifecycle for archive; standard cascade-delete FKs, e.g. `AIAnalysis`→`Signal`, for hard delete) - implementing only one would leave the other need unmet without a documented reason to exclude it.
+
+Alternatives Considered
+
+Option A: Archive only, no hard delete - rejected, conversations are private user data, not shared market evidence; a user should be able to actually remove their own chat history, consistent with `docs/04`'s already-listed (if not yet built) `DELETE /users/account`.
+
+Option B: Hard delete only, no archive - rejected, doesn't give a lightweight "get this out of my active list without losing it" option, which docs/22 §10's session-continuity framing implies users may want (returning to an old conversation later).
+
+Option C (chosen): Both, as two distinct endpoints.
+
+Trade-offs
+
+Pros
+
+Covers both real use cases without conflating them into one ambiguous "delete" action.
+
+Cons
+
+Two endpoints to build/test instead of one - judged worth it given the two behaviors are genuinely different (reversible vs. not).
+
+Future Review
+
+None expected.
+
+---
+
+# ADR-098
+
+Title
+
+Feedback Rating, Question-Type Classification, and Engines-Used Logging Deferred (docs/22 §14/§15)
+
+Status
+
+Accepted
+
+Context
+
+docs/22 §14 ("Logging") asks for "Question Type," "Engines Used," and "Feedback Score" to be stored alongside every conversation turn; §15 ("User Feedback") asks for a Helpful/Not Helpful/Report Issue rating users can attach to a response, intended to "improve future prompts and explanations." Neither this phase's brief (which lists a concrete, narrower persistence/API scope in §6/§7) nor any other document in this project specifies a question-type taxonomy, a rule for which engines were "used" for a given free-text question, or what mechanism would actually consume feedback scores to improve prompts.
+
+Decision
+
+None of the three are implemented in Phase 6C. `messages` stores `model_name` (satisfying the one concrete, buildable piece of §14 - "Model Version") and relies on this project's existing structured-logging convention (ADR-019) for execution-time observability at the request-handling layer. Question-type classification, engines-used tracking, and feedback rating are explicitly deferred.
+
+Reason
+
+Each of the three would require inventing something this project has no basis for: a question-type taxonomy (what are the categories, and how is a free-text question classified into one - the same "no NLP component exists" gap as ADR-095), an "engines used" rule (§2's `ContextBuilder` reuse means every symbol-scoped question always touches the same eight engines - there's no per-question variation to log meaningfully yet), and a feedback-consumption pipeline (§15 says feedback "may improve future prompts" without saying how - storing a rating with no defined consumer would be dead data). This mirrors this project's consistent practice of deferring components a phase's brief doesn't concretely specify (Strategy Engine's Momentum Trading, ADR-072; Risk Management's position tracking, ADR-067) rather than building a speculative placeholder.
+
+Alternatives Considered
+
+Option A: Add a `feedback_score` column to `messages` now, with no consuming logic, for future use - rejected, dead data with no defined meaning is worse than no column; matches this project's general aversion to speculative schema (BACKLOG.md's repeated "don't add placeholder scoring speculatively" notes, e.g. §15/§16 on Confidence/News Engine).
+
+Option B (chosen): Defer all three, document the gap explicitly.
+
+Trade-offs
+
+Pros
+
+No speculative, unconsumed schema. Every column added in this phase has a concrete, currently-exercised purpose.
+
+Cons
+
+docs/22 §14/§15 remain unimplemented - a real, acknowledged gap versus the original vision document, same category as Signal Engine's TP1/TP2/TP3 deferral (ADR-087).
+
+Future Review
+
+Revisit once a concrete question-type taxonomy and a real feedback-consumption mechanism (e.g. feeding low-rated exchanges into prompt refinement) are specified - this needs its own design pass.
+
+---
+
+# ADR-099
+
+Title
+
+Frontend Auth Token Storage: Client-Side (In-Memory Access Token + localStorage Refresh Token), No Backend Cookie Changes
+
+Status
+
+Accepted
+
+Context
+
+Phase 7A needs session persistence, protected routing, and automatic redirect for the Next.js App Router frontend. The backend (Phase 2C, docs/37 §10) issues tokens only via `Authorization: Bearer` and a JSON response body - no `Set-Cookie` header exists anywhere, "no cookies, per approved Phase 2C scope." Next.js's most robust route-protection mechanism (`middleware.ts`, edge runtime) can only read cookies, not `localStorage` - a genuine mismatch between how the backend issues credentials and how the framework's strongest protection mechanism consumes them.
+
+Decision
+
+Store the access token in memory only (not persisted - lost on full page reload, re-derived via refresh) and the refresh token in `localStorage`. A client-side `AuthProvider`/`useAuth()` hook restores the session on mount (calls `POST /auth/refresh` using the stored refresh token, then `GET /auth/me`), and gates rendering of protected routes behind a resolved-auth-state check, redirecting unauthenticated users via `useRouter`. No changes to the backend's token-issuance mechanism.
+
+Reason
+
+The backend's Bearer-only design was itself an approved, documented decision (docs/37 §10) - changing it (e.g. adding cookie support) is out of scope for a frontend phase and would mean inventing new backend behavior mid-flight, contradicting "do not invent new endpoints." A pure client-side approach requires zero backend changes and ships this phase's actual requirement (session persistence, protected routing, redirect) without a new architectural layer.
+
+Alternatives Considered
+
+Option A: A Next.js Route Handler proxy (BFF) that calls FastAPI's auth endpoints and sets httpOnly cookies, with `middleware.ts` gating routes server-side - rejected for 7A. True SSR-level protection and better XSS resistance (refresh token never touches client JS), but introduces a new proxy layer between browser and backend that every other endpoint would need to either duplicate or bypass, and commits the project to a second auth transport (cookies via Next.js) alongside the backend's existing Bearer design - a bigger architectural change than this foundation phase's brief calls for.
+
+Option B (chosen): Client-side storage, client-guarded routes, unmodified backend.
+
+Trade-offs
+
+Pros
+
+Zero backend changes. Directly reuses the already-approved Bearer-token design. Simple mental model: one token transport, one place tokens live.
+
+Cons
+
+No true SSR-level route protection - a protected page's shell can begin rendering before the client-side auth check resolves, mitigated with an explicit loading gate (render nothing/a skeleton until `AuthProvider` has resolved session state) rather than a flash of real protected content. `localStorage`-held refresh tokens carry standard SPA XSS exposure - accepted as the same trade-off implicit in the backend's own Bearer-only design, not a new risk introduced here.
+
+Consequences
+
+Positive
+
+Ships this phase's full scope (persistence, protected routing, redirect, refresh) without any backend involvement.
+
+Negative
+
+If a future phase decides httpOnly-cookie-based auth is worth the added complexity (e.g. once XSS-hardening becomes a priority), this is a real migration - the storage mechanism is not free to change later without touching every consumer of `useAuth()`.
+
+Future Review
+
+Revisit if a real XSS-hardening requirement emerges, or if server-side rendering of authenticated data (not just gating) becomes a real product need - at that point a BFF/cookie approach should be reconsidered as its own design pass.
+
+---
+
+# ADR-100
+
+Title
+
+Forgot Password Is an Informational Stub; Reset Password Is Entirely Deferred
+
+Status
+
+Accepted
+
+Context
+
+`POST /auth/forgot-password` and `POST /auth/reset-password` do not exist on the backend - deliberately excluded from Phase 2C, blocked on SMTP/Celery email infrastructure that doesn't exist anywhere in this project (docs/04, BACKLOG.md). Phase 7A's brief lists "Forgot Password" and "Reset Password" pages while also instructing "do not invent new endpoints" - a direct conflict, since neither page can have a real, working submission path today.
+
+Decision
+
+Build a `/forgot-password` page reachable from `/login` (matching conventional auth UX - users expect the link to exist) that displays an informational message ("password reset isn't available yet") rather than calling any endpoint - no form submission, no fabricated success/error states. Do not build `/reset-password` at all - it fundamentally requires a working forgot-password email flow to be reachable (a real user cannot land on it without a valid token from an email that will never be sent), so there is nothing meaningful to stub.
+
+Reason
+
+Omitting the "Forgot Password" link entirely would look broken to a user familiar with any conventional login page; showing it and being honest about unavailability (docs/22's project-wide "state what is missing, don't guess" principle, previously applied to the AI Chat Assistant, ADR-094) is more honest than a fake form that silently does nothing or a full page removed from the project's mental map of "this exists, just not usable yet." `/reset-password` has no equivalent reachability problem to solve for - it needs a real, working upstream flow before there is any UX to design.
+
+Alternatives Considered
+
+Option A: Skip both pages entirely - rejected, `/reset-password` genuinely has nothing to show without a token-issuing flow, but `/forgot-password` is reachable today (a user can always click "forgot password" from login) and leaving that link absent is worse UX than a clear "not yet" message.
+
+Option B (chosen): Stub `/forgot-password` only, honestly labeled; omit `/reset-password`.
+
+Trade-offs
+
+Pros
+
+Matches conventional login-page UX without inventing backend behavior. Honest about the current limitation rather than silently broken or fully absent.
+
+Cons
+
+`/forgot-password` ships now but does nothing functional - a real (if small) piece of dead-end UX until the backend adds email infrastructure.
+
+Future Review
+
+Revisit both pages together once `POST /auth/forgot-password`/`POST /auth/reset-password` are actually built (tracked in BACKLOG.md §4/§6) - `/forgot-password` gets a real form, `/reset-password` gets built for the first time.
+
+---
+
+# ADR-101
+
+Title
+
+The Existing Dev Dashboard Shell Evolves Into the Authenticated Product Shell
+
+Status
+
+Accepted
+
+Context
+
+The current `frontend/app/dashboard/*` tree is an unauthenticated developer/API-testing dashboard (commit "add developer dashboard frontend for analysis engines") - its `Sidebar` is labeled "ClaudeTrading Dev" with dev-tool-flavored nav (Technical Analysis, SMC, Market Regime, API Explorer), not the product navigation docs/05 §7 specifies (Dashboard, Markets, Signals, News, Economic Calendar, AI Analysis, Watchlists, Profile, Settings, Admin). Phase 7A needs a real authenticated product shell (Sidebar, Top Navigation, User Menu, per this phase's brief §3).
+
+Decision
+
+Replace the existing dashboard shell's navigation with the real product navigation (docs/05 §7), reusing already-established layout primitives (`PageContainer`, the `Sidebar` component's structure/responsive behavior, `QueryProvider`) rather than building a second, parallel shell. The existing Technical Analysis/SMC/Market Regime pages remain reachable - docs/05 §7 already names "API Explorer"-equivalent tooling as a legitimate nav destination, so these become sub-pages of the real product shell rather than a separate unauthenticated area. The whole shell moves behind the new protected-route gate (ADR-099).
+
+Reason
+
+This project's explicit reuse-first instruction ("reuse existing frontend architecture," "do not duplicate components," "create reusable layouts") applies here exactly as it has to every backend engine so far - a second, parallel shell would duplicate the layout/responsive/navigation logic Phase 7A is meant to establish once, for the whole product, not per-area.
+
+Alternatives Considered
+
+Option A: Build a fully separate authenticated shell under a new route group, leave `/dashboard/*` untouched and still public - rejected, produces two parallel shells (dev and product) with duplicated layout logic, directly contradicting this phase's "do not duplicate components" instruction; the existing dev pages have real, working functionality worth keeping reachable, not worth abandoning behind a second unmaintained shell.
+
+Option B (chosen): Evolve the existing shell in place.
+
+Trade-offs
+
+Pros
+
+One shell, one set of layout/responsive/navigation primitives, matching this project's consistent reuse-first practice. Existing working Technical Analysis/SMC/Market Regime pages aren't orphaned.
+
+Cons
+
+Directly modifies existing, working prototype code rather than leaving it untouched - a real (if low) risk versus building purely additively. Mitigated by the existing dashboard having no users yet (an internal dev tool, not a shipped product surface) and full test/typecheck/lint verification before considering the change complete.
+
+Future Review
+
+None expected - this is the shell every future page (Markets, Signals, News, Watchlists, etc.) will build on, per this phase's stated objective.
+
+---
+
+# ADR-102
+
+Title
+
+Adopt the Full docs/05 §2 Frontend Stack (zustand, next-themes, react-hook-form, zod, framer-motion, sonner) in Phase 7A
+
+Status
+
+Accepted
+
+Context
+
+`docs/05_FRONTEND_GUIDELINES.md` §2 names zustand, next-themes, react-hook-form, zod, and Framer Motion as this project's intended frontend stack, alongside TanStack Query (already installed, Phase 6's dev dashboard). None of the others are installed yet - Phase 7A is the first phase whose scope (auth forms, theme system, protected-route state, layout animation) actually needs them.
+
+Decision
+
+Install zustand (auth/UI state), next-themes (dark/light/system theme, wired to the already-configured `darkMode: ["class"]` Tailwind setting), react-hook-form + zod + @hookform/resolvers (auth forms), framer-motion (layout/dialog/dropdown transitions, per docs/05 §19's stated animation scope), and sonner (toast notifications, this phase's brief §4). Add the shadcn/Radix primitives this phase's scope requires: dialog, dropdown-menu, avatar, label, input, form, separator, sheet (mobile nav drawer).
+
+Reason
+
+These are not new technology decisions - they were already specified in docs/05 §2 before this phase began. Installing them now fulfills an existing, reviewed specification rather than inventing one; deferring them further would mean building auth forms/theming/toasts with ad hoc alternatives (manual validation, custom Context-based theme toggling, a hand-rolled toast system) that would need replacing later anyway once a phase needing the "real" stack arrives - and that phase is this one.
+
+Alternatives Considered
+
+Option A: Minimize new dependencies (native Context instead of zustand, manual form validation instead of react-hook-form/zod, CSS transitions instead of Framer Motion) - rejected, diverges from the already-documented stack for no durability benefit, and this phase's own scope (multiple auth forms, a theme system, protected-route state) is exactly the kind of complexity these libraries exist to manage well.
+
+Option B (chosen): Install the full documented stack now.
+
+Trade-offs
+
+Pros
+
+Matches docs/05 §2 exactly - no new undocumented technology choices. Every future phase building forms/state/theme/motion reuses the same, already-proven libraries rather than rediscovering the question.
+
+Cons
+
+A larger one-time dependency-footprint increase than a minimal approach - judged acceptable since these are one-time, well-established, actively-maintained libraries already anticipated by this project's own guidelines, not speculative additions.
+
+Future Review
+
+None expected - this is the stack every future frontend phase builds on.
+
+---
+
 # Review Policy
 
 Review ADRs:

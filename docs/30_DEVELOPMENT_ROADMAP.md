@@ -170,7 +170,7 @@ AI Chat
 
 Status
 
-In Progress
+Completed
 
 Sub-Phases
 
@@ -178,7 +178,7 @@ Sub-Phases
 
 6B Signal Engine (`SignalEngine`, a thin wrapper over `AIOrchestratorEngine` introducing zero new evidence weighting/confidence/recommendation logic, persisted `signals` with `CreatedAtMixin` for BUY/SELL outcomes only, read-time-computed EXPIRED status, `signal_bookmarks`; docs/51_SIGNAL_ARCHITECTURE.md, ADR-085 through ADR-091) - Completed
 
-6C AI Chat Assistant - Not Started
+6C AI Chat Assistant (`AIChatEngine`, a thin conversational layer over Phase 4-6B introducing zero new evidence/recommendation logic, reusing `ContextBuilder` for grounding and the persisted `ai_analysis`/`signals` rows for recommendation/signal explanations, `AIProvider` extended with `generate_chat_reply()`, persisted `conversations`/`messages` with two-level symbol/timeframe scoping; docs/52_AI_CHAT_ARCHITECTURE.md, ADR-092 through ADR-098) - Completed
 
 ---
 
@@ -193,6 +193,16 @@ Watchlists
 Notifications
 
 Telegram
+
+Status
+
+In Progress
+
+Sub-Phases
+
+7A Frontend Foundation - Authentication & User Experience (auth pages backed by the real Bearer-token backend - login/register/forgot-password stub; client-side session persistence and protected routing via `AuthGuard`/`GuestGuard`; the existing dev dashboard shell evolved into the authenticated product shell (`AppShell`, `Sidebar`, `TopNav`, `UserMenu`); dark/light/system theming aligned to docs/05 §4's palette; shared empty/error UI; zero new backend endpoints; docs/53_FRONTEND_FOUNDATION_ARCHITECTURE.md, ADR-099 through ADR-102) - Completed
+
+7B+ Markets/Signals/News/Watchlists/AI Analysis page content, Admin, session/device-management UI - Not Started
 
 ---
 

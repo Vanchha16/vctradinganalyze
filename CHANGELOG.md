@@ -2,6 +2,68 @@
 
 ## Unreleased
 
+### Added - Phase 7A: Frontend Foundation (Authentication & User Experience)
+
+`docs/53_FRONTEND_FOUNDATION_ARCHITECTURE.md` - new architecture document defining the reuse map, client-side auth token storage model, route protection, and shell/theme/shared-UI foundation every future frontend page builds on
+
+Core boundary (ADR-099): auth is entirely client-side - access token in memory (zustand `store/auth-store.ts`), refresh token in `localStorage` (`lib/auth/token-storage.ts`). No backend changes anywhere in this phase; the backend's existing Bearer-only design (docs/37 §10) is reused exactly as-is, not modified
+
+`services/auth.ts` (thin wrappers for the five existing `/auth/*` endpoints, mirrors `services/analysis.ts`'s shape) and `services/api-client.ts` extended with `apiPost`/`apiDelete`, automatic `Authorization: Bearer` header injection, and a one-shot silent refresh-and-retry on a `401` (mirrors ADR-081's "one retry, then fail gracefully" precedent) - the pre-existing `apiGet`/`ApiError` used by every Phase 6 dev-dashboard page is untouched
+
+`providers/auth-provider.tsx` (session restore on mount, mirrors `providers/query-provider.tsx`'s shape) and `hooks/use-auth.ts` (the single entry point components use for login/register/logout, mirrors `hooks/use-assets.ts`'s thin-wrapper-over-a-service pattern)
+
+`components/layout/auth-guard.tsx` / `guest-guard.tsx` - eliminate the flash of protected content or a premature redirect during session restoration (render a loading state until auth status resolves, per this phase's explicit LoadingGate/AuthGuard requirement); `AuthGuard` preserves the attempted path as `?next=` for post-login redirect
+
+Auth pages (`app/(auth)/{login,register,forgot-password}`, `features/auth/components/*`): `LoginForm`/`RegisterForm` built with `react-hook-form` + `zod` (`lib/validation/auth.ts`, mirrors the backend's password policy as a UX convenience only - the backend remains the source of truth). `/forgot-password` is an informational stub only, `/reset-password` is not built at all (ADR-100) - neither backend endpoint exists yet (blocked on email infrastructure, tracked since Phase 2C)
+
+The existing Phase 6 dev dashboard shell evolved in place into the authenticated product shell (ADR-101) - `app/dashboard/*` relocated to `app/(protected)/dashboard/*` (same URLs, zero breaking changes) behind `AuthGuard`; `components/layout/{app-shell,sidebar,top-nav,user-menu}.tsx` replace the old "ClaudeTrading Dev" sidebar with the real shell (responsive: persistent sidebar on desktop, `Sheet`-based drawer on mobile). Sidebar nav is deliberately narrower than docs/05 §7's full product IA - only items with a real destination are listed (Overview, Technical Analysis, Smart Money Concepts, Market Regime, API Explorer), mirroring this project's backend precedent of never exposing a route before the logic behind it exists
+
+Dark/light/system theming (`next-themes`, `providers/theme-provider.tsx`, `components/shared/theme-toggle.tsx`) - `globals.css` gained a `.dark` block; both palettes aligned to docs/05 §4's actual hex values (closing the gap tracked in BACKLOG.md §1), default theme is dark (docs/05 §3)
+
+Shared UI: `components/shared/{empty-state,error-page}.tsx`, `app/not-found.tsx`, `app/error.tsx`; `lib/toast.ts` wrapping `sonner` (single seam, mirrors `api-client.ts` wrapping `fetch`), `<Toaster />` mounted once in the root layout
+
+Full docs/05 §2 frontend stack adopted (ADR-102): zustand, next-themes, react-hook-form, zod, @hookform/resolvers, framer-motion, sonner, plus shadcn/Radix primitives (`dialog`, `dropdown-menu`, `avatar`, `label`, `input`, `form`, `separator`, `sheet`) and `tailwindcss-animate` (the standard utility-class partner for their `data-[state=...]` animations)
+
+**ADR-099** through **ADR-102**: client-side token storage (no BFF/cookies); forgot-password stub + reset-password fully deferred; the existing dev shell evolves into the product shell rather than a parallel one; full docs/05 §2 stack adopted now rather than minimized
+
+Deliberately excluded (per Phase 7A approval): `/reset-password`; email-verification pages; Markets/Signals/News/Watchlists/AI Analysis page content (future phases - this is the shell they'll use); a BFF/httpOnly-cookie auth layer; session/device-management UI (backend has the service logic but no API route yet); role-gated Admin nav (no `/admin` page exists yet either); bottom mobile navigation (no page-specific nav to warrant one yet); a frontend automated test suite; any backend changes or new API endpoints
+
+Verified via `npm run typecheck`/`lint`/`build` (all clean, 10 routes building successfully) plus a manual browser-driven round-trip against the real running backend: register → login → session persistence across a full page reload → protected-route redirect with `?next=` preserved → theme toggle (dark/light) → `UserMenu` (profile info + logout) → logout clearing the refresh token → re-visiting a protected route correctly redirecting to `/login` again. No frontend test framework exists yet (BACKLOG.md §23), consistent with this project's practice of not introducing test infrastructure speculatively
+
+docs/30 updated: introduces Phase 7 sub-phase lettering for the first time (7A complete, 7B+ not started)
+
+### Added - Phase 6C: AI Chat Assistant
+
+`docs/52_AI_CHAT_ARCHITECTURE.md` - new architecture document defining `AIChatEngine` as a thin conversational layer over Phase 4-6B, the provider extension, two-level symbol/timeframe scoping, and the persistence model
+
+Core boundary (ADR-093/094): `AIChatEngine` computes **zero new evidence, confidence, or recommendation logic**. Grounding reuses `ContextBuilder` (Phase 6A) verbatim for Technical Analysis/SMC/Market Regime/Analysis Confidence/News Sentiment/Economic Calendar/Strategy Engine/Risk Management; "why is this a BUY"/"explain this signal" questions are answered by looking up the most recent persisted `ai_analysis`/`signals` row (Phase 6A/6B), never by triggering a fresh recommendation computation
+
+`AIProvider` extended (`app/services/ai_orchestrator/providers/base.py`) with `generate_chat_reply()` (ADR-092) - a second capability of the *same* `OpenAIProvider`/`MockAIProvider`, sharing the exact `httpx.Client` construction and status-code-to-exception classification `generate()` already uses (factored into a shared `_post_chat_completion` helper); `generate()` (Phase 6A) is completely unaffected, purely additive
+
+`app/services/ai_chat/chat_prompt_builder.py` - a sibling to `ai_orchestrator/prompt_builder.py`, following its exact conventions (versioned constant `CHAT_PROMPT_VERSION`, explicit guardrail system prompt, deterministic fact-line serialization); `app/services/ai_chat_engine.py` (`AIChatEngine`) - composes `ContextBuilder`, `AIProvider`, `AssetRepository`, `AIAnalysisRepository`, `SignalRepository`, `MessageRepository`; one retry on transient provider failure then a deterministic apology fallback (mirrors ADR-081's precedent), never a hard failure
+
+Two-level symbol/timeframe scoping (ADR-095): `conversations.current_symbol`/`.current_timeframe` (mutable "current focus," docs/22 §10) vs. `messages.symbol`/`.timeframe` (immutable per-turn record). Client-supplied only, never NLP-parsed from free text - no entity-recognition component exists anywhere in this project
+
+`conversations`/`messages` tables (`app/models/conversation.py`, `message.py`; migration `72e726c08dd8_create_conversations_and_messages_tables.py`) - `conversations` uses `TimestampMixin` (`title`/`current_symbol`/`status` all mutate), `messages` uses `CreatedAtMixin` (append-only); `messages.ai_analysis_id`/`.signal_id` use `ON DELETE SET NULL` (not `CASCADE`) - a message outlives the row it once referenced
+
+`AIAnalysisRepository`/`SignalRepository` gained an additive optional `timeframe` filter parameter on `find_paginated`/`count_filtered` (every existing caller unaffected) - used for AI Chat's "latest analysis/signal for this asset/timeframe" grounding lookup
+
+New authenticated endpoints (same LLM-cost rationale as ADR-083): `POST /chat/conversations` (create), `GET /chat/conversations` (list, paginated), `GET /chat/conversations/{id}` (detail + transcript), `POST /chat/conversations/{id}/messages` (send, get reply), `POST /chat/conversations/{id}/archive` (soft), `DELETE /chat/conversations/{id}` (hard, cascades messages) - both archive and hard delete are supported (ADR-097), answering different real needs
+
+**ADR-092** through **ADR-098**: `AIProvider` extended with `generate_chat_reply()` rather than a second OpenAI client; `ContextBuilder` reuse for all eight-engine grounding; never recomputing a recommendation, only explaining persisted `ai_analysis`/`signals` rows; two-level client-supplied symbol/timeframe scoping; `conversations`/`messages` inferred schema; both archive and hard delete supported; feedback rating/question-type/engines-used logging explicitly deferred
+
+Deliberately excluded (per Phase 6C approval): NLP symbol extraction from free text; multi-asset comparison; feedback rating (docs/22 §15); "Question Type"/"Engines Used" classification logging (docs/22 §14); voice/chart-screenshot/PDF/multi-language/portfolio features (docs/22 §18); response caching; real rate-limiting/quota infrastructure beyond authentication
+
+Tests: `test_ai_chat_prompt_builder.py`, `test_ai_chat_engine.py` (fake `ContextBuilder`, `MockAIProvider` - mirrors `test_signal_engine.py`'s thin-wrapper-testing precedent), `test_conversation_models.py` (cascade delete, `SET NULL` behavior), `test_ai_chat_routes.py`, plus new `generate_chat_reply()` coverage added to `test_ai_openai_provider.py`
+
+docs/03, docs/04, docs/30 updated: `docs/03` adds a new §11A for `conversations`/`messages`; `docs/04` adds the full `/chat/*` API contract (previously not drafted at all, unlike Signals' Phase 6A placeholder); `docs/30` marks Phase 6C - and all of Phase 6 - complete
+
+### Status
+
+Phase 6 (AI Orchestrator/AI Reasoning Engine, Signal Engine, AI Chat Assistant) is complete. See `docs/30_DEVELOPMENT_ROADMAP.md`.
+
+---
+
 ### Added - Phase 6B: Signal Engine
 
 `docs/51_SIGNAL_ARCHITECTURE.md` - new architecture document defining `SignalEngine` as a thin wrapper over `AIOrchestratorEngine` (ADR-085), the persistence model, the two-state status scope, and the reuse map

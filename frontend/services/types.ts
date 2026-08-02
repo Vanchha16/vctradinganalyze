@@ -1,3 +1,44 @@
+// ---- Auth (docs/04 §Authentication, docs/37_AUTHENTICATION_FLOW.md) ----
+
+export type UserRole =
+  | "guest"
+  | "registered"
+  | "premium"
+  | "moderator"
+  | "support"
+  | "admin"
+  | "super_admin";
+
+export interface UserResponse {
+  id: string;
+  email: string;
+  username: string;
+  full_name: string | null;
+  role: UserRole;
+  is_active: boolean;
+  is_verified: boolean;
+  last_login: string | null;
+  created_at: string;
+}
+
+export interface RegisterRequest {
+  email: string;
+  username: string;
+  password: string;
+  full_name?: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  refresh_token: string | null;
+  expires_in: number;
+}
+
 export type MarketType = "forex" | "metal" | "crypto" | "index";
 
 export type Timeframe = "m1" | "m5" | "m15" | "m30" | "h1" | "h4" | "d1" | "w1" | "mn";

@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     ai_retry_max_attempts: int = 2
     ai_retry_backoff_seconds: float = 1.0
 
+    signal_ttl_hours: int = 24
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

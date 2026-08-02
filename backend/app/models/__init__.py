@@ -12,6 +12,8 @@ from app.models.enums import (
     NewsSentimentLabel,
     NewsSourceTier,
     Recommendation,
+    SignalStatus,
+    SignalType,
     SMCEventStatus,
     SMCEventType,
     Timeframe,
@@ -23,6 +25,8 @@ from app.models.news_sentiment import NewsSentiment
 from app.models.news_source import NewsSource
 from app.models.oauth_account import OAuthAccount
 from app.models.price_candle import PriceCandle
+from app.models.signal import Signal
+from app.models.signal_bookmark import SignalBookmark
 from app.models.smc_event import SMCEvent
 from app.models.smc_processing_state import SMCProcessingState
 from app.models.system_setting import SystemSetting
@@ -53,6 +57,10 @@ __all__ = [
     "SMCEventStatus",
     "SMCEventType",
     "SMCProcessingState",
+    "Signal",
+    "SignalBookmark",
+    "SignalStatus",
+    "SignalType",
     "SystemSetting",
     "Timeframe",
     "User",

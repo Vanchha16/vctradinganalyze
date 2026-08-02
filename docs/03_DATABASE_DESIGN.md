@@ -535,7 +535,7 @@ created_at
 
 # 11. Trading Signals
 
-**Out of scope for Phase 6A** (docs/50 §2, ADR-084) - Signal Engine's own table, deferred to Phase 6B.
+Phase 6B (docs/51_SIGNAL_ARCHITECTURE.md, ADR-085 through ADR-091). `signals` uses `CreatedAtMixin` (ADR-091, an inferred addition beyond this section's original field list, which specified no timestamp at all) - a row is only ever created for a BUY/SELL outcome (ADR-086), never for WAIT. `status` is written as `ACTIVE` and never mutated by Phase 6B; `triggered_at`/`closed_at`/`profit_loss` stay null until a future phase builds live price-monitoring (ADR-088).
 
 ## signals
 
@@ -547,25 +547,47 @@ analysis_id
 
 asset_id
 
-signal_type
+timeframe
 
-entry
+signal_type (BUY / SELL only, ADR-086)
+
+entry_price
 
 stop_loss
 
-take_profit
+take_profit (single value - TP1/TP2/TP3 deferred, ADR-087)
 
 risk_reward
 
 confidence
 
-status
+status (only ACTIVE is ever written by Phase 6B; EXPIRED is computed at read time, never stored, ADR-088)
 
-triggered_at
+triggered_at (nullable, unpopulated by Phase 6B)
 
-closed_at
+closed_at (nullable, unpopulated by Phase 6B)
 
-profit_loss
+profit_loss (nullable, unpopulated by Phase 6B)
+
+created_at (ADR-091)
+
+---
+
+## signal_bookmarks
+
+Inferred, not in this document's original schema (ADR-090) - required by `POST/DELETE /signals/bookmark`.
+
+Fields:
+
+id
+
+user_id
+
+signal_id
+
+created_at
+
+Unique constraint: `(user_id, signal_id)`.
 
 ---
 

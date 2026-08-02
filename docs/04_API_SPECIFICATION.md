@@ -741,27 +741,77 @@ Out of scope for Phase 6A: `POST /analysis/ai/batch` (no demonstrated need yet),
 
 # Signals
 
-**Out of scope for Phase 6A** (docs/50 §2, ADR-084) - deferred to Phase 6B.
+Phase 6B (docs/51_SIGNAL_ARCHITECTURE.md, ADR-085 through ADR-091). `SignalEngine` is a thin wrapper over `AIOrchestratorEngine` (Phase 6A) - no independent evidence weighting, confidence, or recommendation logic (ADR-085). **Requires authentication** (`get_current_user`) on every route - signals derive from auth-gated `ai_analysis` (ADR-083's precedent extended to this whole surface).
 
-GET /signals
+POST /signals/generate/{symbol}?timeframe=H1
 
-Latest signals.
+Not in this document's original draft - added per ADR-089. On-demand generation, mirroring `POST /analysis/ai/{symbol}`'s pattern exactly: calls `AIOrchestratorEngine.generate()` once, and persists a `Signal` row only if the recommendation is BUY or SELL (ADR-086) - WAIT returns `signal: null`, no row is created.
+
+Response
+
+{
+  "analysis_id": "8ddb570a-457b-4ca7-87fb-df740998cc2f",
+  "symbol": "EURUSD",
+  "timeframe": "h1",
+  "recommendation": "buy",
+  "signal": {
+    "id": "3f7e2b1a-9c4d-4e5f-8a6b-1d2c3e4f5a6b",
+    "analysis_id": "8ddb570a-457b-4ca7-87fb-df740998cc2f",
+    "symbol": "EURUSD",
+    "timeframe": "h1",
+    "signal_type": "buy",
+    "entry_price": 1.17540,
+    "stop_loss": 1.17120,
+    "take_profit": 1.18150,
+    "risk_reward": 1.45,
+    "confidence": 87.0,
+    "status": "active",
+    "triggered_at": null,
+    "closed_at": null,
+    "profit_loss": null,
+    "created_at": "2026-08-02T12:00:00Z"
+  }
+}
+
+`entry_price`/`stop_loss`/`take_profit`/`confidence` are reused verbatim from the underlying `AIAnalysisResult` (ADR-085) - `risk_reward` is computed by reusing `risk_reward_validator.validate()` (docs/48 §6, Phase 5C), not re-derived. `take_profit` is a single value, not TP1/TP2/TP3 - docs/11 §11's three-level output has no defined splitting formula anywhere and is deliberately deferred (ADR-087). 404 only if the asset symbol is unknown.
+
+---
+
+GET /signals?symbol=&status=&page=&limit=
+
+Latest signals, paginated and optionally filtered by asset symbol and/or `status`. `status` reflects a read-time-computed value (`active`/`expired`) for stored `ACTIVE` rows (ADR-088) - never a stale stored value.
+
+Response: same item shape as `POST /signals/generate/{symbol}`'s `signal` object, wrapped in `{"items", "page", "limit", "total"}`.
 
 ---
 
 GET /signals/{id}
 
-Signal details.
+Signal details (same shape as one list item). 404 if the id is unknown.
 
 ---
 
 POST /signals/bookmark
 
-Bookmark signal.
+Bookmark a signal for the current user.
+
+Request
+
+{ "signal_id": "3f7e2b1a-9c4d-4e5f-8a6b-1d2c3e4f5a6b" }
+
+Response
+
+{ "id": "...", "signal_id": "3f7e2b1a-9c4d-4e5f-8a6b-1d2c3e4f5a6b", "created_at": "2026-08-02T12:00:00Z" }
+
+404 if the signal id is unknown. 409 if this user has already bookmarked this signal (ADR-090's `(user_id, signal_id)` uniqueness constraint).
 
 ---
 
 DELETE /signals/bookmark/{id}
+
+204 No Content. 404 if the bookmark id is unknown or does not belong to the current user.
+
+Out of scope for Phase 6B: autonomous trading or broker execution; live price-monitoring/auto status transitions beyond read-time-computed EXPIRED (Triggered/Closed/Successful/Stopped Out, `profit_loss` population - ADR-088); TP1/TP2/TP3 (ADR-087); a Cancelled status (no admin/user action endpoint specified); Celery Beat scheduled/proactive generation (ADR-089's rejected alternative); `/ws/signals`; Telegram/Dashboard notification (Phase 7).
 
 ---
 

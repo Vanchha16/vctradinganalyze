@@ -3700,6 +3700,322 @@ None expected - 6B (Signal Engine) and 6C (AI Chat Assistant) each begin with th
 
 ---
 
+# ADR-085
+
+Title
+
+Signal Engine Is a Thin Wrapper Over AI Orchestrator, Not an Independent Evidence-Weighting Pipeline
+
+Status
+
+Accepted
+
+Context
+
+`docs/11_SIGNAL_ENGINE.md` (written before Phase 4-6 existed) describes the Signal Engine as an independent pipeline that collects raw evidence from every engine, applies its own weight distribution (Technical 35% / SMC 30% / Economic 15% / News 10% / Risk 10%), computes its own confidence score, resolves conflicts, and generates entry/stop/target from scratch (docs/11 §2-§13). Phase 6A's `AIOrchestratorEngine` (docs/50) already does almost all of this: `AnalysisConfidenceEngine` (ADR-046) owns cross-engine confidence weighting (a different, already-implemented scheme - Technical 25/SMC 25/Regime 20/Cross-Engine Agreement 20/Completeness 5/Freshness 5), `recommendation_decision.py` (ADR-078) owns the deterministic BUY/SELL/WAIT decision tree, and `candidate_setup_builder.py` (ADR-080) owns entry/stop/target construction. Building docs/11's pipeline as literally described would duplicate all of this.
+
+Decision
+
+`SignalEngine` (`app/services/signal_engine.py`) calls `AIOrchestratorEngine.generate()` exactly once and persists its result as a `Signal` row (docs/03 §11) - it introduces no new evidence weighting, confidence computation, or recommendation logic of its own. docs/11 §5's weight-distribution table and §16's flat output format are documented (docs/51 §1) as superseded by the already-implemented Confidence Engine + AI Orchestrator decision tree, the same treatment as docs/08 §9, docs/12's Signal-premise conflict, and docs/17's strategy-list corrections in prior phases.
+
+Reason
+
+This project's strongest precedent - reuse-first design - was already established by Strategy Engine (ADR-071, zero new external data sources) and AI Orchestrator itself (docs/50 §4, "no bespoke re-derivation of anything Phase 4A-5D already computes"). Signal Engine sits at the very top of the evidence pipeline (docs/02 §7's "Signal Generation" is the pipeline's last step), so by the time it runs, every input it could possibly want has already been computed by an upstream engine - there is nothing left for it to independently derive.
+
+Alternatives Considered
+
+Option A: Implement docs/11's independent weighted-evidence pipeline as literally written - rejected, this directly duplicates Phase 6A's already-built and already-tested decision logic, and would produce two different, potentially conflicting BUY/SELL/WAIT verdicts for the same market conditions (one from `AIOrchestratorEngine`, one from `SignalEngine`) with no principled way to reconcile them.
+
+Option B (chosen): Thin wrapper over `AIOrchestratorEngine`, persisting its already-decided output.
+
+Trade-offs
+
+Pros
+
+Zero duplicated decision logic; a signal's recommendation is always identical to its underlying `ai_analysis` row's recommendation, by construction.
+
+Consequences
+
+Positive
+
+The strongest reuse ratio of any engine in this project - Phase 6B adds no new evidence source at all (docs/51 §7).
+
+Negative
+
+docs/11's independently-designed weight distribution and confidence formula are never implemented as written - acceptable since they were superseded by a more thoroughly reviewed, already-shipped design (ADR-046/078), not abandoned without replacement.
+
+Future Review
+
+None expected unless a future requirement genuinely needs a second, independent recommendation source to cross-validate against AI Orchestrator's - not currently anticipated.
+
+---
+
+# ADR-086
+
+Title
+
+A Signal Is a Persisted BUY/SELL Trade Call Only; WAIT Recommendations Produce No Signal Row
+
+Status
+
+Accepted
+
+Context
+
+`AIOrchestratorEngine.generate()` can return `Recommendation.WAIT` (ADR-011 - WAIT is a valid recommendation), with `entry_price`/`stop_loss`/`take_profit` all null (docs/03 §10). `docs/03 §11`'s `signals` table has no field capable of representing "no trade" - `signal_type`, `entry`, `stop_loss`, `take_profit` all presume an actionable direction.
+
+Decision
+
+`SignalEngine.generate()` persists a `Signal` row only when the wrapped `AIOrchestratorEngine.generate()` result is `BUY` or `SELL`. A `WAIT` result returns a `SignalGenerationResult` with `signal=None` - no row is written.
+
+Reason
+
+A "signal" is definitionally an actionable trade call (docs/11 §1: "generating the final trading recommendation" in the context of §9-§12's entry/stop/target generation) - a WAIT outcome is the *absence* of one, not a degenerate signal with null fields. The full reasoning for *why* a WAIT was reached remains fully available via the `analysis_id` (every `AIOrchestratorEngine.generate()` call persists an `ai_analysis` row regardless of recommendation, ADR-082) - nothing is lost by not also creating a `signals` row for it.
+
+Alternatives Considered
+
+Option A: Persist a `Signal` row for every recommendation including WAIT, with `signal_type=WAIT` and null entry/stop/target - rejected, `docs/03 §11`'s field list has no precedent for a directionless signal, and every downstream consumer of `GET /signals` (dashboard "latest signals," Telegram notification, bookmarking) expects an actionable trade, not a null one.
+
+Option B (chosen): No row for WAIT; caller inspects `SignalGenerationResult.recommendation` directly.
+
+Trade-offs
+
+Pros
+
+`signals` table stays exactly what its schema implies - actionable calls only. No nullable-signal_type special-casing needed anywhere downstream.
+
+Cons
+
+A caller polling `POST /signals/generate/{symbol}` on every WAIT outcome accumulates no persisted history of "we checked and it was WAIT" - only the underlying `ai_analysis` row (via `GET /analysis/history`) has that trail.
+
+Future Review
+
+Revisit only if a future requirement needs a queryable history of WAIT outcomes specifically through the `/signals` surface rather than `/analysis/history`.
+
+---
+
+# ADR-087
+
+Title
+
+Single Take-Profit Reused from AI Orchestrator; TP1/TP2/TP3 Splitting Deferred
+
+Status
+
+Accepted
+
+Context
+
+`docs/11_SIGNAL_ENGINE.md` §11 lists TP1/TP2/TP3 as the Take Profit output shape, but defines no formula for splitting a single target into three - no document anywhere in this project specifies one. `AIOrchestratorEngine`'s `candidate_setup_builder.py` (ADR-080) produces exactly one `take_profit` value (`entry -+ max(2x risk distance, nearest opposing SMC structure)`).
+
+Decision
+
+`Signal.take_profit` stores the single value reused verbatim from `AIAnalysisResult.take_profit`. TP1/TP2/TP3 splitting is not implemented.
+
+Reason
+
+Inventing a three-way split (e.g. 1x/2x/3x risk distance, or partial-close percentages) with no sourced formula would violate this project's "never invent architecture" rule - the same reasoning already applied to Strategy Engine's deferred Momentum Trading (ADR-072, zero defined requirements) and Risk Management's excluded Spread/RR requirements (ADR-074).
+
+Alternatives Considered
+
+Option A: Invent a TP1/TP2/TP3 formula now (e.g. 1x/2x/3x risk distance) - rejected, not sourced from any doc; would need to be recorded as an arbitrary starting point with no basis, unlike every prior scoring/threshold constant in this project (ADR-028/030/035 etc.), which at least extrapolated from a stated example or partial specification.
+
+Option B (chosen): Single TP, matching AI Orchestrator exactly, deferred multi-target splitting.
+
+Trade-offs
+
+Pros
+
+No arbitrary, undocumented formula introduced. `Signal.take_profit` is guaranteed consistent with the underlying `ai_analysis` row it derives from.
+
+Cons
+
+Does not fulfill docs/11 §11's literal three-level output - a real, acknowledged gap versus the original vision document.
+
+Future Review
+
+Revisit once a real requirement (e.g. a specific partial-close/scale-out strategy) defines a concrete TP1/TP2/TP3 formula to implement against.
+
+---
+
+# ADR-088
+
+Title
+
+Signal Status: ACTIVE (Written) and EXPIRED (Read-Time-Computed) Only; Remaining docs/11 §18 States Deferred
+
+Status
+
+Accepted
+
+Context
+
+`docs/11_SIGNAL_ENGINE.md` §18 defines eight signal statuses (Draft, Active, Triggered, Expired, Cancelled, Closed, Successful, Stopped Out). Reaching Triggered/Closed/Successful/Stopped Out requires live price-monitoring infrastructure that doesn't exist anywhere in this project (no scheduled task compares stored entry/stop/target against incoming candles), and their exact trigger semantics are undefined - `candidate_setup_builder.py` (ADR-080) always uses "latest close" as `entry_price`, so there is no meaningful distinction between a signal being "placed" and being "triggered" the way a genuine limit/stop order would have. Cancelled requires an admin/user action endpoint `docs/04` never specifies for signals.
+
+Decision
+
+`Signal.status` is written as `ACTIVE` at creation - the only value 6B's code ever writes. `EXPIRED` is computed at read time only (`app/services/signal/status_resolver.py`), comparing `created_at` against `settings.signal_ttl_hours` (default 24) - never persisted back to the row. The remaining six `SignalStatus` enum values are reserved (defined on the enum, reachable by a future phase without a migration) but unreachable through any 6B code path.
+
+Reason
+
+This mirrors Economic Calendar's `risk_window`/`market_bias` precedent exactly (ADR-060/061): a value that is a function of continuously-advancing wall-clock time is correct only at the instant it's computed and stale immediately after, so it must never be stored. Building genuine trigger/close/outcome detection now would mean inventing trigger semantics (touch vs. close, tolerance) with no specification to build against - the same category of gap already deferred for Risk Management's position tracking (ADR-067) and Strategy Engine's historical performance (ADR-075).
+
+Alternatives Considered
+
+Option A: Build full live-price auto-monitoring now (a new Celery task polling candles per open signal, transitioning status automatically) - rejected, requires inventing undefined trigger semantics, and is closer to Phase 7 (notifications/dashboard) territory than Phase 6B's scope.
+
+Option B (chosen): ACTIVE (written) + EXPIRED (read-time-computed) only, remaining states reserved.
+
+Trade-offs
+
+Pros
+
+No invented trigger semantics. Enum values reserved now mean a future phase can start writing them without a schema migration.
+
+Cons
+
+`GET /signals?status=successful` (or similar) returns nothing until a future phase implements outcome tracking - `signals` table's `triggered_at`/`closed_at`/`profit_loss` columns stay null indefinitely under 6B.
+
+Future Review
+
+Revisit once a live price-monitoring design (touch-vs-close trigger rule, tolerance, timeframe to monitor against) is specified - this needs its own design pass, not a quiet addition.
+
+---
+
+# ADR-089
+
+Title
+
+On-Demand Signal Generation via New Endpoint `POST /signals/generate/{symbol}`
+
+Status
+
+Accepted
+
+Context
+
+`docs/04_API_SPECIFICATION.md`'s original Signals section (added during Phase 6A's drafting, deferred per ADR-084) lists only `GET /signals`, `GET /signals/{id}`, `POST /signals/bookmark`, `DELETE /signals/bookmark/{id}` - all presuming signals already exist, implying a scheduled/proactive background generation model (matching docs/11 §17's lifecycle ending in "Notify Dashboard" / "Send Telegram", and News/Economic Calendar's Celery Beat ingestion-pipeline precedent). But no asset/timeframe "watchlist" or scheduling configuration exists anywhere in this project to drive an unattended generation job, and every prior LLM-cost-incurring action in this project (`POST /analysis/ai/{symbol}`, ADR-083) is a synchronous, caller-initiated, authenticated request - never a background job spending API budget with no request behind it.
+
+Decision
+
+Add `POST /signals/generate/{symbol}?timeframe=` (authenticated, mirrors `POST /analysis/ai/{symbol}`'s pattern exactly) as the mechanism that produces signals. `docs/04` is updated to add this endpoint's contract. A scheduled/proactive Celery Beat generation job is explicitly rejected for 6B.
+
+Reason
+
+An unattended job calling a real, metered LLM provider on a fixed schedule for a configured set of assets has real, ongoing cost implications and needs its own capacity/budget decision - not something to introduce as a side effect of building the persistence layer around an already-decided synchronous pattern. The on-demand model also keeps Signal Engine consistent with every other 6A endpoint a caller has already been using.
+
+Alternatives Considered
+
+Option A: Celery Beat scheduled generation, matching docs/04's literal (GET-only) endpoint list - rejected for 6B; would require a new "which assets/timeframes to auto-generate for" configuration surface that doesn't exist, and commits to an ongoing LLM spend schedule without an explicit budget decision from the user.
+
+Option B (chosen): On-demand `POST /signals/generate/{symbol}`, added to docs/04 as a new endpoint beyond its original draft.
+
+Trade-offs
+
+Pros
+
+Consistent with the already-shipped `POST /analysis/ai/{symbol}` pattern callers already understand. No new unattended-spend surface introduced without an explicit decision.
+
+Cons
+
+Diverges from docs/04's original (pre-implementation) Signals section, which assumed signals would already exist by the time `GET /signals` is called - `docs/04` is corrected accordingly (see docs/51 §6), the same "update docs to match the reviewed, implemented reality" practice as BACKLOG.md §7's prior examples.
+
+Future Review
+
+Revisit if a real requirement for proactive, unattended signal generation emerges (e.g. a dashboard "watchlist auto-scan" feature) - that would need its own budget/scheduling design, layered on top of this same `SignalEngine.generate()` method rather than replacing it.
+
+---
+
+# ADR-090
+
+Title
+
+`signal_bookmarks` Is an Inferred Join Table, Not Specified in docs/03
+
+Status
+
+Accepted
+
+Context
+
+`docs/04_API_SPECIFICATION.md` lists `POST /signals/bookmark` / `DELETE /signals/bookmark/{id}` (drafted during Phase 6A, deferred per ADR-084), but `docs/03_DATABASE_DESIGN.md` reserves no table for per-user signal bookmarks - `signals` itself has no `user_id` column (it is asset-scoped like every other analysis-engine output, not user-scoped).
+
+Decision
+
+Add `signal_bookmarks` (`app/models/signal_bookmark.py`): `id`, `user_id` (FK `users.id`, cascade), `signal_id` (FK `signals.id`, cascade), `created_at`, with a unique constraint on `(user_id, signal_id)`.
+
+Reason
+
+Follows `OAuthAccount`'s `(provider, provider_user_id)` uniqueness precedent (ADR-022) exactly - the same "inferred correctness requirement, not literally specified, recorded here per CLAUDE.md's 'never invent architecture' rule so the schema decision stays traceable" pattern.
+
+Alternatives Considered
+
+Option A: A `bookmarked_signal_ids` JSON array column on `User` - rejected, doesn't scale to indexed lookups ("is this signal bookmarked by this user," "list this user's bookmarks") the way a proper join table with a unique constraint does, and has no precedent anywhere else in this schema (every other many-to-many-shaped relationship in this project uses a real table, e.g. `watchlist_items`).
+
+Option B (chosen): Dedicated `signal_bookmarks` join table with a uniqueness constraint.
+
+Trade-offs
+
+Pros
+
+Standard, indexable many-to-many shape; prevents duplicate bookmarks at the database level, not just in application logic.
+
+Cons
+
+None identified; a unique constraint on this pair has no legitimate case for duplication, same reasoning as ADR-022.
+
+Future Review
+
+None expected unless bookmarks need their own metadata (e.g. a user note) beyond simple presence/absence.
+
+---
+
+# ADR-091
+
+Title
+
+`signals` Uses `CreatedAtMixin`; `created_at` Is an Inferred Addition Beyond docs/03 §11's Field List
+
+Status
+
+Accepted
+
+Context
+
+`docs/03_DATABASE_DESIGN.md` §11's `signals` field list (`id`, `analysis_id`, `asset_id`, `signal_type`, `entry`, `stop_loss`, `take_profit`, `risk_reward`, `confidence`, `status`, `triggered_at`, `closed_at`, `profit_loss`) includes no timestamp at all - the same class of gap BACKLOG.md §1 already tracks for several other tables against docs/03 §1's stated "every table needs created_at" default.
+
+Decision
+
+`Signal` (`app/models/signal.py`) uses `UUIDMixin` + `CreatedAtMixin`. `created_at` is written at generation time.
+
+Reason
+
+Needed for two concrete, load-bearing purposes, not just to satisfy docs/03 §1's general default: ordering `GET /signals`' "latest signals" response, and computing TTL-based `EXPIRED` status (ADR-088) - `status_resolver.py` has no other timestamp to compare against. A signal row is "what was generated at time X," never rewritten in place by 6B (ADR-086/088 - `triggered_at`/`closed_at` are separate, distinct timestamps for a future phase's outcome tracking, not an `updated_at`), the same append-only reasoning as `ai_analysis` (ADR-082) and `news_articles` (ADR-053).
+
+Alternatives Considered
+
+Option A: No timestamp column at all, matching docs/03 §11's literal (incomplete) field list - rejected, `EXPIRED` status computation and `GET /signals`' implicit recency ordering both have a genuine, immediate need for one; this is not a speculative addition.
+
+Option B: `TimestampMixin` (created_at + updated_at) - rejected, a signal row's `status` is intentionally never rewritten by 6B's own code (ADR-088's `EXPIRED` is read-time-computed, never stored), and `triggered_at`/`closed_at` already serve as the future phase's mutation timestamps once outcome tracking is built - a generic `updated_at` would add no additional information.
+
+Option C (chosen): `CreatedAtMixin` only.
+
+Trade-offs
+
+Pros
+
+Matches the append-only precedent already established for `ai_analysis`/`news_articles`. Sufficient for both of 6B's actual needs (ordering, TTL expiry).
+
+Cons
+
+None identified.
+
+Future Review
+
+Revisit if a future phase's outcome-tracking work (ADR-088's deferred states) finds it needs a genuine `updated_at` beyond `triggered_at`/`closed_at` - not currently anticipated.
+
+---
+
 # Review Policy
 
 Review ADRs:

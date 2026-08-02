@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added - Phase 6B: Signal Engine
+
+`docs/51_SIGNAL_ARCHITECTURE.md` - new architecture document defining `SignalEngine` as a thin wrapper over `AIOrchestratorEngine` (ADR-085), the persistence model, the two-state status scope, and the reuse map
+
+Core boundary (ADR-085): `SignalEngine` introduces **zero new evidence weighting, confidence, or recommendation logic**. `docs/11_SIGNAL_ENGINE.md`'s original independent-pipeline vision (its own Technical 35%/SMC 30%/Economic 15%/News 10%/Risk 10% weight distribution, its own confidence score, its own conflict resolution) is documented as superseded by Phase 6A's already-implemented `AnalysisConfidenceEngine`/`AIOrchestratorEngine` decision tree - rebuilding it would duplicate Phase 6A
+
+`SignalEngine` (`app/services/signal_engine.py`) - calls `AIOrchestratorEngine.generate()` exactly once; persists a `Signal` row only for a BUY/SELL outcome (ADR-086, WAIT produces no row, the full reasoning trail stays available via `analysis_id`); reuses `risk_management.risk_reward_validator.validate()` (Phase 5C) for `risk_reward`, never re-deriving the formula
+
+`app/services/signal/status_resolver.py` - deterministic, read-time-only `effective_status()` (ADR-088): `ACTIVE` is the only status Phase 6B ever writes; `EXPIRED` is computed at read time from `settings.signal_ttl_hours` (default 24), mirroring `economic_calendar/risk_window.py`'s "never store a value that's a function of continuously-advancing wall-clock time" precedent. The remaining six `docs/11 §18` states (Draft/Triggered/Cancelled/Closed/Successful/Stopped Out) are reserved enum values, unreachable through any 6B code path - live price-monitoring/trigger-detection needed to reach them doesn't exist anywhere in this project
+
+`signals` table (`app/models/signal.py`, `CreatedAtMixin`, ADR-091) and `signal_bookmarks` table (`app/models/signal_bookmark.py`, inferred join table not in docs/03's original schema, `(user_id, signal_id)` uniqueness, ADR-090, mirrors `OAuthAccount`'s ADR-022 precedent)
+
+New authenticated endpoints (mirrors ADR-083's whole-surface auth precedent): `POST /signals/generate/{symbol}?timeframe=` (ADR-089, on-demand generation - added beyond docs/04's original Phase 6A draft, which implied scheduled/proactive generation; rejected in favor of the already-established on-demand pattern to avoid committing to an unattended LLM-spend schedule without an explicit budget decision), `GET /signals` (paginated, filterable by symbol/status), `GET /signals/{id}`, `POST /signals/bookmark`, `DELETE /signals/bookmark/{id}`
+
+**ADR-085** through **ADR-091**: thin-wrapper design over AI Orchestrator; a signal is a persisted BUY/SELL call only, WAIT produces none; single take-profit reused from AI Orchestrator, TP1/TP2/TP3 splitting deferred (no sourced formula); two-state status scope (ACTIVE written, EXPIRED read-time-computed), remaining docs/11 §18 states reserved; on-demand generation endpoint chosen over scheduled Celery Beat generation; `signal_bookmarks` inferred join table; `CreatedAtMixin` choice for `signals`
+
+Deliberately excluded (per Phase 6B approval): autonomous trading or broker execution; live price-monitoring/auto status transitions beyond read-time EXPIRED (Triggered/Closed/Successful/Stopped Out, `profit_loss` population); TP1/TP2/TP3; a Cancelled status (no admin/user action endpoint specified); Celery Beat scheduled/proactive generation; `/ws/signals`; Telegram/Dashboard notification (Phase 7, downstream services don't exist)
+
+Tests: `test_signal_status_resolver.py` (TTL boundary, non-ACTIVE pass-through, naive-datetime handling), `test_signal_engine.py` (BUY/SELL persistence, WAIT produces no row, `AIOrchestratorEngine.generate()` called exactly once, using a fake engine rather than the full upstream stack since `SignalEngine` is a thin wrapper), `test_signal_models.py` (FK cascade behavior, `(user_id, signal_id)` uniqueness), `test_signal_routes.py` (auth required, 404s, list filtering/pagination, bookmark create/delete/409-on-duplicate, WAIT generation response shape)
+
+docs/03, docs/04, docs/30 updated: `docs/03` §11 documents the built `signals`/`signal_bookmarks` schema (superseding the "out of scope for Phase 6A" placeholder); `docs/04` documents the full `/signals/*` API contract (superseding the Phase 6A placeholder that presumed scheduled generation); `docs/30` marks Phase 6B complete
+
 ### Added - Phase 6A: AI Orchestrator / AI Reasoning Engine
 
 `docs/50_AI_ORCHESTRATOR_ARCHITECTURE.md` - new architecture document defining the deterministic/AI boundary, the `AnalysisContext` data flow, the reuse map across five Phase 4/5 engines, the four new deterministic modules, prompt architecture, provider abstraction, and structured-output recovery ladder

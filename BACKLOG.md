@@ -2,7 +2,7 @@
 
 This document preserves unresolved ideas, deferred architectural decisions, documentation gaps, and future enhancements identified during Phases 1.1 through 2A. It is a backlog, not a plan — nothing here is scheduled or approved for implementation until explicitly revisited.
 
-Last updated: 2026-08-01 (Phase 5D: Strategy Engine)
+Last updated: 2026-08-02 (Phase 6B: Signal Engine)
 
 ---
 
@@ -224,7 +224,7 @@ Last updated: 2026-08-01 (Phase 5D: Strategy Engine)
 
 ## 20. AI Orchestrator / AI Reasoning Engine (Phase 6A) — Deferred Items and Discoveries
 
-- **Signal Engine (6B) and AI Chat Assistant (6C) are explicitly deferred** (ADR-084) - Phase 6 previously had no sub-phase lettering in docs/30; 6A introduces it for the first time. Each of 6B/6C needs its own documentation-first session before implementation, same as every prior sub-phase.
+- **Signal Engine (6B) and AI Chat Assistant (6C) are explicitly deferred** (ADR-084) - Phase 6 previously had no sub-phase lettering in docs/30; 6A introduces it for the first time. Each of 6B/6C needs its own documentation-first session before implementation, same as every prior sub-phase. **Signal Engine (6B) is now complete** - see §21 below. AI Chat Assistant (6C) remains not started.
 - **`POST /analysis/ai/batch` is not built** - no demonstrated caller yet (e.g. a watchlist scan). Would need partial-failure handling, batch cost multiplication, and batch-specific rate-limiting concerns beyond what 6A's single-symbol endpoint needs. Revisit once a real batch use case exists.
 - **No response caching** - every deterministic engine in this project recomputes fresh on every call (no caching precedent anywhere, Phase 4/5), and caching LLM reasoning risks returning stale prose for a materially different market context moments later. Revisit only if real usage volume shows the endpoint is over-called (e.g. dashboard polling) - a short-TTL cache keyed on `(symbol, timeframe, recommendation, confidence_bucket)` would be the shape to build then, not now.
 - **No real rate-limiting/quota infrastructure** - `POST /analysis/ai/{symbol}` is the first per-call-costed endpoint in this project (real LLM token spend), but no quota/rate-limit layer exists yet beyond requiring authentication (ADR-083). Revisit before any public/production exposure of this endpoint.
@@ -233,3 +233,16 @@ Last updated: 2026-08-01 (Phase 5D: Strategy Engine)
 - **`candidate_setup_builder.py`'s stop-loss/take-profit math (1.5x ATR, minimum 2:1 risk/reward) are hand-tuned starting points, not empirically calibrated** - same caveat as every prior scoring/threshold table in this project (ADR-028/030/035/036/037/042/046/055/059/060/064/075). Revisit once real trade-outcome data exists.
 - **`ai_analysis` is the first persisted engine output in this project that is not deterministically re-derivable** (ADR-082) - every Phase 4/5 engine is stateless because re-running the same deterministic code reproduces the exact same result; an LLM call at the same inputs is not guaranteed to reproduce identical prose. This is a genuine, permanent difference from every prior table's design rationale, not a temporary gap.
 - **Coverage tooling still not installed** (see §4) - Phase 6A's new tests were likewise verified by inspection (every deterministic module, provider abstraction, prompt builder, response parser, the engine's integration paths, and every API path has a dedicated test) rather than a numeric coverage report.
+
+## 21. Signal Engine (Phase 6B) — Deferred Items and Discoveries — Phase 6B Now Complete
+
+- **`SignalEngine` introduces zero new evidence weighting/confidence/recommendation logic** (ADR-085) - `docs/11_SIGNAL_ENGINE.md`'s original independent-pipeline vision (its own weight distribution, confidence score, conflict resolution) is superseded by Phase 6A's already-implemented `AnalysisConfidenceEngine`/`AIOrchestratorEngine`. If a future need genuinely requires a second, independent recommendation source to cross-validate against AI Orchestrator's, that needs its own design pass, not a quiet reintroduction of docs/11's original formula.
+- **Live price-monitoring / auto status transitions are not built** (ADR-088) - `Signal.status` is only ever written as `ACTIVE`; `TRIGGERED`/`CLOSED`/`SUCCESSFUL`/`STOPPED_OUT` (and `triggered_at`/`closed_at`/`profit_loss` population) require a new Celery task comparing stored entry/stop/target against incoming candles, plus a defined trigger rule (touch vs. close, tolerance) that no document specifies. `Cancelled` also has no admin/user action endpoint specified anywhere. This is the single largest deferred item from docs/11's original vision.
+- **TP1/TP2/TP3 multi-target splitting is not built** (ADR-087) - `Signal.take_profit` is a single value, reused verbatim from `AIOrchestratorEngine`'s `candidate_setup_builder.py` (ADR-080). No document anywhere defines a formula for splitting one target into three; inventing one was rejected per "never invent architecture."
+- **On-demand generation (`POST /signals/generate/{symbol}`) was chosen over scheduled/proactive Celery Beat generation** (ADR-089) - `docs/04`'s original Signals draft (Phase 6A) implied signals would already exist by the time `GET /signals` is called, matching News/Economic Calendar's ingestion-pipeline precedent. Deliberately rejected for 6B: an unattended job spending real, metered LLM budget on a fixed schedule needs its own capacity/budget decision, not a side effect of building the persistence layer. Revisit if a real "watchlist auto-scan" requirement emerges.
+- **`signal_bookmarks` is an inferred join table** (ADR-090), not specified anywhere in `docs/03`'s original schema - follows `OAuthAccount`'s `(provider, provider_user_id)` uniqueness precedent (ADR-022).
+- **`signals.created_at` is an inferred addition** (ADR-091) beyond `docs/03` §11's original field list (which specified no timestamp at all) - needed for `GET /signals`' recency ordering and TTL-based `EXPIRED` computation (ADR-088).
+- **`signal_ttl_hours` (default 24) is a hand-picked starting value, not empirically calibrated** - same caveat as every prior scoring/threshold constant in this project (ADR-028/030/035/036/037/042/046/055/059/060/064/075). Revisit once real usage patterns exist.
+- **No WebSocket `/ws/signals` endpoint** - still tracked in §3 above, tied to a feature that doesn't exist yet.
+- **No Telegram/Dashboard notification on signal generation** - Phase 7 territory (docs/19/docs/20/docs/18), those downstream services don't exist yet.
+- **Coverage tooling still not installed** (see §4) - Phase 6B's new tests were likewise verified by inspection (status resolver, engine wrapping/persistence behavior including the WAIT-produces-no-signal case, model FK/uniqueness behavior, and every API path has a dedicated test) rather than a numeric coverage report.

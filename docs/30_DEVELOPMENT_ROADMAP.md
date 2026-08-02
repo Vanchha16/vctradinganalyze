@@ -174,9 +174,9 @@ In Progress
 
 Sub-Phases
 
-6A AI Orchestrator / AI Reasoning Engine (single `AIOrchestratorEngine`, deterministic `recommendation_decision`/`candidate_setup_builder`/`invalidation_builder`/`evidence_extractor`, `AIProvider` Protocol with `OpenAIProvider`, structured JSON output, persisted `ai_analysis` with `CreatedAtMixin`; docs/50_AI_ORCHESTRATOR_ARCHITECTURE.md, ADR-077 through ADR-084) - In Progress
+6A AI Orchestrator / AI Reasoning Engine (single `AIOrchestratorEngine`, deterministic `recommendation_decision`/`candidate_setup_builder`/`invalidation_builder`/`evidence_extractor`, `AIProvider` Protocol with `OpenAIProvider`, structured JSON output, persisted `ai_analysis` with `CreatedAtMixin`; docs/50_AI_ORCHESTRATOR_ARCHITECTURE.md, ADR-077 through ADR-084) - Completed
 
-6B Signal Engine - Not Started
+6B Signal Engine (`SignalEngine`, a thin wrapper over `AIOrchestratorEngine` introducing zero new evidence weighting/confidence/recommendation logic, persisted `signals` with `CreatedAtMixin` for BUY/SELL outcomes only, read-time-computed EXPIRED status, `signal_bookmarks`; docs/51_SIGNAL_ARCHITECTURE.md, ADR-085 through ADR-091) - Completed
 
 6C AI Chat Assistant - Not Started
 

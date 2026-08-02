@@ -33,6 +33,11 @@ class ResourceNotFoundException(AppException):
     error_code = "resource_not_found"
 
 
+class ConflictException(AppException):
+    status_code = 409
+    error_code = "conflict"
+
+
 class ValidationException(AppException):
     status_code = 422
     error_code = "validation_error"

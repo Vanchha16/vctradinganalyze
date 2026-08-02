@@ -5,7 +5,11 @@ import pytest
 
 from app.config import settings
 from app.services.ai_orchestrator.prompt_builder import reasoning_json_schema
-from app.services.ai_orchestrator.providers.base import AIGenerationRequest
+from app.services.ai_orchestrator.providers.base import (
+    AIChatRequest,
+    AIGenerationRequest,
+    ChatTurn,
+)
 from app.services.ai_orchestrator.providers.exceptions import (
     AIProviderConfigurationError,
     PermanentAIProviderError,
@@ -18,6 +22,14 @@ _REQUEST = AIGenerationRequest(
     user_prompt="user",
     json_schema=reasoning_json_schema(),
     max_tokens=1200,
+)
+
+_CHAT_REQUEST = AIChatRequest(
+    messages=[
+        ChatTurn(role="system", content="system"),
+        ChatTurn(role="user", content="Why is this a BUY?"),
+    ],
+    max_tokens=500,
 )
 
 
@@ -110,6 +122,78 @@ def test_generate_never_calls_real_openai_api(monkeypatch: pytest.MonkeyPatch) -
     provider.generate(_REQUEST)
 
     assert handler_was_called is True
+
+
+def test_generate_chat_reply_raises_configuration_error_when_no_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    provider = OpenAIProvider()
+    with pytest.raises(AIProviderConfigurationError):
+        provider.generate_chat_reply(_CHAT_REQUEST)
+
+
+def test_generate_chat_reply_returns_response_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "It's a BUY because..."}}]}
+        )
+
+    provider = OpenAIProvider(transport=httpx.MockTransport(handler))
+    response = provider.generate_chat_reply(_CHAT_REQUEST)
+
+    assert response.content == "It's a BUY because..."
+    assert response.model_name == settings.openai_model
+    body = captured["body"]
+    assert isinstance(body, dict)
+    assert "response_format" not in body
+    assert body["messages"] == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "Why is this a BUY?"},
+    ]
+
+
+def test_generate_chat_reply_raises_transient_error_on_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "server error"})
+
+    provider = OpenAIProvider(transport=httpx.MockTransport(handler))
+    with pytest.raises(TransientAIProviderError):
+        provider.generate_chat_reply(_CHAT_REQUEST)
+
+
+def test_generate_chat_reply_raises_permanent_error_on_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "unauthorized"})
+
+    provider = OpenAIProvider(transport=httpx.MockTransport(handler))
+    with pytest.raises(PermanentAIProviderError):
+        provider.generate_chat_reply(_CHAT_REQUEST)
+
+
+def test_generate_chat_reply_raises_permanent_error_on_unparseable_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"unexpected": "shape"})
+
+    provider = OpenAIProvider(transport=httpx.MockTransport(handler))
+    with pytest.raises(PermanentAIProviderError):
+        provider.generate_chat_reply(_CHAT_REQUEST)
 
 
 def test_health_check_true_when_api_key_configured(monkeypatch: pytest.MonkeyPatch) -> None:

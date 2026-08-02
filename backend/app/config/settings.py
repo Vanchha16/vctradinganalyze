@@ -52,6 +52,8 @@ class Settings(BaseSettings):
 
     signal_ttl_hours: int = 24
 
+    chat_max_history_messages: int = 20
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

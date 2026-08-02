@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from sqlalchemy import select
 
 from app.models.ai_analysis import AIAnalysis
+from app.models.enums import Timeframe
 from app.repositories.base import BaseRepository
 
 
@@ -19,16 +20,30 @@ class AIAnalysisRepository(BaseRepository[AIAnalysis]):
         return self.session.get(AIAnalysis, analysis_id)
 
     def find_paginated(
-        self, *, asset_id: uuid.UUID | None = None, offset: int = 0, limit: int = 20
+        self,
+        *,
+        asset_id: uuid.UUID | None = None,
+        timeframe: Timeframe | None = None,
+        offset: int = 0,
+        limit: int = 20,
     ) -> Sequence[AIAnalysis]:
+        """`timeframe` (docs/52 §2, added for AI Chat's "latest analysis
+        for this asset/timeframe" grounding lookup) is additive - every
+        existing caller omits it and gets the prior unfiltered behavior."""
         query = select(AIAnalysis)
         if asset_id is not None:
             query = query.where(AIAnalysis.asset_id == asset_id)
+        if timeframe is not None:
+            query = query.where(AIAnalysis.timeframe == timeframe)
         query = query.order_by(AIAnalysis.created_at.desc()).offset(offset).limit(limit)
         return self.session.execute(query).scalars().all()
 
-    def count_filtered(self, *, asset_id: uuid.UUID | None = None) -> int:
+    def count_filtered(
+        self, *, asset_id: uuid.UUID | None = None, timeframe: Timeframe | None = None
+    ) -> int:
         query = select(AIAnalysis)
         if asset_id is not None:
             query = query.where(AIAnalysis.asset_id == asset_id)
+        if timeframe is not None:
+            query = query.where(AIAnalysis.timeframe == timeframe)
         return self._count(query)

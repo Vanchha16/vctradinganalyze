@@ -591,6 +591,64 @@ Unique constraint: `(user_id, signal_id)`.
 
 ---
 
+# 11A. AI Chat Assistant
+
+Phase 6C (docs/52_AI_CHAT_ARCHITECTURE.md, ADR-096). Inferred - not in this document's original schema.
+
+## conversations
+
+`TimestampMixin` (not `CreatedAtMixin` - `title`/`current_symbol`/`current_timeframe`/`status` all mutate after creation).
+
+Fields:
+
+id
+
+user_id
+
+title (nullable, auto-derived from the first user message)
+
+current_symbol (nullable - mutable "current focus," docs/52 §5/ADR-095)
+
+current_timeframe (nullable)
+
+status (`active` / `archived`, ADR-097)
+
+created_at
+
+updated_at
+
+---
+
+## messages
+
+`CreatedAtMixin` (append-only - a sent message is never edited).
+
+Fields:
+
+id
+
+conversation_id
+
+role (`user` / `assistant`)
+
+content
+
+symbol (nullable - this message's own immutable "referenced" scope, ADR-095)
+
+timeframe (nullable)
+
+ai_analysis_id (nullable, `ON DELETE SET NULL` - the analysis this reply grounded itself in, if any)
+
+signal_id (nullable, `ON DELETE SET NULL` - the signal this reply grounded itself in, if any)
+
+model_name (nullable, `null` for `user` rows)
+
+prompt_version (nullable, `null` for `user` rows - mirrors `ai_analysis.prompt_version`, ADR-018)
+
+created_at
+
+---
+
 # 12. User Watchlists
 
 ## watchlists

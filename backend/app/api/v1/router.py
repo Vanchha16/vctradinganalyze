@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1.routes import (
     ai_analysis,
+    ai_chat,
     analysis_confidence,
     auth,
     economic_calendar,
@@ -30,3 +31,4 @@ api_router.include_router(risk_management.router)
 api_router.include_router(strategy.router)
 api_router.include_router(ai_analysis.router)
 api_router.include_router(signals.router)
+api_router.include_router(ai_chat.router)

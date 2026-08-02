@@ -815,6 +815,88 @@ Out of scope for Phase 6B: autonomous trading or broker execution; live price-mo
 
 ---
 
+# AI Chat
+
+Phase 6C (docs/52_AI_CHAT_ARCHITECTURE.md, ADR-092 through ADR-098). `AIChatEngine` is a thin conversational/persistence layer over Phase 4-6B - it computes no new recommendation, confidence, or evidence of its own (ADR-093/094). **Requires authentication** on every route - conversations are private per-user data, and generating a reply calls the same metered LLM provider as Phase 6A (ADR-083's cost rationale extended here).
+
+POST /chat/conversations
+
+Create a conversation, optionally seeded with a starting `symbol`/`timeframe` (both optional).
+
+Request
+
+{ "symbol": "EURUSD", "timeframe": "h1" }
+
+Response
+
+{
+  "id": "3f7e2b1a-9c4d-4e5f-8a6b-1d2c3e4f5a6b",
+  "title": null,
+  "current_symbol": "EURUSD",
+  "current_timeframe": "h1",
+  "status": "active",
+  "created_at": "2026-08-02T12:00:00Z",
+  "updated_at": "2026-08-02T12:00:00Z"
+}
+
+---
+
+GET /chat/conversations?status=&page=&limit=
+
+The current user's conversations, paginated. `status` defaults to `active` (excludes archived conversations, ADR-097).
+
+Response: `{ "items": [...same shape as above...], "page", "limit", "total" }`
+
+---
+
+GET /chat/conversations/{id}
+
+Conversation detail, including its full message transcript (chronological, oldest first). 404 if unknown or not owned by the current user.
+
+---
+
+POST /chat/conversations/{id}/messages
+
+Send a message; returns the assistant's reply. `symbol`/`timeframe` are optional - omitted, the conversation's current values (`current_symbol`/`current_timeframe`) are used; if neither is ever set, the question is treated as general/educational, with no market grounding (ADR-095). Symbols are **client-supplied, never parsed from free text** - no NLP entity-extraction component exists in this project (ADR-095).
+
+Request
+
+{ "content": "Why is this a BUY?", "symbol": "EURUSD", "timeframe": "h1" }
+
+Response
+
+{
+  "conversation": { "...same shape as POST /chat/conversations..." },
+  "user_message": { "id": "...", "role": "user", "content": "Why is this a BUY?", "symbol": "EURUSD", "timeframe": "h1" },
+  "assistant_message": {
+    "id": "...", "role": "assistant",
+    "content": "The current recommendation is BUY because...",
+    "symbol": "EURUSD", "timeframe": "h1",
+    "ai_analysis_id": "8ddb570a-457b-4ca7-87fb-df740998cc2f",
+    "signal_id": null,
+    "model_name": "gpt-4o-mini"
+  },
+  "warnings": []
+}
+
+`ai_analysis_id`/`signal_id` are populated only when the reply grounded itself in a persisted `ai_analysis`/`signals` row (ADR-094) - the assistant never computes a new recommendation itself; if no persisted row exists yet for the resolved asset/timeframe, it states that explicitly rather than guessing. 404 if the resolved symbol is unknown, or if the conversation id is unknown/not owned by the current user.
+
+---
+
+POST /chat/conversations/{id}/archive
+
+Soft-archive (`status=archived`) - excluded from `GET /chat/conversations`' default listing, still retrievable by id (ADR-097).
+
+---
+
+DELETE /chat/conversations/{id}
+
+204 No Content. Hard delete, cascading every message (ADR-097) - distinct from archive; conversations are private user data a user may genuinely remove.
+
+Out of scope for Phase 6C: NLP symbol extraction from free text; multi-asset comparison ("Compare Gold and Silver"); feedback rating (`Helpful`/`Not Helpful`/`Report Issue`, docs/22 §15); "Question Type"/"Engines Used" classification logging (docs/22 §14, ADR-098); voice/chart-screenshot/PDF/multi-language/portfolio features (docs/22 §18); response caching; real rate-limiting/quota infrastructure beyond authentication.
+
+---
+
 # Watchlists
 
 GET /watchlists

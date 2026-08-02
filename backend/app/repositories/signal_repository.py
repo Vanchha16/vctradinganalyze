@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 from sqlalchemy import select
 
-from app.models.enums import SignalStatus
+from app.models.enums import SignalStatus, Timeframe
 from app.models.signal import Signal
 from app.repositories.base import BaseRepository
 
@@ -23,24 +23,36 @@ class SignalRepository(BaseRepository[Signal]):
         self,
         *,
         asset_id: uuid.UUID | None = None,
+        timeframe: Timeframe | None = None,
         status: SignalStatus | None = None,
         offset: int = 0,
         limit: int = 20,
     ) -> Sequence[Signal]:
+        """`timeframe` (docs/52 §2, added for AI Chat's "latest signal for
+        this asset/timeframe" grounding lookup) is additive - every
+        existing caller omits it and gets the prior unfiltered behavior."""
         query = select(Signal)
         if asset_id is not None:
             query = query.where(Signal.asset_id == asset_id)
+        if timeframe is not None:
+            query = query.where(Signal.timeframe == timeframe)
         if status is not None:
             query = query.where(Signal.status == status)
         query = query.order_by(Signal.created_at.desc()).offset(offset).limit(limit)
         return self.session.execute(query).scalars().all()
 
     def count_filtered(
-        self, *, asset_id: uuid.UUID | None = None, status: SignalStatus | None = None
+        self,
+        *,
+        asset_id: uuid.UUID | None = None,
+        timeframe: Timeframe | None = None,
+        status: SignalStatus | None = None,
     ) -> int:
         query = select(Signal)
         if asset_id is not None:
             query = query.where(Signal.asset_id == asset_id)
+        if timeframe is not None:
+            query = query.where(Signal.timeframe == timeframe)
         if status is not None:
             query = query.where(Signal.status == status)
         return self._count(query)

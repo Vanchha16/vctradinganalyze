@@ -25,11 +25,13 @@ from app.models.asset import Asset
 from app.models.enums import MarketType, Recommendation, Timeframe, UserRole
 from app.models.signal import Signal
 from app.models.signal_bookmark import SignalBookmark
+from app.models.telegram_account import TelegramAccount
 from app.models.user import User
 from app.services.ai_orchestrator.types import AIAnalysisResult, ReasoningSections
 
 _TABLES = [
     User.__table__,
+    TelegramAccount.__table__,
     Asset.__table__,
     AIAnalysis.__table__,
     Signal.__table__,

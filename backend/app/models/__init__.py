@@ -34,6 +34,7 @@ from app.models.signal_bookmark import SignalBookmark
 from app.models.smc_event import SMCEvent
 from app.models.smc_processing_state import SMCProcessingState
 from app.models.system_setting import SystemSetting
+from app.models.telegram_account import TelegramAccount
 from app.models.user import User
 from app.models.user_session import UserSession
 
@@ -70,6 +71,7 @@ __all__ = [
     "SignalStatus",
     "SignalType",
     "SystemSetting",
+    "TelegramAccount",
     "Timeframe",
     "User",
     "UserRole",

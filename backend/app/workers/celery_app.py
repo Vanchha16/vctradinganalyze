@@ -20,10 +20,14 @@ from app.workers import (  # noqa: E402
     economic_calendar_tasks,
     market_data_tasks,
     news_sentiment_tasks,
+    signal_tasks,
+    telegram_tasks,
 )
 
 celery_app.conf.beat_schedule = {
     **market_data_tasks.register_market_data_schedule(),
     **news_sentiment_tasks.register_news_schedule(),
     **economic_calendar_tasks.register_economic_calendar_schedule(),
+    **signal_tasks.register_signal_schedule(),
+    **telegram_tasks.register_telegram_schedule(),
 }

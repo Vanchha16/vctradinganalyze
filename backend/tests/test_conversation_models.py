@@ -20,6 +20,7 @@ from app.models.enums import (
 from app.models.message import Message
 from app.models.oauth_account import OAuthAccount
 from app.models.signal import Signal
+from app.models.telegram_account import TelegramAccount
 from app.models.user import User
 from app.models.user_session import UserSession
 
@@ -27,6 +28,7 @@ _TABLES = [
     User.__table__,
     UserSession.__table__,
     OAuthAccount.__table__,
+    TelegramAccount.__table__,
     Asset.__table__,
     AIAnalysis.__table__,
     Signal.__table__,

@@ -11,6 +11,7 @@ from app.models.enums import UserRole
 
 if TYPE_CHECKING:
     from app.models.oauth_account import OAuthAccount
+    from app.models.telegram_account import TelegramAccount
     from app.models.user_session import UserSession
 
 
@@ -43,4 +44,7 @@ class User(Base, UUIDMixin, TimestampMixin):
     )
     oauth_accounts: Mapped[list["OAuthAccount"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
+    )
+    telegram_account: Mapped["TelegramAccount | None"] = relationship(
+        back_populates="user", cascade="all, delete-orphan", uselist=False
     )

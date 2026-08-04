@@ -15,6 +15,7 @@ from app.api.v1.routes import (
     smc,
     strategy,
     technical_analysis,
+    telegram,
 )
 
 api_router = APIRouter()
@@ -32,3 +33,4 @@ api_router.include_router(strategy.router)
 api_router.include_router(ai_analysis.router)
 api_router.include_router(signals.router)
 api_router.include_router(ai_chat.router)
+api_router.include_router(telegram.router)

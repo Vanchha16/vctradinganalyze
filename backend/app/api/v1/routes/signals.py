@@ -82,6 +82,15 @@ async def generate_signal(
     `POST /analysis/ai/{symbol}`'s pattern. `signal` is `null` when the
     underlying recommendation is WAIT (ADR-086)."""
     result = engine.generate(asset, timeframe)
+    if result.signal is not None:
+        # docs/57 §5 - the same delivery hook the automatic
+        # `signals.generate_for_watchlist` task uses, fired here too so
+        # manually-generated signals also reach linked Telegram accounts.
+        # Best-effort: a broker outage must not fail this response, the
+        # signal above is already persisted.
+        from app.workers.telegram_tasks import enqueue_signal_delivery
+
+        enqueue_signal_delivery(str(result.signal.id))
     return _generation_result_to_response(result, asset.symbol)
 
 

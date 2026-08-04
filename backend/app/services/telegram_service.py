@@ -1,34 +1,30 @@
-import re
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
-from app.models.enums import SignalType
 from app.models.signal import Signal
 from app.models.telegram_account import TelegramAccount
 from app.repositories.telegram_account_repository import TelegramAccountRepository
+from app.services.telegram.message_sections import (
+    compose_signal_message,
+    compose_signal_outcome_message,
+    escape_markdown_v2,
+)
 from app.services.telegram.providers.base import TelegramProvider
 
 _LINK_CODE_BYTES = 16
 _LINK_CODE_TTL_MINUTES = 10
 
-# MarkdownV2 requires escaping these literal characters outside of an
-# already-applied entity (docs/57 §6) - values interpolated into the
-# signal message (symbol, price strings, evidence bullets) are free text
-# from elsewhere in the system and must be escaped before sending.
-_MARKDOWN_V2_SPECIAL_CHARS = r"_*[]()~`>#+-=|{}.!"
-
-
-def escape_markdown_v2(text: str) -> str:
-    return re.sub(f"([{re.escape(_MARKDOWN_V2_SPECIAL_CHARS)}])", r"\\\1", text)
+__all__ = ["TelegramService", "escape_markdown_v2"]
 
 
 class TelegramService:
     """Account linking + message rendering (docs/57 §3/§6). No new
     decision/scoring logic - every value rendered into a message is read
-    verbatim from an already-persisted `Signal`/`AIAnalysis` row."""
+    verbatim from an already-persisted `Signal`/`AIAnalysis` row (message
+    composition itself lives in `telegram.message_sections`)."""
 
     def __init__(
         self, account_repository: TelegramAccountRepository, provider: TelegramProvider
@@ -84,36 +80,23 @@ class TelegramService:
     def linked_accounts(self) -> list[TelegramAccount]:
         return self._account_repository.list_linked()
 
-    def send_signal(self, signal: Signal, analysis: AIAnalysis, asset: Asset) -> None:
+    def send_signal(
+        self, signal: Signal, analysis: AIAnalysis, asset: Asset, *, now: datetime | None = None
+    ) -> None:
         """Broadcasts one Signal to every linked account (ADR-113 - no
         per-user filtering yet)."""
-        text = self._render_signal_message(signal, analysis, asset)
+        text = compose_signal_message(signal, analysis, asset, now=now or datetime.now(UTC))
         for account in self.linked_accounts():
             if account.telegram_chat_id is None:
                 continue
             self._provider.send_message(account.telegram_chat_id, text)
 
-    def _render_signal_message(self, signal: Signal, analysis: AIAnalysis, asset: Asset) -> str:
-        """docs/57 §6's verbatim template."""
-        direction_emoji = "\U0001f4c8" if signal.signal_type == SignalType.BUY else "\U0001f4c9"
-        direction = escape_markdown_v2(signal.signal_type.value.upper())
-        symbol = escape_markdown_v2(asset.symbol)
-
-        lines = [
-            f"{direction_emoji} *{direction} {symbol}*",
-            "",
-            f"Confidence: {escape_markdown_v2(f'{signal.confidence:.0f}%')}",
-            f"Entry: {escape_markdown_v2(str(signal.entry_price))}",
-            f"Stop Loss: {escape_markdown_v2(str(signal.stop_loss))}",
-            f"Take Profit: {escape_markdown_v2(str(signal.take_profit))}",
-        ]
-        if analysis.risk_level:
-            lines.append(f"Risk: {escape_markdown_v2(analysis.risk_level.title())}")
-
-        evidence = analysis.supporting_evidence[:3]
-        if evidence:
-            lines.append("")
-            lines.append("Reason:")
-            lines.extend(f"• {escape_markdown_v2(item)}" for item in evidence)
-
-        return "\n".join(lines)
+    def send_outcome(self, signal: Signal, asset: Asset, *, now: datetime | None = None) -> None:
+        """Broadcasts a TP/SL-hit follow-up for a `signal` already
+        transitioned to `SUCCESSFUL`/`STOPPED_OUT` by
+        `signal_monitoring_tasks.monitor_active_signals_task`."""
+        text = compose_signal_outcome_message(signal, asset, now=now or datetime.now(UTC))
+        for account in self.linked_accounts():
+            if account.telegram_chat_id is None:
+                continue
+            self._provider.send_message(account.telegram_chat_id, text)

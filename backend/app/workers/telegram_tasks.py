@@ -66,8 +66,7 @@ def send_signal_telegram_task(signal_id: str) -> None:
     `signals.generate_for_watchlist` task."""
     session = SessionLocal()
     try:
-        signal_repository = SignalRepository(session)
-        signal = signal_repository.get_by_id(uuid.UUID(signal_id))
+        signal = SignalRepository(session).get_by_id(uuid.UUID(signal_id))
         if signal is None:
             return
 
@@ -83,6 +82,43 @@ def send_signal_telegram_task(signal_id: str) -> None:
         telegram_service.send_signal(signal, analysis, asset)
     finally:
         session.close()
+
+
+@celery_app.task(name="telegram.send_signal_outcome", ignore_result=True)  # type: ignore[untyped-decorator]
+def send_signal_outcome_telegram_task(signal_id: str) -> None:
+    """TP/SL-hit follow-up delivery hook, called by
+    `signal_monitoring_tasks.monitor_active_signals_task` once it flips a
+    signal to `SUCCESSFUL`/`STOPPED_OUT` (docs/51 §10)."""
+    session = SessionLocal()
+    try:
+        signal = SignalRepository(session).get_by_id(uuid.UUID(signal_id))
+        if signal is None:
+            return
+
+        asset = AssetRepository(session).get_by_id(signal.asset_id)
+        if asset is None:
+            return
+
+        telegram_service = TelegramService(
+            account_repository=TelegramAccountRepository(session),
+            provider=get_telegram_provider(),
+        )
+        telegram_service.send_outcome(signal, asset)
+    finally:
+        session.close()
+
+
+def enqueue_signal_outcome_delivery(signal_id: str) -> None:
+    """Best-effort enqueue of `send_signal_outcome_telegram_task` - same
+    "log and move on" reasoning as `enqueue_signal_delivery`: the signal's
+    status has already been persisted as closed by the time this runs, a
+    broker outage here must never roll that back."""
+    try:
+        send_signal_outcome_telegram_task.delay(signal_id)
+    except Exception:
+        logger.warning(
+            "telegram_signal_outcome_delivery_enqueue_failed", signal_id=signal_id, exc_info=True
+        )
 
 
 def enqueue_signal_delivery(signal_id: str) -> None:

@@ -45,11 +45,18 @@ export function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-2 px-2">
-          <Avatar className="h-7 w-7">
-            <AvatarFallback>{initials(user.username)}</AvatarFallback>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2 rounded-lg border-border bg-surface py-1 pl-1 pr-2.5 hover:bg-surface-2"
+          aria-label={`Account menu for ${user.username}`}
+        >
+          <Avatar className="size-6">
+            <AvatarFallback className="bg-gradient-brand text-[10px] font-bold text-primary-foreground">
+              {initials(user.username)}
+            </AvatarFallback>
           </Avatar>
-          <span className="hidden text-sm font-medium sm:inline">{user.username}</span>
+          <span className="hidden text-[11px] font-medium sm:inline">{user.username}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">

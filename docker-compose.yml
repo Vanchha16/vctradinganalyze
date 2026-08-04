@@ -53,6 +53,23 @@ services:
       redis:
         condition: service_healthy
 
+  beat:
+    build: ./backend
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
+    environment:
+      APP_NAME: ${APP_NAME:-ClaudeTradingAI}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://claudetrading_user:change-me@db:5432/claudetrading}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   db:
     image: postgres:17-alpine
     restart: unless-stopped

@@ -103,8 +103,12 @@ export function apiGet<T>(path: string, params?: Record<string, string | undefin
   return request<T>("GET", path, { params });
 }
 
-export function apiPost<T>(path: string, body?: unknown): Promise<T> {
-  return request<T>("POST", path, { body });
+export function apiPost<T>(
+  path: string,
+  body?: unknown,
+  params?: Record<string, string | undefined>,
+): Promise<T> {
+  return request<T>("POST", path, { body, params });
 }
 
 export function apiDelete<T = void>(path: string): Promise<T> {

@@ -3,46 +3,113 @@
 @tailwind utilities;
 
 @layer base {
-  /* Light mode - docs/05_FRONTEND_GUIDELINES.md §4's brand accents (primary/
-     destructive) applied to shadcn's default light-neutral scale, since the
-     spec only names one (dark-first) set of neutrals. */
+  /* Premium design system tokens, ported from the reference UI
+     (https://alpha-trader-ai-42.lovable.app) - OKLCH throughout. Dark is
+     the default/primary theme; `.light` is a secondary override. Variable
+     names match the reference 1:1 so future page ports can reuse its
+     component code with minimal translation. */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --border: 214.3 31.8% 91.4%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 210 40% 98%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --ring: 217 91% 60%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --radius: 0.75rem;
+    --background: oklch(0.16 0.012 265);
+    --foreground: oklch(0.97 0.004 260);
+    --card: oklch(0.196 0.013 265);
+    --card-foreground: oklch(0.97 0.004 260);
+    --surface: oklch(0.215 0.014 265);
+    --surface-2: oklch(0.245 0.015 265);
+    --popover: oklch(0.205 0.014 265);
+    --popover-foreground: oklch(0.97 0.004 260);
+    --primary: oklch(0.64 0.19 267);
+    --primary-foreground: oklch(0.98 0.005 265);
+    --brand: oklch(0.64 0.19 267);
+    --brand-foreground: oklch(0.98 0.005 265);
+    --secondary: oklch(0.25 0.015 265);
+    --secondary-foreground: oklch(0.96 0.004 260);
+    --muted: oklch(0.245 0.014 265);
+    --muted-foreground: oklch(0.68 0.017 262);
+    --accent: oklch(0.27 0.018 265);
+    --accent-foreground: oklch(0.97 0.004 260);
+    --destructive: oklch(0.63 0.2 22);
+    --destructive-foreground: oklch(0.98 0.005 260);
+    --bull: oklch(0.76 0.17 158);
+    --bear: oklch(0.66 0.2 20);
+    --warn: oklch(0.82 0.15 85);
+    --info: oklch(0.7 0.14 220);
+    /* success/warning kept as aliases of bull/warn so every existing
+       Badge/lib/badge-variants.ts call site inherits the new palette
+       with zero call-site changes. */
+    --success: var(--bull);
+    --success-foreground: oklch(0.16 0.03 158);
+    --warning: var(--warn);
+    --warning-foreground: oklch(0.16 0.03 85);
+    --border: oklch(0.99 0 0 / 9%);
+    --input: oklch(0.99 0 0 / 13%);
+    --ring: oklch(0.64 0.19 267 / 60%);
+    --chart-1: oklch(0.64 0.19 267);
+    --chart-2: oklch(0.76 0.17 158);
+    --chart-3: oklch(0.7 0.14 220);
+    --chart-4: oklch(0.66 0.2 20);
+    --chart-5: oklch(0.7 0.16 295);
+    --sidebar: oklch(0.178 0.012 265);
+    --sidebar-foreground: oklch(0.93 0.005 260);
+    --sidebar-primary: oklch(0.64 0.19 267);
+    --sidebar-primary-foreground: oklch(0.98 0.005 265);
+    --sidebar-accent: oklch(0.245 0.015 265);
+    --sidebar-accent-foreground: oklch(0.97 0.004 260);
+    --sidebar-border: oklch(0.99 0 0 / 8%);
+    --sidebar-ring: oklch(0.64 0.19 267 / 50%);
+
+    --gradient-brand: linear-gradient(135deg, oklch(0.68 0.18 264), oklch(0.56 0.2 292));
+    --gradient-surface: linear-gradient(160deg, oklch(0.235 0.015 265 / 90%), oklch(0.185 0.012 265 / 90%));
+    --gradient-glow: radial-gradient(60% 80% at 50% 0%, oklch(0.64 0.19 267 / 20%), transparent 70%);
+    --shadow-card: 0 1px 0 0 oklch(1 0 0 / 6%) inset, 0 18px 40px -24px oklch(0 0 0 / 80%);
+    --shadow-lift: 0 1px 0 0 oklch(1 0 0 / 8%) inset, 0 30px 60px -28px oklch(0 0 0 / 90%);
+    --shadow-glow: 0 0 0 1px oklch(0.64 0.19 267 / 32%), 0 20px 50px -24px oklch(0.64 0.19 267 / 62%);
   }
 
-  /* Dark mode - docs/05_FRONTEND_GUIDELINES.md §4's palette verbatim
-     (Background #0B1220, Card #111827, Border #1F2937, Text Primary
-     #F9FAFB, Text Secondary #9CA3AF, Primary #3B82F6, Danger #EF4444),
-     converted to HSL. The default theme (ADR-102, docs/05 §3 "dark mode
-     first"). */
+  .light {
+    --background: oklch(0.985 0.003 265);
+    --foreground: oklch(0.2 0.02 265);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.2 0.02 265);
+    --surface: oklch(0.975 0.004 265);
+    --surface-2: oklch(0.95 0.006 265);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.2 0.02 265);
+    --primary: oklch(0.54 0.2 267);
+    --primary-foreground: oklch(0.99 0.002 265);
+    --brand: oklch(0.54 0.2 267);
+    --brand-foreground: oklch(0.99 0.002 265);
+    --secondary: oklch(0.95 0.006 265);
+    --secondary-foreground: oklch(0.2 0.02 265);
+    --muted: oklch(0.955 0.005 265);
+    --muted-foreground: oklch(0.5 0.02 265);
+    --accent: oklch(0.95 0.006 265);
+    --accent-foreground: oklch(0.2 0.02 265);
+    --info: oklch(0.58 0.14 220);
+    --border: oklch(0.2 0.02 265 / 10%);
+    --input: oklch(0.2 0.02 265 / 14%);
+    --ring: oklch(0.54 0.2 267 / 55%);
+    --chart-1: oklch(0.54 0.2 267);
+    --chart-3: oklch(0.58 0.14 220);
+    --chart-5: oklch(0.58 0.17 295);
+    --sidebar: oklch(0.98 0.003 265);
+    --sidebar-foreground: oklch(0.2 0.02 265);
+    --sidebar-primary: oklch(0.54 0.2 267);
+    --sidebar-accent: oklch(0.94 0.006 265);
+    --sidebar-border: oklch(0.2 0.02 265 / 10%);
+    --gradient-surface: linear-gradient(160deg, oklch(1 0 0 / 96%), oklch(0.975 0.004 265 / 96%));
+    --gradient-glow: radial-gradient(60% 80% at 50% 0%, oklch(0.54 0.2 267 / 10%), transparent 70%);
+    --shadow-card: 0 1px 0 0 oklch(1 0 0 / 60%) inset, 0 12px 30px -22px oklch(0.2 0.05 265 / 45%);
+    --shadow-lift: 0 1px 0 0 oklch(1 0 0 / 70%) inset, 0 22px 44px -26px oklch(0.2 0.05 265 / 55%);
+    --shadow-glow: 0 0 0 1px oklch(0.54 0.2 267 / 26%), 0 18px 44px -26px oklch(0.54 0.2 267 / 45%);
+  }
+
+  /* Legacy alias retained: next-themes toggles the `dark` class by
+     default; the token system above is dark-first under `:root`, so
+     `.dark` is a no-op scope kept only so existing `dark:` variants (if
+     any) keep resolving. */
   .dark {
-    --background: 220 49% 8%;
-    --foreground: 210 20% 98%;
-    --border: 215 28% 17%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 210 20% 98%;
-    --muted: 221 39% 14%;
-    --muted-foreground: 218 11% 65%;
-    --ring: 217 91% 60%;
-    --card: 221 39% 11%;
-    --card-foreground: 210 20% 98%;
-    --secondary: 221 39% 14%;
-    --secondary-foreground: 210 20% 98%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 20% 98%;
+    color-scheme: dark;
   }
 
   * {
@@ -51,5 +118,131 @@
 
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: oklch(0.64 0.19 267 / 30%);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface-2);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: color-mix(in oklab, var(--card) 65%, transparent);
+    backdrop-filter: blur(18px) saturate(140%);
+  }
+
+  .card-premium {
+    background-image: var(--gradient-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl, calc(var(--radius) + 4px));
+    box-shadow: var(--shadow-card);
+  }
+
+  .text-gradient {
+    background: var(--gradient-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background: var(--surface);
+    border-radius: calc(var(--radius) - 2px);
+  }
+
+  .focus-ring:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
+  }
+
+  .animate-rise {
+    animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-marquee {
+    animation: marquee 40s linear infinite;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee,
+  .animate-rise,
+  .skeleton > * {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }

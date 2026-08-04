@@ -322,3 +322,297 @@ export interface MarketRegimeResponse {
   warnings: string[];
   calculated_at: string;
 }
+
+// ---- Market Data extras (docs/04 §Market Data) ----
+
+export interface LatestCandleResponse {
+  timestamp: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+}
+
+export interface CandleListResponse {
+  symbol: string;
+  timeframe: Timeframe;
+  items: LatestCandleResponse[];
+}
+
+export interface IndicatorResultResponse {
+  indicator: string;
+  value: string;
+  metadata: Record<string, unknown> | null;
+  calculated_at: string;
+}
+
+export interface IndicatorListResponse {
+  symbol: string;
+  timeframe: Timeframe;
+  items: IndicatorResultResponse[];
+}
+
+// ---- AI Analysis (docs/04 §AI Analysis, docs/50) ----
+
+export type Recommendation = "buy" | "sell" | "wait";
+
+export interface ReasoningResponse {
+  summary: string;
+  technical: string;
+  smc: string;
+  economic: string;
+  news: string;
+  risk: string;
+  conclusion: string;
+}
+
+export interface AIAnalysisResponse {
+  id: string;
+  symbol: string;
+  timeframe: Timeframe;
+  recommendation: Recommendation;
+  confidence_score: number;
+  confidence_level: string;
+  risk_level: string | null;
+  entry_price: string | null;
+  stop_loss: string | null;
+  take_profit: string | null;
+  execution_guidance: string | null;
+  reasoning: ReasoningResponse;
+  supporting_evidence: string[];
+  conflicting_evidence: string[];
+  risks: string[];
+  invalidation_conditions: string[];
+  model_name: string;
+  prompt_version: string;
+  ai_available: boolean;
+  warnings: string[];
+  calculated_at: string;
+}
+
+export interface AIAnalysisListResponse {
+  items: AIAnalysisResponse[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+// ---- Signals (docs/04 §Signals, docs/51) ----
+
+export type SignalType = "buy" | "sell";
+
+export type SignalStatus =
+  | "draft"
+  | "active"
+  | "triggered"
+  | "expired"
+  | "cancelled"
+  | "closed"
+  | "successful"
+  | "stopped_out";
+
+export interface SignalResponse {
+  id: string;
+  analysis_id: string;
+  symbol: string;
+  timeframe: Timeframe;
+  signal_type: SignalType;
+  entry_price: string;
+  stop_loss: string;
+  take_profit: string;
+  risk_reward: number;
+  confidence: number;
+  status: SignalStatus;
+  triggered_at: string | null;
+  closed_at: string | null;
+  profit_loss: string | null;
+  created_at: string;
+}
+
+export interface SignalListResponse {
+  items: SignalResponse[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export interface SignalGenerationResponse {
+  analysis_id: string;
+  symbol: string;
+  timeframe: Timeframe;
+  recommendation: Recommendation;
+  signal: SignalResponse | null;
+}
+
+export interface BookmarkResponse {
+  id: string;
+  signal_id: string;
+  created_at: string;
+}
+
+// ---- News (docs/04 §News) ----
+
+export type NewsCategory =
+  | "central_bank"
+  | "inflation"
+  | "employment"
+  | "gdp"
+  | "interest_rates"
+  | "politics"
+  | "war"
+  | "energy"
+  | "commodities"
+  | "crypto"
+  | "regulation"
+  | "corporate_earnings"
+  | "breaking_news";
+
+export type NewsImportance = "critical" | "high" | "medium" | "low" | "ignore";
+
+export type NewsSentimentLabel = "very_bullish" | "bullish" | "neutral" | "bearish" | "very_bearish";
+
+export interface NewsArticleListItemResponse {
+  id: string;
+  source: string;
+  title: string;
+  summary: string | null;
+  category: NewsCategory;
+  importance: NewsImportance;
+  published_at: string;
+  sentiment: NewsSentimentLabel | null;
+  confidence: number | null;
+}
+
+export interface NewsArticleListResponse {
+  items: NewsArticleListItemResponse[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export interface NewsSentimentDetailResponse {
+  sentiment: NewsSentimentLabel;
+  confidence: number;
+  reason: string;
+  affected_assets: string[];
+  ai_summary: string | null;
+}
+
+export interface NewsArticleDetailResponse {
+  id: string;
+  source: string;
+  title: string;
+  summary: string | null;
+  content: string | null;
+  url: string;
+  category: NewsCategory;
+  importance: NewsImportance;
+  published_at: string;
+  sentiment: NewsSentimentDetailResponse | null;
+}
+
+// ---- Economic Calendar (docs/04 §Economic Calendar) ----
+
+export type EconomicEventCategory =
+  | "inflation"
+  | "employment"
+  | "growth"
+  | "central_bank"
+  | "consumer"
+  | "housing"
+  | "other";
+
+export type EconomicEventImportance = "critical" | "high" | "medium" | "low";
+
+export type EconomicEventStatus = "scheduled" | "released" | "revised" | "cancelled";
+
+export type MarketBias = "potentially_bullish" | "potentially_bearish" | "neutral";
+
+export interface EconomicEventResponse {
+  id: string;
+  country: string;
+  currency: string;
+  event_name: string;
+  category: EconomicEventCategory;
+  importance: EconomicEventImportance;
+  forecast: string | null;
+  previous: string | null;
+  actual: string | null;
+  surprise: string | null;
+  unit: string | null;
+  status: EconomicEventStatus;
+  source: string;
+  release_time: string;
+  risk_window: boolean;
+  market_bias: Record<string, MarketBias> | null;
+}
+
+export interface EconomicEventListResponse {
+  items: EconomicEventResponse[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export interface EconomicEventUpcomingResponse {
+  items: EconomicEventResponse[];
+}
+
+// ---- AI Chat (docs/04 §AI Chat, docs/52) ----
+
+export type ConversationStatus = "active" | "archived";
+
+export type MessageRole = "user" | "assistant";
+
+export interface ConversationResponse {
+  id: string;
+  title: string | null;
+  current_symbol: string | null;
+  current_timeframe: Timeframe | null;
+  status: ConversationStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MessageResponse {
+  id: string;
+  conversation_id: string;
+  role: MessageRole;
+  content: string;
+  symbol: string | null;
+  timeframe: Timeframe | null;
+  ai_analysis_id: string | null;
+  signal_id: string | null;
+  model_name: string | null;
+  created_at: string;
+}
+
+export interface ConversationDetailResponse extends ConversationResponse {
+  messages: MessageResponse[];
+}
+
+export interface ConversationListResponse {
+  items: ConversationResponse[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export interface CreateConversationRequest {
+  symbol?: string;
+  timeframe?: Timeframe;
+}
+
+export interface SendMessageRequest {
+  content: string;
+  symbol?: string;
+  timeframe?: Timeframe;
+}
+
+export interface SendMessageResponse {
+  conversation: ConversationResponse;
+  user_message: MessageResponse;
+  assistant_message: MessageResponse;
+  warnings: string[];
+}

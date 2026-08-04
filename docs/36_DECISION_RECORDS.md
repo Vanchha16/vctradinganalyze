@@ -4528,6 +4528,509 @@ None expected - this is the stack every future frontend phase builds on.
 
 ---
 
+# ADR-103
+
+Title
+
+Watchlists Ships as a Coming-Soon Placeholder - No Backend Exists
+
+Status
+
+Accepted
+
+Context
+
+Phase 7B's brief lists Watchlists among the ten pages to build. `docs/04_API_SPECIFICATION.md`'s Watchlists section (`GET/POST/PUT/DELETE /watchlists`, `POST/DELETE /watchlists/{id}/assets`) is a bare stub - unlike every implemented section, it has zero request/response shape documented. No model, table, repository, service, or route exists anywhere in the backend (confirmed against `app/api/v1/router.py` and `docs/03_DATABASE_DESIGN.md`) - this was never built in any prior phase, unlike `signals`/`ai_analysis`/`conversations`, which were each built in their own dedicated backend phase before a frontend page consumed them.
+
+Decision
+
+Add a real `/watchlists` nav item and route, but the page renders `EmptyState` ("Watchlists coming soon") with no functional CRUD - no fake data, no calls to a nonexistent endpoint, no client-side-only fake persistence.
+
+Reason
+
+Mirrors this project's `/forgot-password` stub precedent (ADR-100) and its project-wide "state what is missing, don't guess" principle (first established for AI Chat, ADR-094): omitting the nav item entirely would make the product feel incomplete in a way that contradicts "professional, production-quality" framing, but building fake functionality (e.g. persisting a watchlist to `localStorage` as a stand-in) would misrepresent a feature as real when no backend exists to make it durable, shareable across devices, or survive the pattern every other persisted entity in this project follows.
+
+Alternatives Considered
+
+Option A: Omit Watchlists from navigation entirely until a real backend exists - considered and available, but not chosen for 7B (see the architecture doc for the specific scope decision made).
+
+Option B (chosen): Coming-soon placeholder with a real nav item and route.
+
+Option C: Build a minimal `localStorage`-only "watchlist" as a client-side-only feature - rejected, creates a feature that looks identical to every other page but silently doesn't survive a cleared cache, a new device, or a new browser; indistinguishable from a real feature to the user until it unexpectedly fails, which is worse than an honest "coming soon."
+
+Trade-offs
+
+Pros
+
+Honest about the current limitation. Nav/IA stays complete per docs/05 §7 without inventing backend behavior.
+
+Cons
+
+A real page ships with zero functionality this phase - a genuine, acknowledged gap.
+
+Future Review
+
+Revisit once a dedicated Watchlists backend phase (model, table, repository, service, routes) is built - this needs its own documentation-first session, per every prior phase's practice, not a quiet frontend-only addition.
+
+---
+
+# ADR-104
+
+Title
+
+Profile Is Read-Only; Settings Repurposes Only Already-Existing Client-Side Capabilities
+
+Status
+
+Accepted
+
+Context
+
+`docs/04`'s Users section (`GET/PUT /users/profile`, `POST /users/avatar`, `DELETE /users/account`) is the same kind of bare, unimplemented stub as Watchlists (ADR-103) - only `GET /auth/me` (Phase 2C) actually exists and works, returning read-only account data already consumed by `useAuth()`. No user-level "settings" concept (notification preferences, trading preferences, etc.) exists anywhere in the backend - only `system_settings`, which is admin/system-level configuration, not per-user preferences.
+
+Decision
+
+`/profile` shows read-only account information (email, username, full name, role, verification status, member-since date) sourced from `GET /auth/me` - no edit form, no avatar upload. `/settings` contains only what already genuinely exists and works: an Appearance section (the dark/light/system theme picker already built in Phase 7A, relocated into a dedicated page in addition to its `UserMenu` entry), a read-only Account summary (reusing the same data as `/profile`), and a Logout action (reusing `useAuth().logout()`).
+
+Reason
+
+Same reasoning as ADR-103 - building edit forms whose submit button would either do nothing or silently fail against a nonexistent endpoint misrepresents working functionality, violating this project's "never invent, state what's missing" principle. Settings specifically avoids becoming an empty placeholder (unlike Watchlists) because genuine, already-built functionality (theming) has a natural home there that doesn't currently have a dedicated page - `UserMenu`'s theme toggle is a quick-access convenience, not this feature's canonical home.
+
+Alternatives Considered
+
+Option A: Build Profile with an edit form UI, disabled or with a "coming soon" toast on submit - rejected, indistinguishable at a glance from a working form, actively misleading rather than honestly absent (worse than Watchlists' EmptyState, which is unambiguous).
+
+Option B: Skip both pages entirely - considered and available; not chosen because Settings has genuine content to show (Appearance) even without new backend work, and Profile's read-only view is a real, low-cost, honest use of already-existing data (`GET /auth/me`).
+
+Option C (chosen): Profile read-only; Settings repurposes only what's already real.
+
+Trade-offs
+
+Pros
+
+Zero fabricated functionality. Settings gets genuine content (Appearance) without inventing backend work.
+
+Cons
+
+Neither page offers the editing capability a "Profile"/"Settings" page conventionally implies - a real, acknowledged gap versus a full account-management experience.
+
+Future Review
+
+Revisit both together once `PUT /users/profile`/`POST /users/avatar`/`DELETE /users/account` (or a genuine user-preferences backend) are built - that phase would add real edit forms to both pages, not replace them.
+
+---
+
+# ADR-105
+
+Title
+
+Trading Chart Scope: `lightweight-charts` Candlesticks + Support/Resistance + Order Block Overlays; Drawing Tools, Live Updates, and Fullscreen Deferred
+
+Status
+
+Accepted
+
+Context
+
+`docs/05_FRONTEND_GUIDELINES.md` §10 specifies a Trading Chart supporting Multi-Timeframe, Indicators, Drawing Tools, Fullscreen, Theme Sync, Live Updates, Signal Overlay, and SMC Overlay. Phase 7B's brief specifies using TradingView's `lightweight-charts` (the free, open-source library - distinct from `docs/05` §2's separately-listed "TradingView Advanced Charts," a licensed embed product requiring its own approval/hosting agreement, never installed or discussed as approved for use). `lightweight-charts` has no built-in drawing-tools UI. No live-price data source exists anywhere in this project - `docs/04`'s `/ws/prices` WebSocket endpoint is an unimplemented stub (tracked in BACKLOG.md §3 since Phase 3), so "Live Updates" would require inventing new backend streaming infrastructure, out of scope for a frontend phase.
+
+Decision
+
+`components/shared/price-chart.tsx` renders a `lightweight-charts` candlestick series from `GET /market/{symbol}/candles`, with a timeframe switcher and theme-sync (light/dark series colors matching `next-themes`' resolved theme). It additionally draws price-line overlays for Technical Analysis's support/resistance levels (`GET /analysis/technical/{symbol}`) and SMC's order block zones (`GET /analysis/smc/{symbol}`) - both already-available from existing endpoints, requiring no new backend work. Drawing tools, a fullscreen toggle, and live tick updates are not built this phase.
+
+Reason
+
+Support/resistance and order-block overlays are genuinely free - the data is already returned by endpoints this project has had since Phase 4A/4B, and rendering them as horizontal price lines is a `lightweight-charts` primitive with no new dependency or backend work. Drawing tools and live updates are not achievable without either a different (licensed) charting product or new backend streaming infrastructure - neither is something a "Dashboard & Core Pages" frontend phase should silently take on.
+
+Alternatives Considered
+
+Option A: Minimal candlestick chart only, no overlays - considered and available (would have been chosen had overlay data required new backend work); not chosen because the overlay data already exists and adds real value for a small, well-scoped addition.
+
+Option B (chosen): Candlesticks + timeframe switcher + S/R + Order Block overlays, explicitly deferring drawing tools/live updates/fullscreen.
+
+Option C: Attempt full `docs/05` §10 compliance now (drawing tools via a custom canvas layer, live updates via short-interval polling as a live-update substitute) - rejected; a hand-rolled drawing-tools UI is a substantial, undocumented feature investment beyond this phase's "core pages" framing, and polling every few seconds to fake "live" updates would need its own rate-limit/cost analysis against the market-data provider (`docs/40`'s quota-tracking concerns) not undertaken here.
+
+Trade-offs
+
+Pros
+
+Real, functioning chart with genuine SMC/Technical Analysis context, using only already-existing endpoints and one new, well-established open-source dependency.
+
+Cons
+
+`docs/05` §10's Drawing Tools/Fullscreen/Live Updates remain unimplemented - acknowledged gaps, not silently dropped.
+
+Future Review
+
+Revisit Live Updates once a real price-streaming backend exists (would need its own documentation-first session, mirroring every prior new-capability phase). Revisit Drawing Tools/Fullscreen as pure frontend polish once the base chart is proven in real use - no backend dependency blocks either, unlike Live Updates.
+
+---
+
+# ADR-106
+
+Title
+
+Dashboard Is Composed Client-Side from Existing Per-Domain Endpoints - `GET /dashboard` Stub Not Implemented
+
+Status
+
+Accepted
+
+Context
+
+`docs/04`'s Dashboard section (`GET /dashboard` returning Portfolio Summary/Latest Signals/Market Overview/Economic Calendar/Watchlist/News) is, like Watchlists and Users, a bare stub with no backend implementation and no route in `app/api/v1/router.py`. Every one of its constituent pieces, however, already has a real, working endpoint of its own: `GET /signals` (latest signals), `GET /calendar/upcoming` (economic events), `GET /news` (breaking news), `GET /assets` (market overview). Portfolio Summary and Watchlist depend on features that don't exist yet (no portfolio/position tracking anywhere in this project; Watchlists itself is a placeholder per ADR-103).
+
+Decision
+
+The Dashboard page fetches from each already-existing per-domain endpoint in parallel (mirrors the existing Phase 6 dev-dashboard's `Promise`-parallel pattern for Technical/SMC/Regime, and `ContextBuilder`'s "call each dependency once" backend precedent), composing the results into `docs/05` §9's widget layout (Market Overview, Latest Signals, Economic Events, Breaking News; AI Insights shows the most recent `GET /analysis/history` entries). Portfolio Summary and Watchlist widgets are omitted - not stubbed - since the former has no underlying feature anywhere in this project and the latter would just re-embed the Watchlists placeholder redundantly.
+
+Reason
+
+Building a real `POST/GET /dashboard` composite backend endpoint now would mean inventing new backend surface area for a frontend phase explicitly scoped to avoid backend changes - and would just re-fetch/re-combine data every one of its constituent endpoints already serves independently, duplicating logic for no benefit (the same reasoning this project has applied to every prior "should this be one composite call or several already-existing ones" decision, e.g. AI Chat's `ContextBuilder` reuse, ADR-093).
+
+Alternatives Considered
+
+Option A: Build a real backend `GET /dashboard` aggregator - rejected, out of scope for a frontend-only phase, and duplicates logic already exposed by existing endpoints.
+
+Option B (chosen): Client-side composition from existing per-domain endpoints, mirroring the existing dev-dashboard's parallel-fetch pattern.
+
+Trade-offs
+
+Pros
+
+Zero new backend surface area. Each widget's data is exactly as fresh as calling that domain's own page would show - no second, possibly-stale aggregation layer.
+
+Cons
+
+The Dashboard page makes several parallel requests instead of one - acceptable given every one of this project's existing multi-engine consumers (Confidence Engine, AI Orchestrator, AI Chat) already accepts this cost, and no caching precedent exists anywhere in this project to optimize it further speculatively.
+
+Future Review
+
+Revisit if Portfolio/Watchlist tracking is ever built (would need its own phase) - the Dashboard's widget composition pattern established here would extend to include them, not be redesigned.
+
+---
+
+# ADR-107
+
+Title
+
+Extend `PriceChart` Overlay Model With Zones + Time Markers for SMC Concepts
+
+Status
+
+Accepted
+
+Context
+
+Phase 7B's `PriceChart` (docs/54 §4, ADR-105) only supports a single overlay shape - `PriceLineOverlay` (`{price, color, title}`), a horizontal line spanning the full chart width, used for Support/Resistance and the top-3 Order Blocks (as a single line at `zone_high`). Phase 7C needs to draw the rest of the SMC concepts already returned by `GET /analysis/smc/{symbol}` (docs/04 §Smart Money Concepts): Order Blocks and Fair Value Gaps are price *ranges* (`zone_high`/`zone_low`, `gap_high`/`gap_low`), and BOS/CHoCH/Liquidity Sweeps are point-in-time *events* (a specific break/confirmation time, not a price at all in CHoCH's case - it only carries `previous_trend`/`new_trend`/`confidence`/`confirmation_time`). Neither shape fits a chart-wide horizontal line.
+
+Decision
+
+Two new optional `PriceChart` props, both built on `lightweight-charts` features already present in the dependency (no new package):
+
+- `zones?: ZoneOverlay[]` (`{high, low, color, label}`) - rendered as a *paired* top/bottom `series.createPriceLine()` call (the same primitive `PriceLineOverlay` already uses, just two lines sharing a color/label instead of one). Used for Order Blocks and Fair Value Gaps.
+- `markers?: ChartMarkerOverlay[]` (`{time, position: "aboveBar" | "belowBar", color, shape, text}`) - rendered via the native `createSeriesMarkers(series, markers)` plugin API (`lightweight-charts` v5). Positioned relative to the bar (`aboveBar`/`belowBar`), not an exact price - CHoCH events have no price field to place an exact marker at, only a confirmation time and trend change, so bar-relative positioning (derived from the event's bullish/bearish direction) is used uniformly for BOS/CHoCH rather than mixing an exact-price marker type for BOS and a bar-relative one for CHoCH.
+
+A shared `lib/smc-overlays.ts` (`buildSmcOverlays(smc, enabledKinds)`) maps a `SMCAnalysisResponse` to `{zones, markers, lines}` once, reused by every page that draws SMC overlays (Markets detail, Signal detail, AI Analysis detail) - each page also gets a `SmcOverlayToggles` checkbox-group component so charts don't dump every overlay at once, capping each kind at the top-3 by strength/freshness/touch-count (same convention Phase 7B's Order Block overlay already established).
+
+Reason
+
+Reusing `createPriceLine` for zones keeps the implementation inside the same mental model and API surface Phase 7B already shipped and battle-tested (including its `ResizeObserver`-race fix), rather than reaching for a custom canvas/primitive plugin to draw actual shaded rectangles - which `lightweight-charts` has no first-party support for. `createSeriesMarkers` is a first-party, built-in API (not a drawing tool a user interacts with), so it doesn't touch ADR-105's "no drawing tools" boundary.
+
+Alternatives Considered
+
+Option A: Custom `ISeriesPrimitive` canvas plugin for true shaded rectangles - rejected, meaningfully more implementation and maintenance surface for a purely cosmetic upgrade over two dashed lines, and no such plugin precedent exists anywhere in this codebase to build on.
+
+Option B (chosen): Paired price lines for zones + native `createSeriesMarkers` for events.
+
+Option C: Exact-price markers (`atPriceTop`/`atPriceMiddle`/`atPriceBottom`) for BOS (which does have a `break_price`) and a fallback for CHoCH - rejected for consistency; mixing marker-positioning strategies within the same overlay kind (events) would complicate `buildSmcOverlays` and the toggle UI for a marginal visual difference bar-relative positioning already conveys (bullish above/below the candle).
+
+Trade-offs
+
+Pros
+
+No new dependency. Reuses the exact primitive and lifecycle-cleanup pattern (`useEffect` return function removing what it added) Phase 7B already proved correct. Toggle UI prevents overlay clutter and keeps chart render cost bounded regardless of how many SMC events a symbol has.
+
+Cons
+
+Zones are visually two dashed lines, not a filled rectangle - a materially different (if directionally similar) rendering than a "real" trading platform's shaded order-block box. Deferred deliberately (see Alternatives, Option A) rather than accepted as a permanent ceiling.
+
+Future Review
+
+Revisit if a custom primitives plugin is ever justified by a broader charting overhaul (e.g. live ticks, drawing tools - both still deferred per ADR-105) - the zone data shape (`ZoneOverlay`) would carry over unchanged, only the rendering call would change from two price lines to a filled rectangle primitive.
+
+---
+
+# ADR-108
+
+Title
+
+Adopt `react-markdown` + `remark-gfm` for AI-Generated Text Rendering
+
+Status
+
+Accepted
+
+Context
+
+AI Analysis reasoning (`AIAnalysisResponse.reasoning.{summary,technical,smc,economic,news,risk,conclusion}`, the one AI-generated field on that response per ADR-079) and AI Chat message content (`MessageResponse.content`) are LLM-generated free text. Through Phase 7B they were rendered as raw strings via `whitespace-pre-wrap`, with any markdown-style formatting the LLM produced (lists, emphasis, headings) showing up as literal asterisks/hashes. Neither `docs/05` nor `package.json` specified a markdown library.
+
+Decision
+
+Add `react-markdown` + `remark-gfm` (GitHub-flavored markdown: tables, strikethrough, task lists). A single shared `components/shared/markdown.tsx` wraps `ReactMarkdown` with manual Tailwind-class `components` overrides (no `@tailwindcss/typography` plugin - not installed, and adding it wasn't necessary for the handful of element types LLM output actually produces: paragraphs, lists, emphasis, headings, inline code, links). Both AI Analysis reasoning (`ReasoningSections`) and AI Chat assistant messages (`MessageThread`) render through this one component rather than duplicating styling. Loaded via `next/dynamic` (`components/shared/markdown-lazy.tsx`) to keep it out of the initial JS bundle, since most pages never render markdown at all.
+
+Deliberately **not** adding `rehype-raw` - no raw HTML rendering. Content originates from an LLM (AI Analysis reasoning) or from either the LLM or the authenticated user themselves (AI Chat), never from an untrusted third party with a different trust boundary, but this still keeps zero HTML-injection surface without needing a sanitizer, since `react-markdown` already refuses to render raw HTML tags as anything but literal text by default.
+
+Reason
+
+The alternative - fixing this by asking the LLM to stop producing markdown syntax - isn't reliably enforceable through prompting alone and would fight the model's natural output style; rendering what it already produces is simpler and more robust than suppressing it.
+
+Alternatives Considered
+
+Option A: Strip markdown syntax server-side or via a prompt-engineering-only fix - rejected, unreliable and out of scope for a frontend-only phase (would require a backend/prompt change).
+
+Option B (chosen): `react-markdown` + `remark-gfm`, no raw HTML.
+
+Trade-offs
+
+Pros
+
+Correctly renders whatever formatting the LLM already produces. Small, well-established, actively maintained library. Zero HTML-injection surface (no `rehype-raw`).
+
+Cons
+
+Two new dependencies. Manual `components` overrides (not a `prose` class) means new markdown element types the LLM starts producing (e.g. blockquotes, tables it doesn't currently emit) render with browser-default styling until explicitly styled.
+
+Future Review
+
+Add `@tailwindcss/typography` and switch to a `prose` class if LLM output style becomes visibly richer (tables, blockquotes) than the current manual overrides cover.
+
+---
+
+# ADR-109
+
+Title
+
+AI Chat "Streaming-Ready" via Optimistic Pending-Message Placeholder, Not Real Token Streaming
+
+Status
+
+Accepted
+
+Context
+
+Phase 6C's AI Chat backend (docs/52, ADR-092 through ADR-098) is request/response only - `POST /chat/conversations/{id}/messages` returns the full `assistant_message` in one response, with no SSE or WebSocket endpoint anywhere in the backend. Phase 7C's requirements ask for a "streaming-ready architecture... without requiring backend streaming yet" - i.e. the frontend should be structured so a future streaming backend could be adopted without a component-contract rewrite, while today's UX shouldn't fake something it can't yet do.
+
+Decision
+
+`MessageThread` accepts two optional trailing-item props: `pendingUserContent` (the just-submitted user message, shown immediately, before the round trip resolves) and `showTypingIndicator` (an animated three-dot indicator standing in for the assistant's still-in-flight reply). The chat thread page sets `pendingUserContent` the instant `handleSend` is called and clears it in the mutation's `finally` block, once the real, persisted `user_message`/`assistant_message` pair has replaced it via the `conversation` query invalidation `useSendMessage` already triggers.
+
+No polling, and no fake token-by-token animation of the final text once it arrives (typing out the already-complete response character-by-character would misrepresent actual latency rather than reflect it).
+
+Reason
+
+A future SSE backend would only need to swap the static typing indicator for progressively-appended text in a `pendingAssistantContent`-shaped prop - `MessageThread`'s contract (a message list plus one optional trailing pending pair) does not need to change, which is what "streaming-ready" means operationally here: the seam is already in the right place, not that streaming is simulated today.
+
+Alternatives Considered
+
+Option A: Client-side polling of the conversation endpoint at a short interval to simulate "live" updates - rejected, adds request volume for no actual new information (the backend has nothing partial to return between the request and its single response).
+
+Option B: Fake token-by-token reveal of the completed response text - rejected, misrepresents latency the user already experienced waiting for the request to resolve, and is a worse UX than an honest "typing" indicator for the actual wait.
+
+Option C (chosen): Optimistic pending-message placeholder (user bubble + typing indicator), real content swapped in via existing query invalidation once the response resolves.
+
+Trade-offs
+
+Pros
+
+Zero backend changes. Matches the actual request/response latency honestly rather than performing a synthetic streaming illusion. The component seam is already where a real streaming implementation would need it.
+
+Cons
+
+Still a single request/response round trip under the hood - a user cannot see partial reasoning as the model produces it, only a generic "typing" signal, until the backend gains real streaming.
+
+Future Review
+
+Revisit when/if the backend adds SSE or WebSocket streaming support to `POST /chat/conversations/{id}/messages` (or a dedicated streaming variant) - `MessageThread`'s pending-item contract is designed to absorb that without a rewrite.
+
+---
+
+# ADR-110
+
+Title
+
+Telegram Automation Scoped to Signal Delivery Only, Not Full docs/19/20
+
+Status
+
+Accepted
+
+Context
+
+`docs/19_TELEGRAM_BOT.md` and `docs/20_NOTIFICATION_SYSTEM.md` are Phase-0 vision documents describing a full multi-channel notification system (email, in-app, Telegram, quiet hours, ten-plus bot commands, dedup/retry queue, admin escalation). Building all of it in one pass is a much larger surface than "connect Signal Generation to Telegram," which is the actual requested pipeline stage.
+
+Decision
+
+Build exactly one slice: account linking + delivering the existing `Signal` model to a linked Telegram chat, using the docs/19 §5 message format. Every other docs/19/20 feature is named explicitly in docs/57 §8 as deferred, not silently dropped.
+
+Reason
+
+Matches this project's established reuse-first, narrow-scope-per-phase precedent (Signal Engine narrowing docs/11's original vision, ADR-085; Risk Management reusing rather than rebuilding, ADR-064). Shipping a smaller, fully-working slice is lower-risk than a partially-working full system.
+
+Alternatives Considered
+
+Option A: Build the full docs/19/20 system now - rejected, multiplies scope (email provider, quiet-hours scheduler, preference UI, ten commands) well beyond what was asked.
+
+Option B (chosen): Signal delivery only, explicit deferral list.
+
+Trade-offs
+
+Pros
+
+Small, reviewable, working end-to-end slice. Every deferred feature has a clear landing spot (docs/57 §8) for a future phase.
+
+Cons
+
+Users cannot yet mute Telegram delivery, control quiet hours, or receive non-signal alerts (news/economic/regime-change) via this channel.
+
+Future Review
+
+Revisit once Signal delivery has been used in production; expand toward docs/20's full preference/channel model incrementally.
+
+---
+
+# ADR-111
+
+Title
+
+Telegram Account Linking via Short-Lived Lookup Code, Not a New Auth Mechanism
+
+Status
+
+Accepted
+
+Context
+
+docs/19 §3 specifies a "Generate Secure Link Code -> Open Telegram Bot -> Verify Account" flow. This project already has two precedents for linking an external identity to a platform account: `oauth_account.py` (OAuth linking) and `user_session.py`'s refresh tokens (opaque, stored, looked-up tokens - not self-verifying JWTs).
+
+Decision
+
+`telegram_accounts.link_code` is a `secrets.token_urlsafe` random string, stored server-side with a 10-minute expiry, looked up (not decoded/verified like a JWT) when `/start <code>` arrives. One row per user, upserted on each `POST /telegram/link` call (issuing a fresh code invalidates any prior unused one).
+
+Reason
+
+Nothing about this flow needs a self-verifying token (no third party needs to validate it independently) - a stored, looked-up code is simpler and matches the existing refresh-token precedent (ADR-022) rather than inventing a JWT-based linking mechanism with no consumer that needs JWT's properties.
+
+Alternatives Considered
+
+Option A: Signed JWT containing user_id, verified on `/start` - rejected, adds complexity (signing, expiry-in-payload, revocation-before-expiry problem) with no benefit over a stored lookup code for a single first-party consumer (this bot).
+
+Option B (chosen): Random opaque code, server-side lookup + expiry check.
+
+Trade-offs
+
+Pros
+
+Simple, revocable (just delete/overwrite the row), consistent with existing session-token precedent.
+
+Cons
+
+Requires a DB round-trip to validate (negligible at this volume - link events are rare, one-time-per-user).
+
+Future Review
+
+None expected - this is a low-stakes, low-volume flow.
+
+---
+
+# ADR-112
+
+Title
+
+Telegram Provider via Long-Polling `getUpdates`, Not a Public Webhook
+
+Status
+
+Accepted
+
+Context
+
+Telegram's Bot API supports either a webhook (Telegram pushes updates to a public HTTPS URL) or `getUpdates` long-polling (the bot pulls updates on an interval). This project's `docker-compose.yml` exposes the backend on `localhost` only in development, with no public HTTPS endpoint configured anywhere.
+
+Decision
+
+`app/services/telegram/providers/bot_api.py` uses `getUpdates` polling via a new Celery Beat task, not a webhook route. Same three-file provider shape (`base.py` Protocol + `mock.py` + `bot_api.py`) as every other integration (market data, news, economic calendar).
+
+Reason
+
+A webhook requires a publicly reachable HTTPS URL with a valid certificate - infrastructure that doesn't exist in this project's current deployment (docs/27) and is out of scope to stand up just for this feature. Polling is simpler to run identically in dev and prod, at the cost of a small latency window (bounded by the poll interval) on `/start` command processing - acceptable since linking is a one-time, non-time-critical action.
+
+Alternatives Considered
+
+Option A: Public webhook - rejected, requires new public-ingress infrastructure not otherwise needed by this project yet.
+
+Option B (chosen): `getUpdates` long-polling via Celery Beat.
+
+Trade-offs
+
+Pros
+
+No new infrastructure, works identically in every environment, matches the existing provider-abstraction shape.
+
+Cons
+
+Small polling latency (not real-time push); a continuously-running poll task consumes a small, constant amount of API quota even when idle.
+
+Future Review
+
+Revisit if this project stands up a public ingress for other reasons (e.g. real payment webhooks, docs/24) - webhook delivery could then be adopted for lower latency.
+
+---
+
+# ADR-113
+
+Title
+
+Telegram Delivery Broadcasts to All Linked Accounts, No Per-User Filtering Yet
+
+Status
+
+Accepted
+
+Context
+
+docs/20 §6 specifies per-user notification preferences (which types, which channels). No preference model exists yet, and none is being built in this phase (ADR-110's scope narrowing).
+
+Decision
+
+`send_signal_telegram_task` sends every generated Signal to every account with `linked_at is not null` - no asset/timeframe/preference filtering.
+
+Reason
+
+Building a preference model is real, separate scope (docs/20 §6) larger than "deliver a Signal to Telegram." Broadcasting to all linked accounts is the simplest behavior that is still honest (a linked user gets every signal, not a silent subset) rather than half-building a filtering system with no UI to configure it.
+
+Alternatives Considered
+
+Option A: Build a minimal preference flag now - rejected, "minimal" preference UI/API is still new surface beyond this phase's scope, and a single boolean would need to be revisited anyway once docs/20's real preference model is built.
+
+Option B (chosen): Broadcast to all linked accounts.
+
+Trade-offs
+
+Pros
+
+Zero new preference infrastructure; every linked user's experience is simple and predictable ("I linked, I get signals").
+
+Cons
+
+No opt-out short of unlinking; not viable once user count grows past a handful without docs/20's real preference system.
+
+Future Review
+
+Required before any production rollout beyond internal testing - revisit alongside docs/20's full notification-preferences phase.
+
+---
+
 # Review Policy
 
 Review ADRs:

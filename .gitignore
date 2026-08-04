@@ -22,3 +22,4 @@ backend/dev.db
 coverage/
 .DS_Store
 .image_test
+.myenv.txt

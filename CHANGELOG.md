@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+### Added - Phase 7C: Frontend Experience & Advanced Trading UI
+
+`docs/55_FRONTEND_EXPERIENCE_ADVANCED_UI.md` - new architecture document defining the overlay-model extension, the shared `Markdown`/`smc-overlays` reuse points, and the per-page UX changes
+
+`components/shared/price-chart.tsx` extended with `zones`/`markers` overlay props (ADR-107) - Order Blocks/Fair Value Gaps render as paired top/bottom price lines, BOS/CHoCH/Liquidity Sweeps render via the native `createSeriesMarkers` plugin (`lightweight-charts` v5), bar-relative (`aboveBar`/`belowBar`) since CHoCH events carry no exact price. `lib/smc-overlays.ts` (`buildSmcOverlays`) maps `SMCAnalysisResponse` to overlays once, reused by Markets detail, Signal detail, and AI Analysis detail via the new `SmcOverlayToggles` checkbox group (capped top-3 per kind, same convention Phase 7B's Order Block overlay established). `PriceChart` now loaded via `next/dynamic` (`price-chart-lazy.tsx`, no SSR) to keep `lightweight-charts` out of the initial JS bundle
+
+`react-markdown` + `remark-gfm` adopted (ADR-108) for AI-generated text - a shared `components/shared/markdown.tsx` (manual Tailwind overrides, no `@tailwindcss/typography`) renders AI Analysis reasoning (`ReasoningSections`) and AI Chat assistant messages (`MessageThread`); no `rehype-raw`, zero raw-HTML rendering surface. Lazy-loaded via `markdown-lazy.tsx`
+
+Markets: sort/search/quick-actions - `/assets` has no server-side `sort`/`search` param, so the full dev-scale asset list (`limit: 100`) is fetched once and filtered/sorted/paginated client-side, URL-synced via the existing `useQueryFilters`. `AssetTable` gained clickable sortable column headers and per-row "Analyze"/"Generate Signal" quick-action links (`/ai-analysis?symbol=X&timeframe=Y`, `/signals?symbol=X&timeframe=Y`) - both target pages now read `symbol`/`timeframe` from the URL to seed their picker, closing a latent gap where the Markets detail page's existing `?symbol=&timeframe=` links were silently ignored
+
+AI Analysis: a lightweight 3-step guide (Select -> Generate -> Review, `AnalysisGuideStepper`) over the existing picker/generate/history flow; `ConfidenceGauge` (radial SVG progress ring for `confidence_score`, deliberately not fetching the separate `/analysis/confidence/{symbol}` endpoint per ADR-048's Orchestrator-vs-Confidence-Engine distinction); `EvidenceList` restyled as a connected vertical timeline (same four groups/icons, narrative ordering, not chronological - evidence items carry no timestamps); the detail page's chart gained the same SMC overlay toggles as Markets detail
+
+AI Chat: `ConversationList` gained per-item Archive/Delete actions (`useArchiveConversation`/`useDeleteConversation`, previously unused by any UI) plus a title-search input and Active/Archived status toggle on the list page; `SuggestedPrompts` (static curated templates, symbol-aware when the conversation is grounded) fills the composer via a lifted `prefill` prop; `MessageThread` gained `pendingUserContent`/`showTypingIndicator` props implementing ADR-109's optimistic "streaming-ready" UX (no real token streaming - the backend has none)
+
+Signals: detail page now reuses `ReasoningSections`/`EvidenceList` (the same components built for AI Analysis) instead of a duplicated plain-text block; gained a `PriceChart` with Entry/SL/TP + SMC overlays and a `SignalStatusTimeline` (Created -> Triggered -> Closed, surfacing `triggered_at`/`closed_at`/`profit_loss` - fields that existed on `SignalResponse` since Phase 6B but were never rendered); `SignalFilterBar` gained a `symbol` filter (`GET /signals` already accepts `?symbol=`, a real server-side filter unlike Markets' client-side one); `SignalCard` surfaces `profit_loss` when present
+
+Dashboard: sixth `QuickActionsWidget` (Generate Analysis/Generate Signal shortcuts reusing `SymbolTimeframePicker`, zero backend) - `WidgetCard`'s `viewAllHref` made optional since Quick Actions has no single natural destination. Widgets now mount with a `framer-motion` stagger
+
+App-wide polish: `PageContainer` (used by every page) gained a single shared fade-in transition instead of per-page animation; `PriceChart`'s bare "Loading candles..." text replaced with a `Skeleton`-shaped placeholder; new interactive elements (sort headers, overlay toggles, quick-action icon links, conversation actions menu) all carry `aria-label`s
+
+**ADR-107** through **ADR-109**: `PriceChart` overlay model extended with zones + time markers for SMC concepts (still no drawing tools/live updates/fullscreen - ADR-105 unchanged); `react-markdown`/`remark-gfm` adopted for AI-generated text, no raw HTML; AI Chat "streaming-ready" via an optimistic pending-message placeholder, not real token streaming
+
+Deliberately excluded (per Phase 7C approval): any new backend endpoint; real token-by-token chat streaming (backend has no SSE/WebSocket); a custom chart-primitives plugin for true shaded-rectangle zones (paired price lines instead); `@tailwindcss/typography`; Admin/session-management/Watchlists-backend/Notifications/Telegram/Subscription (still "7D+", unstarted)
+
+Verified via `npm run typecheck`/`lint`/`build` (all clean) plus a manual browser-driven walkthrough against the real running backend (seeded via `backend/scripts/seed_dev_data.py`)
+
+docs/30 updated: marks Phase 7C complete, renames the remaining unstarted backend-heavy slice from "7C+" to "7D+" for clarity now that 7C itself is a completed, named phase
+
+### Added - Phase 7B: Dashboard & Core Pages
+
+`docs/54_DASHBOARD_CORE_PAGES_ARCHITECTURE.md` - new architecture document defining the reuse map, new shared UI/components, per-domain feature folders, the Dashboard-as-widgets composition, and the Sidebar's grouped-navigation restructure
+
+Ten pages built on Phase 7A's foundation, all inside the existing `(protected)` route group: Dashboard (rebuilt), Markets (list + asset detail), Signals (list + generate + detail), News (list + detail), Economic Calendar (table), AI Analysis (generate/history + detail), AI Chat (conversation list + thread), Watchlists (placeholder), Profile (read-only), Settings (Appearance + Account)
+
+Dashboard rebuilt as five independent, reusable widgets (ADR-106) - Market Overview, Latest Signals, Economic Events, Breaking News, AI Insights - composed client-side from already-existing per-domain endpoints (`GET /assets`, `GET /signals`, `GET /calendar/upcoming`, `GET /news`, `GET /analysis/history`), since `GET /dashboard` remains an unimplemented backend stub. Portfolio Summary/Watchlist widgets omitted entirely (former has no underlying feature anywhere in this project, latter would redundantly re-embed the Watchlists placeholder)
+
+`components/shared/price-chart.tsx` - a `lightweight-charts` (TradingView's free, open-source library) candlestick chart wrapper with a timeframe switcher, theme sync, and Support/Resistance (Technical Analysis) + Order Block (SMC) price-line overlays (ADR-105) - both overlay data sources already existed from Phase 4A/4B endpoints, no new backend work. Drawing tools, live/streaming updates, and fullscreen explicitly deferred - no drawing-tools UI in the free library, no live-price WebSocket backend exists anywhere in this project
+
+`Sidebar` (Phase 7A) restructured from a flat `NAV_ITEMS` list to grouped `NAV_GROUPS` (optional section label per group) - the full docs/05 §7 product navigation (Dashboard/Markets/Signals/News/Economic Calendar/AI Analysis/AI Chat/Watchlists/Profile/Settings) at the top level, with the unchanged Phase 6 dev pages (Technical Analysis/SMC/Market Regime/API Explorer) regrouped under a dedicated "Analysis" section rather than treated as replaced - same URLs, same functionality, per explicit approval
+
+New shared UI primitives (`components/ui/`): `table`, `tabs` (wraps the previously-installed-but-unused `@radix-ui/react-tabs`), `tooltip` (new `@radix-ui/react-tooltip` dependency), `textarea`, `pagination` (dependency-free, no Radix primitive exists for this). `Button` gained a `destructive` variant
+
+New shared components (`components/shared/`): `page-header`, `filter-bar` + `hooks/use-query-filters.ts` (generalizes Phase 7A's `use-dashboard-selection.ts` URL-synced pattern for arbitrary filter sets), `symbol-timeframe-picker` (local-state asset/timeframe picker for one-off generate actions, distinct from the URL-synced picker), `price-chart`; `lib/format.ts` (native `Intl`-based date/price/percent formatters, no new date-formatting dependency) and `lib/badge-variants.ts` (centralizes every enum-to-`Badge`-variant mapping, previously inlined ad hoc per page in the Phase 6 dev dashboard)
+
+Per-domain feature folders (`features/{markets,signals,news,economic-calendar,ai-analysis,ai-chat,profile,settings}/`) and matching service modules (`services/{market-data,signals,news,calendar,ai-analysis,ai-chat}.ts`, thin `apiClient` wrappers mirroring `services/analysis.ts`'s shape) plus one TanStack Query hook per query/mutation - `SignalCard` (docs/05 §11's card shape) built once in `features/signals/` and reused by both the Signals page and the Dashboard's Latest Signals widget
+
+`services/api-client.ts`'s `apiPost` extended with an optional query-params argument (additive, every existing caller unaffected) - `POST /signals/generate/{symbol}` and `POST /analysis/ai/{symbol}` both take `timeframe` as a query param, not a body field
+
+Watchlists ships as a coming-soon placeholder (ADR-103) - real nav item and route, `EmptyState` only, no CRUD, no fake data, no client-side-only fake persistence. Profile is read-only (`GET /auth/me` only); Settings contains only genuinely-existing functionality (the Phase 7A theme picker relocated into a dedicated section, a read-only account summary, logout) - `PUT /users/profile`/`POST /users/avatar`/`DELETE /users/account` have zero backend implementation (ADR-104)
+
+A real bug was caught during manual verification, not just implementation: `PriceChart`'s original `autoSize: true` internally wired a `ResizeObserver` whose callback could still fire (painting into an already-disposed canvas, throwing `"Object is disposed"`) after `chart.remove()` ran in the cleanup effect, when navigating away from a chart page fast enough to queue a resize mid-unmount. Fixed by manually managing the `ResizeObserver` and disconnecting it before `chart.remove()`
+
+**ADR-103** through **ADR-106**: Watchlists coming-soon placeholder, no backend exists; Profile read-only, Settings repurposes only already-existing client-side capabilities; chart scope (candlesticks + S/R + Order Block overlays only, drawing tools/live updates/fullscreen deferred); Dashboard composed client-side from existing per-domain endpoints, no new `GET /dashboard` backend
+
+Deliberately excluded (per Phase 7B approval): Watchlists CRUD; Profile/Settings edit forms; chart drawing tools, live/streaming updates, fullscreen; a real `GET /dashboard` backend endpoint; Admin, Notifications, Telegram, Subscription pages (no backend exists for any of them); Command Palette; breadcrumb navigation; a frontend automated test suite; any backend changes or new API endpoints
+
+Verified via `npm run typecheck`/`lint`/`build` (all clean, 22 routes building successfully) plus a manual browser-driven walkthrough against the real running backend (seeded via the pre-existing `backend/scripts/seed_dev_data.py`): Dashboard widgets populating from seeded data, Markets asset detail with live chart and overlays, AI Analysis generation end-to-end (including the deterministic-fallback `ai_available=false` path), Signals generation including the WAIT-produces-no-signal toast case, AI Chat message send/receive round-trip, and News/Watchlists/Profile/Settings empty and populated states
+
+docs/30 updated: marks Phase 7B complete, introduces the "7C+" placeholder for Admin/session-management/Watchlists-backend/Notifications/Telegram/Subscription
+
 ### Added - Phase 7A: Frontend Foundation (Authentication & User Experience)
 
 `docs/53_FRONTEND_FOUNDATION_ARCHITECTURE.md` - new architecture document defining the reuse map, client-side auth token storage model, route protection, and shell/theme/shared-UI foundation every future frontend page builds on

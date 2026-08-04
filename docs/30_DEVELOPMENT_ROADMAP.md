@@ -202,7 +202,37 @@ Sub-Phases
 
 7A Frontend Foundation - Authentication & User Experience (auth pages backed by the real Bearer-token backend - login/register/forgot-password stub; client-side session persistence and protected routing via `AuthGuard`/`GuestGuard`; the existing dev dashboard shell evolved into the authenticated product shell (`AppShell`, `Sidebar`, `TopNav`, `UserMenu`); dark/light/system theming aligned to docs/05 §4's palette; shared empty/error UI; zero new backend endpoints; docs/53_FRONTEND_FOUNDATION_ARCHITECTURE.md, ADR-099 through ADR-102) - Completed
 
-7B+ Markets/Signals/News/Watchlists/AI Analysis page content, Admin, session/device-management UI - Not Started
+7B Dashboard & Core Pages (Dashboard rebuilt as five reusable widgets - Market Overview/Latest Signals/Economic Events/Breaking News/AI Insights, ADR-106; Markets, Signals, News, Economic Calendar, AI Analysis, AI Chat, Watchlists (placeholder, ADR-103), Profile (read-only, ADR-104), Settings (Appearance + Account, ADR-104); `lightweight-charts` candlestick chart with Support/Resistance/Order Block overlays, ADR-105; Sidebar restructured into grouped nav with a dedicated "Analysis" section preserving the Phase 6 dev pages; zero new backend endpoints; docs/54_DASHBOARD_CORE_PAGES_ARCHITECTURE.md, ADR-103 through ADR-106) - Completed
+
+7C Frontend Experience & Advanced Trading UI (Markets sort/search/quick-actions; AI Analysis guided flow, confidence gauge, evidence timeline, `react-markdown` reasoning; AI Chat conversation search/archive/delete, suggested prompts, optimistic pending-message UX, markdown messages; Signal detail reuses Reasoning/Evidence components, adds chart + status timeline, symbol filter; `PriceChart` extended with zone + time-marker overlays for BOS/CHoCH/Order Blocks/FVG/Liquidity, ADR-107; Dashboard gains a sixth Quick Actions widget; app-wide loading-skeleton/transition/accessibility/code-splitting polish; zero new backend endpoints; docs/55_FRONTEND_EXPERIENCE_ADVANCED_UI.md, ADR-107 through ADR-109) - Completed
+
+7D+ Admin, session/device-management UI, Watchlists CRUD backend, Subscription - Not Started
+
+---
+
+# Phase 7E
+
+AI Pipeline Activation
+
+Real Providers
+
+Automatic Signals
+
+Telegram
+
+Status
+
+In Progress
+
+Sub-Phases
+
+7E-A Live Market Data + AI Reasoning Activation (`TwelveDataProvider`/`OpenAIProvider` already existed - Phase 3B/6A - config-only activation: `celery beat` service added to `docker-compose.yml`, `MARKET_DATA_PROVIDERS`/`OPENAI_API_KEY` to be set by the operator; no code changed) - In Progress (blocked on real API keys being supplied to `backend/.env`)
+
+7E-B Real News + Economic Calendar Providers (`NewsApiProvider`/`FinnhubProvider`, same `providers/base.py` Protocol shape as `TwelveDataProvider` - zero changes to `NewsSentimentEngine`/`EconomicCalendarEngine`/ingestion pipelines) - Completed (code); activation blocked on `NEWS_API_KEY`/`ECONOMIC_API_KEY`
+
+7E-C Automatic Signal Generation (`app/workers/signal_tasks.py`, hourly Celery Beat task over the active/seeded asset set on H1, calling `SignalEngine.generate()` - the exact path `POST /signals/generate/{symbol}` already used, zero new decision logic) - Completed
+
+7E-D Telegram Automation - Signal Delivery Only (`telegram_accounts` table, `app/services/telegram/` provider abstraction + `TelegramService`, `POST/GET/DELETE /telegram/link(+status)`, `send_signal_telegram_task` hooked into both the on-demand and automatic signal-generation paths; docs/57_TELEGRAM_ARCHITECTURE.md, ADR-110 through ADR-113. Explicitly narrower than docs/19/20's full vision - bot commands, quiet hours, email/in-app channels, notification preferences, and admin escalation are deferred, docs/57 §8) - Completed (code); activation blocked on a freshly-created `TELEGRAM_BOT_TOKEN` (the token pasted into this project's chat history is compromised and must not be reused)
 
 ---
 

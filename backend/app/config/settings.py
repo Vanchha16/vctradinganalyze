@@ -36,10 +36,18 @@ class Settings(BaseSettings):
     news_ingestion_interval_seconds: int = 300
     news_lookback_hours: int = 24
 
+    news_api_key: str = ""
+    news_api_base_url: str = "https://newsapi.org"
+    news_api_timeout_seconds: float = 10.0
+
     economic_calendar_providers: list[str] = ["mock"]
     economic_calendar_ingestion_interval_seconds: int = 900
     economic_calendar_lookback_days: int = 7
     economic_calendar_lookahead_days: int = 30
+
+    economic_api_key: str = ""
+    economic_api_base_url: str = "https://finnhub.io"
+    economic_api_timeout_seconds: float = 10.0
 
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
@@ -51,6 +59,13 @@ class Settings(BaseSettings):
     ai_retry_backoff_seconds: float = 1.0
 
     signal_ttl_hours: int = 24
+
+    telegram_bot_token: str = ""
+    telegram_bot_username: str = ""
+    telegram_base_url: str = "https://api.telegram.org"
+    telegram_timeout_seconds: float = 30.0
+    telegram_providers: list[str] = ["mock"]
+    telegram_poll_interval_seconds: int = 5
 
     chat_max_history_messages: int = 20
 

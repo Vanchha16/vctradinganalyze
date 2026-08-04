@@ -13,12 +13,27 @@ from app.repositories.news_source_repository import NewsSourceRepository
 from app.services.news.providers.base import NewsProvider
 from app.services.news.providers.exceptions import NewsProviderConfigurationError
 from app.services.news.providers.mock import MockNewsProvider
+from app.services.news.providers.newsapi import NewsApiProvider
 from app.services.news_ingestion_pipeline import NewsIngestionPipeline
 from app.services.news_sentiment.ai_summary_generator import AISummaryGenerator
 from app.services.news_sentiment_engine import NewsSentimentEngine
 
+
+def _build_newsapi_provider() -> NewsProvider:
+    if not settings.news_api_key:
+        raise NewsProviderConfigurationError(
+            "newsapi is configured in news_providers but NEWS_API_KEY is not set"
+        )
+    return NewsApiProvider(
+        api_key=settings.news_api_key,
+        base_url=settings.news_api_base_url,
+        timeout=settings.news_api_timeout_seconds,
+    )
+
+
 _PROVIDER_FACTORIES: dict[str, Callable[[], NewsProvider]] = {
     "mock": MockNewsProvider,
+    "newsapi": _build_newsapi_provider,
 }
 
 
@@ -27,9 +42,11 @@ def get_news_providers() -> list[NewsProvider]:
 
     Mirrors `app.dependencies.market_data.get_market_data_providers` -
     this is the only place that knows concrete provider classes exist.
-    No `RateLimitedProvider` wrapping in Phase 5A: `MockNewsProvider` has
-    no real quota to protect (docs/46 §13's explicit decision to skip
-    rate limiting until a real, paid vendor is integrated).
+    No `RateLimitedProvider` wrapping for `newsapi` yet (docs/46 §13's
+    explicit decision to skip rate limiting until a real, paid vendor is
+    integrated) - NewsAPI.org's free tier has no per-minute burst limit
+    that this ingestion cadence (`news_ingestion_interval_seconds`) would
+    threaten.
     """
     providers: list[NewsProvider] = []
     for name in settings.news_providers:

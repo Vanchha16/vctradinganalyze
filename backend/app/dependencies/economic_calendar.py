@@ -11,12 +11,27 @@ from app.services.economic_calendar.providers.base import EconomicCalendarProvid
 from app.services.economic_calendar.providers.exceptions import (
     EconomicCalendarProviderConfigurationError,
 )
+from app.services.economic_calendar.providers.finnhub import FinnhubProvider
 from app.services.economic_calendar.providers.mock import MockEconomicCalendarProvider
 from app.services.economic_calendar_engine import EconomicCalendarEngine
 from app.services.economic_calendar_ingestion_pipeline import EconomicCalendarIngestionPipeline
 
+
+def _build_finnhub_provider() -> EconomicCalendarProvider:
+    if not settings.economic_api_key:
+        raise EconomicCalendarProviderConfigurationError(
+            "finnhub is configured in economic_calendar_providers but ECONOMIC_API_KEY is not set"
+        )
+    return FinnhubProvider(
+        api_key=settings.economic_api_key,
+        base_url=settings.economic_api_base_url,
+        timeout=settings.economic_api_timeout_seconds,
+    )
+
+
 _PROVIDER_FACTORIES: dict[str, Callable[[], EconomicCalendarProvider]] = {
     "mock": MockEconomicCalendarProvider,
+    "finnhub": _build_finnhub_provider,
 }
 
 

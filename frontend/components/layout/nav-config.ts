@@ -3,18 +3,25 @@ import {
   BookMarked,
   BrainCircuit,
   CalendarClock,
+  FileClock,
   Gauge,
   LayoutDashboard,
   LineChart,
   MessagesSquare,
   Newspaper,
+  Server,
   Settings as SettingsIcon,
+  ShieldCheck,
   Signal,
   Terminal,
+  TrendingUp,
   UserRound,
+  Users,
   Waves,
   type LucideIcon,
 } from "lucide-react";
+
+import type { UserRole } from "@/services/types";
 
 export interface NavItem {
   label: string;
@@ -27,6 +34,8 @@ export interface NavItem {
 export interface NavGroup {
   group: string;
   items: NavItem[];
+  /** Group is hidden entirely unless the current user's role is in this list (Phase 8D, docs/59 §5.4/ADR-118) - omitted means visible to everyone. */
+  roles?: UserRole[];
 }
 
 /** Same destinations as before (docs/05 §7) - only the visual grouping changed to match the reference UI's four labeled sections. */
@@ -63,6 +72,19 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Profile", href: "/profile", icon: UserRound },
       { label: "Settings", href: "/settings", icon: SettingsIcon },
+    ],
+  },
+  {
+    group: "Admin",
+    roles: ["admin", "super_admin"],
+    items: [
+      { label: "Admin Dashboard", href: "/admin", icon: ShieldCheck },
+      { label: "Users", href: "/admin/users", icon: Users },
+      { label: "Audit Logs", href: "/admin/audit-logs", icon: FileClock },
+      { label: "System Health", href: "/admin/system-health", icon: Server },
+      { label: "API Usage", href: "/admin/api-usage", icon: Terminal },
+      { label: "Signal Statistics", href: "/admin/signal-statistics", icon: TrendingUp },
+      { label: "Admin Settings", href: "/admin/settings", icon: SettingsIcon },
     ],
   },
 ];

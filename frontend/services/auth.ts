@@ -1,9 +1,9 @@
 import { apiGet, apiPost } from "@/services/api-client";
-import type { LoginRequest, RegisterRequest, TokenResponse, UserResponse } from "@/services/types";
+import type { LoginRequest, TokenResponse, UserResponse } from "@/services/types";
 
-export function register(payload: RegisterRequest): Promise<UserResponse> {
-  return apiPost<UserResponse>("/auth/register", payload);
-}
+// Phase 8E (docs/59 §9) - public registration removed, POST /auth/register
+// returns 403. No `register()` wrapper here anymore - admin account
+// creation goes through `services/admin.ts`'s `createAdminUser` instead.
 
 export function login(payload: LoginRequest): Promise<TokenResponse> {
   return apiPost<TokenResponse>("/auth/login", payload);

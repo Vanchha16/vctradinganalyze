@@ -4,7 +4,7 @@ import { useCallback } from "react";
 
 import { clearStoredRefreshToken, getStoredRefreshToken, setStoredRefreshToken } from "@/lib/auth/token-storage";
 import * as authService from "@/services/auth";
-import type { LoginRequest, RegisterRequest, UserResponse } from "@/services/types";
+import type { LoginRequest } from "@/services/types";
 import { useAuthStore } from "@/store/auth-store";
 
 /**
@@ -33,10 +33,6 @@ export function useAuth() {
     [setSession],
   );
 
-  const register = useCallback((payload: RegisterRequest): Promise<UserResponse> => {
-    return authService.register(payload);
-  }, []);
-
   const logout = useCallback(async () => {
     const refreshToken = getStoredRefreshToken();
     try {
@@ -49,5 +45,5 @@ export function useAuth() {
     }
   }, [clearSession]);
 
-  return { user, status, login, register, logout };
+  return { user, status, login, logout };
 }

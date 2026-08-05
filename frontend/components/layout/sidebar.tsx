@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 
 import { BrandMark } from "@/components/shared/brand-mark";
 import { NAV_GROUPS } from "@/components/layout/nav-config";
+import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
 export function Sidebar({
@@ -19,6 +20,12 @@ export function Sidebar({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const query = searchParams.toString();
+  const { user } = useAuth();
+
+  // Role-gated groups (e.g. "Admin") are hidden entirely for a user whose
+  // role isn't listed - docs/59 §5.4/ADR-118, purely a UX convenience, the
+  // real boundary is the backend's `require_admin`/`require_super_admin`.
+  const visibleGroups = NAV_GROUPS.filter((g) => !g.roles || (user && g.roles.includes(user.role)));
 
   return (
     <div className="flex h-full flex-col">
@@ -47,7 +54,7 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
-        {NAV_GROUPS.map((g) => (
+        {visibleGroups.map((g) => (
           <div key={g.group}>
             {!collapsed && (
               <p className="px-2.5 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">

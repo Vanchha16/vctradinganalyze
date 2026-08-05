@@ -7,10 +7,12 @@ import { useAuth } from "@/hooks/use-auth";
 
 /**
  * Gates the `(auth)` route group - the inverse of `AuthGuard`. An
- * already-authenticated user visiting `/login`/`/register` is redirected
- * straight to `/dashboard` (or `?next=` if one was preserved from a prior
- * protected-route redirect), rather than being shown a login form for a
- * session they already have.
+ * already-authenticated user visiting `/login` (or `/forgot-password`) is
+ * redirected straight to `/dashboard` (or `?next=` if one was preserved
+ * from a prior protected-route redirect), rather than being shown a login
+ * form for a session they already have. `/register` (Phase 8E) redirects
+ * to `/login` unconditionally before this guard is ever reached - see
+ * `app/(auth)/register/page.tsx`.
  */
 export function GuestGuard({ children }: { children: React.ReactNode }) {
   const { status } = useAuth();

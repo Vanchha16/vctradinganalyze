@@ -21,12 +21,9 @@ export interface UserResponse {
   created_at: string;
 }
 
-export interface RegisterRequest {
-  email: string;
-  username: string;
-  password: string;
-  full_name?: string;
-}
+// Phase 8E (docs/59 §9) - `RegisterRequest` removed alongside the public
+// register page; `AdminUserCreateRequest` (below) covers admin-created
+// accounts.
 
 export interface LoginRequest {
   email: string;
@@ -37,6 +34,64 @@ export interface TokenResponse {
   access_token: string;
   refresh_token: string | null;
   expires_in: number;
+}
+
+// ---- Admin (docs/59_ADMIN_USER_MANAGEMENT_ARCHITECTURE.md §6.2, Phase 8) ----
+
+export interface AdminUserResponse {
+  id: string;
+  email: string;
+  username: string;
+  full_name: string | null;
+  role: UserRole;
+  is_active: boolean;
+  is_verified: boolean;
+  must_change_password: boolean;
+  created_by_admin_id: string | null;
+  deleted_at: string | null;
+  last_login: string | null;
+  created_at: string;
+}
+
+export interface AdminUserCreateResponse extends AdminUserResponse {
+  temporary_password: string | null;
+}
+
+export interface AdminUserDetailResponse extends AdminUserResponse {
+  active_session_count: number;
+}
+
+export interface AdminUserListResponse {
+  items: AdminUserResponse[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export interface AdminUserCreateRequest {
+  email: string;
+  username: string;
+  full_name?: string;
+  role: UserRole;
+  password?: string;
+}
+
+export interface AdminUserUpdateRequest {
+  full_name?: string;
+  username?: string;
+  email?: string;
+}
+
+export interface AdminUserStatusUpdateRequest {
+  is_active: boolean;
+}
+
+export interface AdminUserRoleUpdateRequest {
+  role: UserRole;
+}
+
+export interface AdminPasswordResetResponse {
+  temporary_password: string;
 }
 
 export type MarketType = "forex" | "metal" | "crypto" | "index";

@@ -1,26 +1,12 @@
-import type { Metadata } from "next";
-import Link from "next/link";
+import { redirect } from "next/navigation";
 
-import { AuthCard } from "@/features/auth/components/auth-card";
-import { RegisterForm } from "@/features/auth/components/register-form";
-
-export const metadata: Metadata = { title: "Create account - ClaudeTrading AI" };
-
+/**
+ * Phase 8E (docs/59 §9, ADR-119) - public registration is removed.
+ * `/register` is not deleted outright (an unexpectedly-vanished route is a
+ * worse failure mode than a redirect for anyone with the URL bookmarked/
+ * linked) - it unconditionally sends every visitor to `/login`, same
+ * treatment for authenticated and unauthenticated visitors alike.
+ */
 export default function RegisterPage() {
-  return (
-    <AuthCard
-      title="Create your account"
-      description="Get started with ClaudeTrading AI."
-      footer={
-        <>
-          Already have an account?{" "}
-          <Link href="/login" className="font-medium text-foreground hover:underline">
-            Sign in
-          </Link>
-        </>
-      }
-    >
-      <RegisterForm />
-    </AuthCard>
-  );
+  redirect("/login");
 }

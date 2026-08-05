@@ -73,3 +73,14 @@ export function marketRegimeVariant(value: string): Variant {
 export function assetActiveVariant(isActive: boolean): Variant {
   return isActive ? "success" : "secondary";
 }
+
+export function userStatusVariant(isActive: boolean): Variant {
+  return isActive ? "success" : "destructive";
+}
+
+export function userRoleVariant(value: string): Variant {
+  if (value === "super_admin") return "destructive";
+  if (value === "admin") return "warning";
+  if (value === "premium") return "default";
+  return "secondary"; // guest, registered, moderator, support
+}

@@ -1,4 +1,9 @@
-from app.exceptions.base import AuthenticationException, BusinessException, ValidationException
+from app.exceptions.base import (
+    AuthenticationException,
+    BusinessException,
+    PermissionDeniedException,
+    ValidationException,
+)
 
 
 class InvalidCredentialsException(AuthenticationException):
@@ -52,4 +57,18 @@ class WeakPasswordException(ValidationException):
     error_code = "weak_password"
 
     def __init__(self, message: str = "Password does not meet the required policy.") -> None:
+        super().__init__(message)
+
+
+class RegistrationDisabledException(PermissionDeniedException):
+    """Raised by `POST /auth/register` when `settings.allow_public_registration`
+    is `False` (Phase 8E, docs/59 §9, ADR-119) - accounts are admin-provisioned
+    only. `403`, not `404`: explicit and typed, consistent with every other
+    boundary in this project failing loudly rather than silently."""
+
+    error_code = "registration_disabled"
+
+    def __init__(
+        self, message: str = "Public registration is disabled - contact an administrator."
+    ) -> None:
         super().__init__(message)

@@ -129,6 +129,20 @@ def test_login_rejects_inactive_account(
     assert "login_failed" in _audit_actions(session)
 
 
+def test_login_rejects_soft_deleted_account(
+    auth_service: AuthenticationService, session: Session
+) -> None:
+    """Phase 8C (docs/59 §4/ADR-120) - a soft-deleted user must not be able
+    to authenticate, even defensively checked independently of `is_active`
+    (which `UserRepository.soft_delete` also sets `False`)."""
+    _make_user(session, deleted_at=datetime.now(UTC))
+
+    with pytest.raises(InactiveAccountException):
+        auth_service.login("trader@example.com", _PASSWORD)
+
+    assert "login_failed" in _audit_actions(session)
+
+
 def test_refresh_issues_new_access_token(
     auth_service: AuthenticationService, session: Session
 ) -> None:

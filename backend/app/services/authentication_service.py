@@ -82,7 +82,14 @@ class AuthenticationService:
             logger.warning("auth.login_failed", email=email)
             raise InvalidCredentialsException()
 
-        if not user.is_active:
+        if not user.is_active or user.deleted_at is not None:
+            # A soft-deleted user always has is_active=False too
+            # (UserRepository.soft_delete, ADR-120) - the explicit
+            # `deleted_at` check here is belt-and-braces (Phase 8C, docs/59
+            # §4) so login stays blocked even if is_active were ever
+            # reactivated without clearing deleted_at. Reuses the same
+            # exception/message as a plain suspension - deliberately not
+            # distinguishing "deleted" from "inactive" to a login caller.
             self._audit(user.id, action="login_failed", resource="user", ip_address=ip_address)
             self._commit()
             logger.warning("auth.login_failed_inactive", user_id=str(user.id))

@@ -34,6 +34,11 @@ class UserSessionRepository(BaseRepository[UserSession]):
     def delete(self, session_: UserSession) -> None:
         self.session.delete(session_)
 
+    def count_for_user(self, user_id: uuid.UUID) -> int:
+        """Active session count for the Admin user-detail view (docs/59 §6.2)."""
+        query = self._filter_by(self._query(), user_id=user_id)
+        return self._count(query)
+
     def delete_for_user(self, user_id: uuid.UUID, *, exclude_id: uuid.UUID | None = None) -> int:
         """Delete all sessions for a user, optionally keeping one (e.g. the current session)."""
         stmt = delete(UserSession).where(UserSession.user_id == user_id)

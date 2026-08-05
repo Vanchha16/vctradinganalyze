@@ -30,6 +30,16 @@ _REGISTER_PAYLOAD = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _allow_public_registration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 8E (docs/59 §9) - `POST /auth/register` is closed by default.
+    Every test in this file except the two below uses `_register` purely as
+    setup for exercising login/refresh/logout/me, not testing registration
+    itself - re-enable the flag for the duration of this file so that setup
+    keeps working, matching pre-Phase-8E behavior."""
+    monkeypatch.setattr(settings, "allow_public_registration", True)
+
+
 @pytest.fixture
 def client() -> Generator[TestClient, None, None]:
     engine = create_engine(
@@ -89,6 +99,34 @@ def test_register_rejects_duplicate_email(client: TestClient) -> None:
 
     assert response.status_code == 400
     assert response.json()["error"] == "duplicate_user"
+
+
+def test_register_returns_403_when_public_registration_disabled(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The actual default behavior (Phase 8E, docs/59 §9, ADR-119) - every
+    other test in this file opts back into the pre-Phase-8E behavior via
+    the autouse fixture above; this one explicitly tests the real default."""
+    monkeypatch.setattr(settings, "allow_public_registration", False)
+
+    response = client.post("/api/v1/auth/register", json=_REGISTER_PAYLOAD)
+
+    assert response.status_code == 403
+    assert response.json()["error"] == "registration_disabled"
+
+
+def test_register_disabled_response_does_not_create_a_user(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "allow_public_registration", False)
+    client.post("/api/v1/auth/register", json=_REGISTER_PAYLOAD)
+
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"email": _REGISTER_PAYLOAD["email"], "password": _REGISTER_PAYLOAD["password"]},
+    )
+
+    assert login_response.status_code == 401
 
 
 def test_login_success(client: TestClient) -> None:

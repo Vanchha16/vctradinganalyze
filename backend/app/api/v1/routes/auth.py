@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request, status
 
 from app.config import settings
 from app.dependencies import get_authentication_service, get_current_user, get_user_service
+from app.exceptions import RegistrationDisabledException
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
@@ -24,6 +25,17 @@ async def register(
     payload: RegisterRequest,
     user_service: Annotated[UserService, Depends(get_user_service)],
 ) -> User:
+    """Phase 8E (docs/59 §9, ADR-119) - public registration is closed by
+    default (`settings.allow_public_registration=False`). Accounts are
+    admin-provisioned via `AdminUserService` (`POST /admin/users`) or, for
+    the very first account, `backend/scripts/create_admin.py`.
+    `UserService.register_user` itself is untouched and still reused by
+    both this route and `AdminUserService.create_user` - only reachability
+    of this specific route changed.
+    """
+    if not settings.allow_public_registration:
+        raise RegistrationDisabledException()
+
     return user_service.register_user(
         email=payload.email,
         username=payload.username,

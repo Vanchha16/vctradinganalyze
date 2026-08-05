@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     jwt_access_expire_minutes: int = 15
     jwt_refresh_expire_days: int = 30
 
+    # Phase 8E (docs/59 §9, ADR-119) - public self-registration is closed by
+    # default. Accounts are admin-provisioned only (AdminUserService) or
+    # created once via backend/scripts/create_admin.py's bootstrap flow.
+    allow_public_registration: bool = False
+
     market_data_providers: list[str] = ["mock"]
     market_data_retry_max_attempts: int = 3
     market_data_retry_backoff_seconds: float = 1.0

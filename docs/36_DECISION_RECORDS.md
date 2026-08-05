@@ -5031,6 +5031,686 @@ Required before any production rollout beyond internal testing - revisit alongsi
 
 ---
 
+# ADR-114
+
+Title
+
+Watchlists Scoped to docs/03's Minimal Schema, docs/21's Richer Features Deferred
+
+Status
+
+Accepted
+
+Context
+
+docs/21_WATCHLIST_SYSTEM.md describes custom alerts, tags, pinning, an AI
+watchlist summary, and performance history. `docs/03_DATABASE_DESIGN.md` §12
+only ever reserved two minimal tables (`watchlists`: id/user_id/name/created_at;
+`watchlist_items`: id/watchlist_id/asset_id/created_at) - none of docs/21's
+richer fields were ever specified in the schema.
+
+Decision
+
+Phase 7D-A/7D-B build exactly docs/03 §12's two tables and docs/04's six
+literal endpoints - a named list plus asset membership. Nothing else.
+
+Reason
+
+Building alerts/tags/pinning/AI summary now would mean inventing new schema
+from a vision document that was never reconciled with docs/03, violating
+"never invent architecture." Each of those is a real, separable feature
+(alerts need a rule-evaluation + delivery mechanism; AI summary needs its own
+LLM-cost decision like ADR-051/ADR-082) deserving its own documentation-first
+pass, not a quiet addition to a CRUD phase.
+
+Alternatives Considered
+
+Option A: Build alerts/tags now since they're "just a few columns" - rejected,
+alerts specifically require a background evaluation job and a delivery
+channel decision (Notifications? Telegram? both?) that doesn't exist yet.
+
+Option B (chosen): Ship the minimal schema; treat richer features as a
+future phase requiring their own docs/03 amendment and ADR.
+
+Trade-offs
+
+Pros
+
+Matches documented schema exactly; no architecture invented; fast to ship
+and verify.
+
+Cons
+
+The shipped Watchlists feature is noticeably thinner than docs/21's vision -
+users get list management only, no alerting/AI insight.
+
+Future Review
+
+Revisit once Notifications (docs/20) exists as a real delivery channel -
+alerts need somewhere to deliver to before they're worth building.
+
+---
+
+# ADR-115
+
+Title
+
+Admin RBAC Uses the Existing Simple `UserRole` Enum, Not a Permission-Table Model
+
+Status
+
+Accepted
+
+Context
+
+docs/23_AUTHENTICATION_AND_RBAC.md §12-14 describes a granular permission
+model (roles *have* permissions, e.g. `signals.publish`, `admin.dashboard`).
+This was explicitly deferred at Phase 2A (BACKLOG.md §2) in favor of a simple
+`UserRole` enum column on `users` - no `roles`/`permissions`/
+`role_permissions` tables exist anywhere in the schema, unchanged since.
+
+Decision
+
+The first RBAC-enforcement dependency this project ever builds
+(`require_role`, `app/dependencies/rbac.py`) checks `current_user.role`
+against a fixed set of `UserRole` values per route - no granular permission
+strings, no permission table, no permission-checking indirection.
+
+Reason
+
+Phase 2A's deferral was never revisited because nothing needed enforcement
+until now. Admin (7D-C) is the first phase that actually needs a
+role-checking dependency; building the full permission-table model now,
+years of scope after the enum was chosen, would be a bigger architectural
+change than this phase's actual need (7 endpoints, 2 required roles) justifies.
+
+Alternatives Considered
+
+Option A: Build the full `roles`/`permissions`/`role_permissions` schema
+now, migrate `UserRole` off - rejected, no requirement in this phase needs
+per-permission granularity (every one of the 7 admin endpoints is
+Admin-or-SuperAdmin-only, not split by finer permission).
+
+Option B (chosen): Simple `require_role(*roles)` dependency over the
+existing enum.
+
+Trade-offs
+
+Pros
+
+Minimal new surface area; reuses a column that has existed since Phase 2A
+unchanged; matches every admin route's actual (coarse) authorization need.
+
+Cons
+
+Doesn't unblock docs/23 §13's Moderator/Support tiers (their listed
+permissions - "Manage Reports," "Assist Users" - have no matching endpoint
+in docs/04 yet regardless of enforcement model). A future phase that
+genuinely needs per-permission granularity still has to do the full
+migration this ADR declined to do now.
+
+Future Review
+
+Revisit if/when a route genuinely needs finer-than-role granularity (e.g. a
+Moderator who can view but not suspend users) - that's the trigger for the
+full permission-table migration, not this phase.
+
+---
+
+# ADR-116
+
+Title
+
+Admin Backend Limited to docs/04's 7 Documented Endpoints, docs/25's Monitoring/Feature-Flag Vision Deferred
+
+Status
+
+Accepted
+
+Context
+
+docs/25_ADMIN_PANEL.md describes live CPU/memory/disk/Redis/queue metrics,
+feature flags, maintenance actions ("restart workers," "clear cache,"
+"rebuild indicators"), and A/B prompt testing. `docs/04_API_SPECIFICATION.md`
+§Admin only ever committed to 7 endpoints: `GET /admin/{users,signals,
+system,logs,analytics}`, `POST /admin/{news,maintenance}`. No metrics
+collection, feature-flag table, or worker-management infrastructure exists
+anywhere in this codebase.
+
+Decision
+
+Phase 7D-C builds only the 7 documented endpoints. `GET /admin/system`
+reuses the existing `/health`/`/health/ready` liveness checks (Phase 1) plus
+simple `COUNT` queries for "today's" figures - it does not report live
+CPU/memory/disk/Redis-memory/queue-depth telemetry.
+
+Reason
+
+docs/25 is a Phase-0 vision document never reconciled against docs/04, the
+same category of gap already resolved for News/Economic/Signal/Chat in
+earlier phases (BACKLOG.md §1, §7) - docs/04 is the concrete contract,
+docs/25 is aspirational. Building real system telemetry requires new
+infrastructure (a metrics library, Celery `inspect()` wiring, Redis `INFO`
+parsing) that is real, separate scope - tracked already as the `GET /metrics`
+gap in BACKLOG.md §3.
+
+Alternatives Considered
+
+Option A: Build basic `psutil`-based CPU/memory reporting now since it's
+"just a library call" - rejected, still new infrastructure with its own
+deployment/permission implications (reading host-level system stats from
+inside a container), out of proportion to this phase's actual scope.
+
+Option B (chosen): Ship the 7 documented endpoints only; `/admin/system`
+reports liveness + counts, not telemetry.
+
+Trade-offs
+
+Pros
+
+Matches the concrete API contract exactly; zero new infrastructure
+dependencies; ships fast.
+
+Cons
+
+`GET /admin/system` is noticeably thinner than docs/25 §3/§12's vision - an
+operator still can't see real CPU/queue-depth from this UI, only up/down +
+today's counts.
+
+Future Review
+
+Revisit once BACKLOG.md §3's `GET /metrics` (Prometheus) work is picked
+up - real system telemetry should be built once, then surfaced here, not
+built twice (once ad hoc for Admin, once properly for Prometheus).
+
+---
+
+# ADR-117
+
+Title
+
+`POST /admin/maintenance` Limited to Actions With an Existing Concrete Implementation
+
+Status
+
+Accepted
+
+Context
+
+docs/25 §17 lists seven maintenance actions: Clear Cache, Restart Workers,
+Rebuild Indicators, Recalculate Confidence, Refresh News, Refresh Calendar,
+Health Check. Only two have any existing code to call - `NewsIngestionPipeline`
+(Phase 5A) and the Economic Calendar ingestion pipeline (Phase 5B) already
+exist and are already triggered on a Celery Beat schedule; "refresh" here
+just means admin-invoked instead of schedule-invoked.
+
+Decision
+
+`POST /admin/maintenance` accepts `{"action": "refresh_news" |
+"refresh_calendar"}` only, each calling the existing ingestion pipeline
+directly. Every other docs/25 §17 action is rejected (`400`, not silently
+ignored) until it has a real implementation to call.
+
+Reason
+
+"Restart Workers" has no process-management access from inside a FastAPI
+request handler in this deployment. "Clear Cache" has nothing to clear - no
+Redis-backed response caching exists anywhere (BACKLOG.md §11's explicit
+prior decision). "Rebuild Indicators"/"Recalculate Confidence" are
+meaningless for this project's stateless engines (ADR-027, ADR-046) - there
+is nothing persisted to "rebuild," every request already recomputes fresh.
+"Health Check" already exists as `GET /health/ready`, not a `POST` action.
+
+Alternatives Considered
+
+Option A: Accept all seven actions and return "not implemented" for five of
+them - rejected, `POST /admin/maintenance` would present a control that does
+nothing, worse than not offering it.
+
+Option B (chosen): Only accept actions with a real, callable implementation.
+
+Trade-offs
+
+Pros
+
+No fake/no-op admin controls; every accepted action does exactly what it
+says.
+
+Cons
+
+The Admin UI's maintenance panel is far narrower than docs/25 §17's vision.
+
+Future Review
+
+Revisit each rejected action individually as its underlying capability gets
+built (e.g. once response caching exists, "Clear Cache" becomes buildable).
+
+---
+
+# ADR-118
+
+Title
+
+Admin Nav Item Is Role-Gated Client-Side Only, No Server-Rendered Gating
+
+Status
+
+Accepted
+
+Context
+
+Phase 7A (ADR-101) considered and dropped a role-gated Admin nav item since
+no `/admin` destination existed yet. This project's auth model is entirely
+client-side (ADR-099, no BFF/httpOnly cookies) - every route-protection
+decision so far (`AuthGuard`/`GuestGuard`) has been a client-side check
+against the in-memory/localStorage session, not server-rendered.
+
+Decision
+
+`Sidebar`'s Admin nav item is rendered conditionally on
+`useAuth().user.role` being `admin`/`super_admin`, the same pattern as every
+other conditional UI element in this project. The `/admin/*` routes
+themselves are additionally protected by the real `require_role` backend
+dependency (ADR-115) - the nav item's visibility is a UX convenience, not
+the security boundary.
+
+Reason
+
+Consistent with ADR-099's already-accepted trade-off: this project has never
+had server-rendered route gating, and introducing one just for Admin would
+be a bigger architectural change (a real BFF or edge middleware layer) than
+this phase's scope justifies. The actual security boundary is, as with every
+other protected route, the backend's authorization check - a non-admin user
+manually navigating to `/admin/users` gets a real `403` from the API, not
+just a hidden nav link.
+
+Alternatives Considered
+
+Option A: Add `middleware.ts`-based edge gating for `/admin/*` specifically -
+rejected, introduces a second, inconsistent gating mechanism alongside every
+other route's client-side `AuthGuard`, for a marginal benefit (hiding a URL
+that still 403s on request).
+
+Option B (chosen): Client-side conditional nav rendering + real backend
+enforcement, same layering as every other protected feature.
+
+Trade-offs
+
+Pros
+
+Consistent with every existing route-protection pattern; zero new
+infrastructure.
+
+Cons
+
+A non-admin user who knows/guesses the `/admin` URL sees the page shell
+before its data fetches 403 (a brief flash), rather than never reaching it -
+same class of trade-off already accepted project-wide since ADR-099.
+
+Future Review
+
+Revisit alongside ADR-099 itself if a real XSS-hardening or SSR-gating
+requirement ever emerges - this is not an Admin-specific decision, it
+inherits the whole project's existing auth-architecture trade-off.
+
+---
+
+# ADR-119
+
+Title
+
+Admin-Only Account Provisioning Supersedes Public Self-Registration
+
+Status
+
+Accepted
+
+Context
+
+Every prior auth phase (2A/2B/2C/7A) was built assuming public
+self-registration (`POST /auth/register`, docs/23 §3). Phase 8 changes the
+product requirement: only administrators may create accounts.
+
+Decision
+
+`POST /auth/register` is gated behind `settings.allow_public_registration`
+(default `False`). When disabled it raises a new `RegistrationDisabledException`
+(`403`, explicit message). `UserService.register_user` is not deleted or
+duplicated - `AdminUserService.create_user` calls the same underlying
+method, so validation never drifts between the two entry points. `/register`
+becomes an informational stub (same precedent as `/forgot-password`,
+ADR-100) rather than a removed route.
+
+Reason
+
+A config flag (not a route deletion) keeps the change reversible and keeps
+exactly one implementation of registration validation. A `403` with an
+explicit message is consistent with this project's typed-exception
+convention - every other boundary in this app fails with a clear typed
+error, never silent `404`.
+
+Alternatives Considered
+
+Option A: Delete the register route/page entirely - rejected, an
+unexpectedly-vanished route is a worse failure mode than an explicit,
+informative error, and forecloses reversibility without a code change.
+
+Option B (chosen): Config-gated `403` + informational frontend stub.
+
+Trade-offs
+
+Pros
+
+Reversible via config; single source of registration-validation logic;
+consistent, honest error behavior.
+
+Cons
+
+The `POST /auth/register` endpoint remains reachable (returning `403`)
+rather than genuinely absent - a deliberate, documented trade-off, not an
+oversight.
+
+Future Review
+
+Revisit if a genuine "invite a new tenant with self-service registration
+re-enabled" requirement ever emerges (e.g. multi-tenant SaaS pivot).
+
+---
+
+# ADR-120
+
+Title
+
+`User` Gains `deleted_at`/`must_change_password`/`created_by_admin_id`; Soft Delete Only
+
+Status
+
+Accepted
+
+Context
+
+Admin user management needs to delete accounts, track who created them, and
+force a password change after an admin sets one on a user's behalf. `User`
+is a `CASCADE` FK target for `watchlists`, `telegram_accounts`,
+`conversations`, and `ai_analysis`.
+
+Decision
+
+Three new nullable `User` columns (`deleted_at`, `must_change_password`,
+`created_by_admin_id`). Deletion is soft (`deleted_at` set, no cascade)
+only - hard delete is not offered.
+
+Reason
+
+A hard delete would silently destroy a user's entire history (chat
+conversations, linked Telegram account, watchlists) via cascade, with no
+undo - unacceptable for an admin-panel action a single click away. Soft
+delete preserves everything for audit/compliance while still excluding the
+account from listings and blocking login.
+
+Alternatives Considered
+
+Option A: Hard delete with an "are you sure" confirmation only - rejected,
+a confirmation dialog doesn't mitigate the actual risk (accidental clicks,
+or a genuinely-intended delete that didn't anticipate the cascade).
+
+Option B (chosen): Soft delete via `deleted_at`, no hard-delete option in
+this phase.
+
+Trade-offs
+
+Pros
+
+No accidental, irreversible data loss; deleted users remain available for
+audit/dispute resolution.
+
+Cons
+
+No true "erase my data" capability yet - deferred as its own future design
+pass (needs a real decision on what must be erased vs. anonymized vs.
+retained for legal reasons, e.g. GDPR).
+
+Future Review
+
+Revisit if a genuine data-erasure (not just account-deactivation)
+requirement emerges.
+
+---
+
+# ADR-121
+
+Title
+
+RBAC Enforcement Extended with a Vertical-Access Check: Target Role, Not Just Actor Role
+
+Status
+
+Accepted
+
+Context
+
+`require_admin`/`require_super_admin` (ADR-115's extension) check the
+*actor's* role. Without an additional check, any `admin` could edit,
+disable, or delete any other `admin` or `super_admin` account - a
+privilege/peer-tampering gap route-level role checks alone don't close.
+
+Decision
+
+`AdminUserService` checks the *target* user's role on every mutation, not
+just the actor's. An `admin` actor may only act on `guest`/`registered`/
+`premium`/`moderator`/`support` targets. Only a `super_admin` may act on
+`admin`/`super_admin` targets. Role-grant/role-change is further isolated
+to its own `require_super_admin`-only endpoint (`PATCH /admin/users/{id}/role`).
+
+Reason
+
+Route-level `require_admin` alone answers "can this caller reach any
+`/admin/users` endpoint," not "can this caller act on *this specific*
+target" - the two are different questions, and only the service layer has
+the target loaded to answer the second one.
+
+Alternatives Considered
+
+Option A: Rely on route-level role checks only - rejected, leaves the
+admin-tampering-admin gap open entirely.
+
+Option B (chosen): Service-layer target-role check on every mutating method.
+
+Trade-offs
+
+Pros
+
+Closes a real vertical-access gap; single, auditable enforcement point per
+mutation type.
+
+Cons
+
+One more check every mutating method must remember to include - mitigated
+by putting it in `AdminUserService`'s shared base logic rather than
+duplicating it per method.
+
+Future Review
+
+None anticipated - this is a permanent, not provisional, control.
+
+---
+
+# ADR-122
+
+Title
+
+`Permission`/`ROLE_PERMISSIONS` In-Code Seam Added Alongside `require_role`
+
+Status
+
+Accepted
+
+Context
+
+Phase 8's authorization requirement explicitly asked for "future
+extensibility" beyond simple role checks (e.g. a Moderator who can view but
+not suspend users, docs/23 §13, still with no matching endpoint). ADR-115
+already deferred the full `roles`/`permissions`/`role_permissions` DB schema.
+
+Decision
+
+A `Permission` `StrEnum` + `ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]]`
+in-code mapping ships in Phase 8B alongside `require_role`. `require_permission(...)`
+reads from this dict. No new database table.
+
+Reason
+
+The extensibility ask is real, but Phase 8's actual routes only need
+role-level granularity - a ~15-line in-code dict satisfies "extensible
+later" without the larger migration ADR-115 already declined to do
+prematurely. If real permission-table requirements appear later,
+`ROLE_PERMISSIONS` is the one place that changes from a hardcoded dict to a
+DB-backed lookup; every `Depends(require_permission(...))` call site is
+unaffected.
+
+Alternatives Considered
+
+Option A: Build the full permission-table schema now since "future
+extensibility" was requested - rejected, no route in this phase needs
+finer-than-role granularity; this would be building ahead of demonstrated
+need, reversing ADR-115's already-accepted reasoning without new
+justification.
+
+Option B (chosen): In-code `Permission` enum/dict seam, no schema change.
+
+Trade-offs
+
+Pros
+
+Cheap, real extensibility seam; zero new infrastructure; doesn't reverse
+ADR-115.
+
+Cons
+
+Not dynamically configurable (a `ROLE_PERMISSIONS` change requires a code
+deploy, not an admin-panel edit) - acceptable since no requirement asks for
+runtime-configurable permissions.
+
+Future Review
+
+Revisit if/when a route genuinely needs a permission not cleanly aligned to
+the existing role tiers - same trigger condition ADR-115 already named.
+
+---
+
+# ADR-123
+
+Title
+
+First Super-Admin Bootstrapped via Operator-Run CLI Script, Not Auto-Bootstrap
+
+Status
+
+Accepted
+
+Context
+
+Phase 8 removes public registration, but this project has zero admin
+accounts. Something must create the first `super_admin` before the
+registration gate closes, or login becomes permanently unreachable without
+direct database access.
+
+Decision
+
+`backend/scripts/create_admin.py`, a one-off, operator-run CLI script
+(mirrors the existing `backend/scripts/seed_dev_data.py` precedent) - not
+automatic startup-time bootstrap from environment variables.
+
+Reason
+
+Auto-bootstrap (`BOOTSTRAP_ADMIN_EMAIL`/`PASSWORD` env vars, checked on
+every app start) is standing logic with a permanent (if narrow) attack
+surface for what is fundamentally a one-time operational need. An
+operator-run script is explicit and auditable - someone had to deliberately
+run it - and adds zero always-on code paths.
+
+Alternatives Considered
+
+Option A: Env-var auto-bootstrap on startup - rejected per the reasoning
+above.
+
+Option B (chosen): Operator-run CLI script.
+
+Trade-offs
+
+Pros
+
+No standing bootstrap code path; explicit, auditable, one-time action.
+
+Cons
+
+Requires direct server/container access to run once per environment
+(acceptable - deployment automation can still invoke the script as part of
+a provisioning step, it just isn't baked into the app's own startup).
+
+Future Review
+
+None anticipated.
+
+---
+
+# ADR-124
+
+Title
+
+Admin "API Usage" Page Ships as a Labeled AI-Analysis/Signal-Count Proxy, Not Deferred
+
+Status
+
+Accepted
+
+Context
+
+docs/25's Admin vision includes an API Usage view, but no request-metrics
+collection infrastructure exists anywhere in this project (`GET /metrics`
+remains an open BACKLOG.md §3 item, same gap already noted for `/admin/system`
+in ADR-116).
+
+Decision
+
+The page ships in Phase 8D showing real per-day `ai_analysis`/`signals` row
+counts, explicitly labeled as a usage proxy, not true per-endpoint API
+request metrics.
+
+Reason
+
+Real, already-persisted data (`ai_analysis`/`signals` creation timestamps)
+gives a genuinely useful signal (how much AI-orchestrator/signal-generation
+activity is happening) without fabricating numbers or requiring new
+metrics infrastructure - closer to the spirit of the request than an empty
+placeholder, as long as the label is honest about what it is and isn't.
+
+Alternatives Considered
+
+Option A: Defer the page entirely with an empty state - considered
+reasonable, but rejected since real (if narrower) data already exists and
+costs nothing new to surface.
+
+Option B (chosen): Labeled proxy view.
+
+Trade-offs
+
+Pros
+
+Ships something real and useful now; zero new infrastructure.
+
+Cons
+
+Not true API-request-level metrics (rate, latency, per-endpoint
+breakdowns) - still gated on the pre-existing `GET /metrics` gap.
+
+Future Review
+
+Revisit once BACKLOG.md §3's Prometheus `/metrics` work is picked up - real
+telemetry should replace this proxy, not sit alongside it indefinitely.
+
+---
+
 # Review Policy
 
 Review ADRs:

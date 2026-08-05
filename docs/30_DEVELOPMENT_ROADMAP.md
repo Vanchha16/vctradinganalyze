@@ -206,7 +206,15 @@ Sub-Phases
 
 7C Frontend Experience & Advanced Trading UI (Markets sort/search/quick-actions; AI Analysis guided flow, confidence gauge, evidence timeline, `react-markdown` reasoning; AI Chat conversation search/archive/delete, suggested prompts, optimistic pending-message UX, markdown messages; Signal detail reuses Reasoning/Evidence components, adds chart + status timeline, symbol filter; `PriceChart` extended with zone + time-marker overlays for BOS/CHoCH/Order Blocks/FVG/Liquidity, ADR-107; Dashboard gains a sixth Quick Actions widget; app-wide loading-skeleton/transition/accessibility/code-splitting polish; zero new backend endpoints; docs/55_FRONTEND_EXPERIENCE_ADVANCED_UI.md, ADR-107 through ADR-109) - Completed
 
-7D+ Admin, session/device-management UI, Watchlists CRUD backend, Subscription - Not Started
+7D-A Watchlists Backend (`watchlists`/`watchlist_items` models + migration per docs/03 §12's minimal schema, repository/service, `GET/POST/PUT/DELETE /watchlists` + add/remove asset; docs/58_WATCHLISTS_ADMIN_ARCHITECTURE.md, ADR-114) - Not Started
+
+7D-B Watchlists Frontend (replaces the ADR-103 placeholder with real CRUD - list, create, rename, delete, add/remove assets; docs/58) - Not Started
+
+7D-C Admin Backend (first-ever `require_role` RBAC-enforcement dependency over the existing `UserRole` enum, ADR-115; the 7 endpoints docs/04 §Admin lists - `GET /admin/{users,signals,system,logs,analytics}`, `POST /admin/{news,maintenance}`; `/admin/system` reuses existing health checks + counts, not live telemetry, ADR-116; `/admin/maintenance` limited to refresh-news/refresh-calendar, ADR-117; docs/58) - Not Started
+
+7D-D Admin Frontend (role-gated Admin nav item and pages - users/signals/system/logs/analytics - over 7D-C's endpoints only; ADR-118; docs/58) - Not Started
+
+7D-E+ Session/device-management UI, Watchlists alerts/tags/pinning/AI summary, Admin system telemetry/feature flags, Subscription - Not Started (still deferred, see docs/58 §5)
 
 ---
 
@@ -238,13 +246,62 @@ Sub-Phases
 
 # Phase 8
 
-Analytics
+Admin User Management
 
-Reporting
+Status
 
-Monitoring
+Proposed - Architecture Complete, Awaiting Approval
 
-Logging
+Sub-Phases
+
+8A Architecture & Design (docs/59_ADMIN_USER_MANAGEMENT_ARCHITECTURE.md - database
+impact, backend/frontend architecture, full API spec, RBAC design, registration-removal
+migration path, security review; supersedes ADR-116's user-management scope decision,
+extends ADR-115/ADR-118 unchanged; ADR-119 through ADR-124) - Completed and Approved
+2026-08-05 (architecture only, no code)
+
+8B Authorization (`require_role`/`require_admin`/`require_super_admin`/`require_permission`,
+`Permission`/`ROLE_PERMISSIONS` (ADR-122), `app/dependencies/rbac.py`, extends
+`get_current_user` without modifying it; `User` gains `deleted_at`/`must_change_password`/
+`created_by_admin_id` via migration `f3a9c1d2e5b7`, ADR-120; 19 new tests,
+`tests/test_rbac.py`) - Completed (authorization layer + schema only; no admin routes/
+service/frontend yet - those are 8C/8D)
+
+8C User Management (list/search/filter/pagination/create/edit/disable/activate/
+reset-password/soft-delete/role-change over `/admin/users*` (9 endpoints),
+`AdminUserService`, `UserRepository` filtering/soft-delete methods,
+`AuthenticationService.login` now rejects `deleted_at`-set accounts, `UserService.
+register_user` extended additively for admin-created accounts (role/must_change_password/
+created_by_admin_id); 55 new tests across service/API/auth-integration layers) -
+Completed
+
+8D Frontend (role-gated Admin nav group + 7 pages - Dashboard/Users/Audit Logs/System
+Health/API Usage/Signal Statistics/Settings; Users page is full CRUD - search/filter/
+pagination/sort, Add/Edit/Reset-Password/Change-Role dialogs, Disable/Enable/Delete
+confirmations, role-aware action visibility; Dashboard composed client-side from real
+`GET /admin/users` calls, no fake data; the four pages with no Phase 8C backend
+(Audit Logs/System Health/API Usage/Signal Statistics) ship as honest placeholders,
+same ADR-103 precedent as Watchlists; new `AlertDialog` primitive (`@radix-ui/
+react-alert-dialog`), `apiPatch` added to `api-client.ts`; verified via `npm run
+typecheck`/`lint`/`build` only - no live browser screenshots, no admin account exists
+yet pending Phase 8E's bootstrap script) - Completed
+
+8E Registration Removal (`settings.allow_public_registration=False` by default,
+`POST /auth/register` returns `403 registration_disabled`; `/register` redirects
+unconditionally to `/login` rather than an informational stub - explicit instruction
+superseded docs/59 §9's original ADR-100-precedent sketch; every register link/footer
+removed from the frontend; `backend/scripts/create_admin.py` bootstraps the first
+Super Admin, ADR-123, refuses a second run; docs/23 §3 updated to describe the new
+flow; 6 new backend tests) - Completed
+
+8F Audit Logs (no new schema - reuses the existing `AuditLog` table/repository from
+Phase 2B for every admin mutation) - Not Started
+
+**Note:** this phase number was previously an empty placeholder reserved for
+"Analytics, Reporting, Monitoring, Logging" (no sub-phases, nothing built). That content
+is relocated to Phase 12 (this doc's last section, after the existing Phase 10/11/
+Long-Term Vision) so it isn't lost, since Admin User Management is the work actually
+requested and scoped under the "Phase 8" name.
 
 ---
 
@@ -307,3 +364,19 @@ Enterprise Platform
 AI Strategy Builder
 
 Autonomous Research Agents
+
+---
+
+# Phase 12
+
+Analytics
+
+Reporting
+
+Monitoring
+
+Logging
+
+Relocated from the original "Phase 8" placeholder when that number was reassigned to
+Admin User Management (see Phase 8's note above) - unchanged content, no sub-phases
+defined yet, nothing built.

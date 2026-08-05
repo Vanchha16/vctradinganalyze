@@ -38,6 +38,29 @@ Microsoft Login
 
 # 3. Registration Flow
 
+**Superseded as of Phase 8E (docs/59_ADMIN_USER_MANAGEMENT_ARCHITECTURE.md §9,
+ADR-119).** The self-service flow originally described below (register →
+verify email → activate → login) is no longer reachable - `POST
+/auth/register` returns `403 registration_disabled` by default
+(`settings.allow_public_registration=False`). Accounts are admin-provisioned
+only:
+
+- The platform's first account is created once via `backend/scripts/
+  create_admin.py` (operator-run, ADR-123) - always `role=SUPER_ADMIN`,
+  `must_change_password=False`, `created_by_admin_id=None`.
+- Every account after that is created by an existing admin via
+  `POST /admin/users` (`AdminUserService.create_user`, docs/59 §6.2) -
+  `must_change_password=True`, `created_by_admin_id` set to the creating
+  admin's id.
+
+Both paths reuse the exact same underlying `UserService.register_user`
+(password-policy validation, email/username uniqueness, Argon2id hashing) -
+only *who* can reach that logic changed, not the logic itself. The original
+flow below is preserved for historical context only - it does not describe
+current behavior.
+
+Original (historical, no longer reachable):
+
 User
 
 ↓

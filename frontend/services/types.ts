@@ -671,3 +671,14 @@ export interface SendMessageResponse {
   assistant_message: MessageResponse;
   warnings: string[];
 }
+
+export interface TelegramLinkResponse {
+  link_code: string;
+  bot_username: string;
+  expires_at: string;
+}
+
+export interface TelegramStatusResponse {
+  linked: boolean;
+  linked_at: string | null;
+}

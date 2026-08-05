@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageContainer } from "@/features/dashboard/components/page-container";
 import { AccountSection } from "@/features/settings/components/account-section";
 import { AppearanceSection } from "@/features/settings/components/appearance-section";
+import { TelegramSection } from "@/features/settings/components/telegram-section";
 import { useAuth } from "@/hooks/use-auth";
 
 export default function SettingsPage() {
@@ -16,6 +17,7 @@ export default function SettingsPage() {
       <PageContainer>
         <div className="flex flex-col gap-6">
           <AppearanceSection />
+          <TelegramSection />
           {status !== "authenticated" || !user ? <Skeleton className="h-48 w-full" /> : <AccountSection user={user} />}
         </div>
       </PageContainer>

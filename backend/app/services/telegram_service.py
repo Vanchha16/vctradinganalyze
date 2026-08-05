@@ -42,13 +42,15 @@ class TelegramService:
         if existing is not None:
             existing.link_code = code
             existing.link_code_expires_at = expires_at
-            self._account_repository.session.flush()
+            self._account_repository.commit()
             return existing
 
         account = TelegramAccount(
             user_id=user_id, link_code=code, link_code_expires_at=expires_at
         )
-        return self._account_repository.create(account)
+        account = self._account_repository.create(account)
+        self._account_repository.commit()
+        return account
 
     def resolve_link_code(self, link_code: str, chat_id: str) -> TelegramAccount | None:
         """Called when `/start <code>` arrives (docs/57 §3). Returns
@@ -76,6 +78,7 @@ class TelegramService:
         account = self._account_repository.get_by_user_id(user_id)
         if account is not None:
             self._account_repository.delete(account)
+            self._account_repository.commit()
 
     def linked_accounts(self) -> list[TelegramAccount]:
         return self._account_repository.list_linked()

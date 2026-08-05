@@ -79,8 +79,11 @@ export function TelegramSection() {
           <>
             <p className="text-sm text-muted-foreground">
               Open Telegram, message{" "}
-              <span className="font-medium text-foreground">@{pendingLink.bot_username}</span>,
-              and send:
+              <span className="font-medium text-foreground">
+                {pendingLink.bot_username.startsWith("@") ? "" : "@"}
+                {pendingLink.bot_username}
+              </span>
+              , and send:
             </p>
             <code className="w-fit rounded-md bg-muted px-3 py-2 text-sm font-medium">
               /start {pendingLink.link_code}

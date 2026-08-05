@@ -7,9 +7,13 @@
 const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",
   timeStyle: "short",
+  timeZone: "Asia/Bangkok",
 });
 
-const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+const dateFormatter = new Intl.DateTimeFormat("en-US", {
+  dateStyle: "medium",
+  timeZone: "Asia/Bangkok",
+});
 
 const relativeFormatter = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
 

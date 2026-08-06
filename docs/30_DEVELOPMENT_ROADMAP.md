@@ -313,15 +313,21 @@ Long-Term Vision, in that order.
 
 # Phase 9
 
-Performance
+Broken down 2026-08-06 into four sub-phases - see
+`docs/60_PHASE_9_HARDENING_ARCHITECTURE.md` for the full architecture,
+scoping, and reasoning behind each.
 
-Security
-
-Testing
-
-Bug Fixes
-
-Optimization
+- **9A Public Surface Protection** - **in progress.** Correct client-IP
+  resolution behind the production reverse proxy, per-IP rate limiting on
+  the ten previously-unlimited public routes, CORS scoped down, baseline
+  security headers.
+- **9B Auth Hardening** - failed-login lockout, `jti` access-token
+  revocation decision. Not started.
+- **9C Testing Foundation** - Playwright E2E on core flows, `pytest-cov`.
+  Not started.
+- **9D Measurement** - `GET /metrics`. Not started, and a prerequisite
+  for Performance/Optimization, which remain unscheduled until this
+  exists.
 
 ---
 

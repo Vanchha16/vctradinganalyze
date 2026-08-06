@@ -6544,6 +6544,187 @@ routinely taking longer (or timing out spuriously sooner) once a real
 
 ---
 
+# ADR-132
+
+Title
+
+Phase 9A: Trusted-Proxy Client-IP Resolution, Per-IP Rate Limiting, CORS
+Scoping, and Baseline Security Headers
+
+Status
+
+Accepted
+
+Context
+
+Ten route modules (`technical_analysis`, `smc`, `market_regime`,
+`analysis_confidence`, `strategy`, `risk_management`, `market_data`,
+`news`, `economic_calendar`, `health`) are unauthenticated by design
+(docs/60 §2, preserving the Phase 3C "public read-only API" decision),
+and six of them run a full engine pass over ~500 candles per request.
+None had any rate limit - ADR-127's quota only ever covered the two
+LLM-token-spending endpoints. Production runs on a 911MB RAM / 2 vCPU box
+already ~330MB into swap (BACKLOG.md §10); an unthrottled loop against
+any one of the six engine routes can exhaust it.
+
+Building a per-IP limit exposed a pre-existing bug first: `request.
+client.host`, read directly by `admin_system.py`'s and `admin_users.py`'s
+identically-named `_client_ip` helpers and an inline expression in
+`auth.py`'s login route, resolves to Nginx's own loopback address in
+production (docs/27 puts Nginx in front of the app), not the real
+client. This meant every audit-trail `ip_address` was almost certainly
+wrong in production (BACKLOG.md §4), and - more urgently for this phase -
+a per-IP rate limit built directly on top of it would have keyed every
+request to the same "client," either tripping instantly for the whole
+site or requiring a limit so high it would protect nothing.
+
+Separately, `app/main.py`'s CORS configuration
+(`allow_methods=["*"]`, `allow_headers=["*"]`, `allow_credentials=True`)
+had been flagged as broader than necessary since before Phase 1.1
+(BACKLOG.md §4), and the app set no baseline security response headers
+at all.
+
+Decision
+
+1. **Client IP resolution goes through uvicorn's own
+   `ProxyHeadersMiddleware`**, enabled explicitly via `--proxy-headers
+   --forwarded-allow-ips <Settings.trusted_proxy_ips>` (default
+   `"127.0.0.1"`) rather than relied on as uvicorn's own default (which
+   already happens to match, but depending on an upstream default that
+   could change, or that a different ASGI runner might not share, was
+   judged not worth the risk). This rewrites `request.client` from
+   `X-Forwarded-For` only when the immediate TCP peer matches the
+   configured trusted address - an untrusted peer's forged header is
+   never applied, so application code never parses that header itself.
+   `backend/scripts/run_dev.py` passes both flags for local `api` mode;
+   production must add them to the uvicorn `ExecStart` line (operator
+   action, not deployed by this change - see the build report).
+2. **One shared helper, `app/core/client_ip.py::get_client_ip`**,
+   replaces the two duplicate `_client_ip` functions and the inline
+   expression in `auth.py`. It is intentionally as simple as the code it
+   replaced (`request.client.host if request.client else None`) - all of
+   the actual security property comes from (1), not from any logic in
+   this function.
+3. **Per-IP rate limiting extends `app/dependencies/quota.py`'s existing
+   Redis fixed-window pattern** (`app/dependencies/rate_limit.py`) rather
+   than adding a library (`slowapi` or otherwise). Keyed by client IP
+   instead of user id; applied at router-include time
+   (`app/api/v1/router.py`'s `include_router(..., dependencies=[...])`)
+   rather than per-handler, since the nine affected modules have roughly
+   30 handlers between them; fails open on any Redis exception, same
+   rationale as ADR-127. `/health*` is excluded outright. Two tiers -
+   `public_engine` (limit 20/60s) for the six expensive modules,
+   `public_data` (limit 100/60s) for the three cheap-read modules - sized
+   against measured real frontend traffic (docs/60 §4.2), not guessed.
+4. **CORS scoped to actual usage**: `allow_methods=["GET", "POST", "PUT",
+   "PATCH", "DELETE"]`, `allow_headers=["Content-Type", "Authorization"]`,
+   matching `frontend/services/api-client.ts`'s only caller.
+   `allow_credentials` changed to `False` - nothing ever set `credentials:
+   "include"` on a `fetch()` call, so it was dead configuration, not a
+   real requirement.
+5. **A new `SecurityHeadersMiddleware`** sets `X-Content-Type-Options:
+   nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy:
+   strict-origin-when-cross-origin` on every response. A full
+   `Content-Security-Policy` is explicitly out of scope for this decision
+   - see Trade-offs.
+
+Reason
+
+The client-IP fix has to come before the rate limiter, not alongside it,
+because a rate limiter built on the old helper would have been actively
+dangerous in production (see Context) rather than merely ineffective.
+Reusing `quota.py`'s Redis pattern instead of adding a rate-limiting
+library keeps the dependency surface unchanged and reuses an
+already-tested fail-open code path; the only genuinely new idea is
+keying by IP and attaching at the router level instead of the handler
+level, both small, targeted deltas. Two rate-limit tiers (not one) were
+chosen because the engine and data route groups have measurably
+different real costs and call volumes (docs/60 §4.2) - one shared budget
+would have meant either starving legitimate engine-route usage to
+protect against abuse of cheap reads, or setting the limit so high on the
+expensive routes that it stopped protecting the box at all. CORS and the
+security headers were both small, low-risk, already-flagged gaps that
+naturally belonged in the same "harden the public-facing surface" pass
+as the rate limiter, rather than opening three separate phases for
+closely related fixes.
+
+Alternatives Considered
+
+Option A: Trust `X-Forwarded-For` directly in application code (e.g. in
+`get_client_ip` itself), with an allowlist check against the immediate
+peer implemented by hand - rejected; this duplicates exactly what
+uvicorn's `ProxyHeadersMiddleware` already does, correctly, as a
+maintained library feature, for no benefit. Reimplementing trusted-proxy
+header parsing in application code is the kind of thing that's easy to
+get subtly wrong (e.g. trusting the wrong header on a comma-separated
+chain, or checking the wrong request attribute after a header is
+present) in a way that wouldn't be caught until an actual spoofing
+attempt.
+
+Option B: Add a dedicated rate-limiting library (`slowapi`, `fastapi-
+limiter`) - rejected per the build spec's explicit instruction and this
+project's own precedent: Redis and a working fixed-window implementation
+already exist (`quota.py`), and a second, different rate-limiting
+mechanism living alongside the first would be two things to reason about
+where one already sufficed.
+
+Option C: One rate-limit tier for all public routes instead of two -
+considered, and would have been simpler; rejected because the "engine"
+and "data" route groups' real costs and call volumes differ enough
+(docs/60 §4.2 table) that a single limit would have been wrong for one
+group or the other, not a compromise that worked for both.
+
+Option D: Silently ignore `--port`-style irrelevant flags rather than
+document CORS/headers as part of this same ADR, splitting them into
+their own decision records - rejected; both are small enough, and
+directly enough related to "harden the previously-open public surface,"
+that a separate ADR each would have fragmented one coherent decision
+into three for no reader benefit.
+
+Option E (chosen): Trusted-proxy resolution via uvicorn's built-in
+middleware; per-IP rate limiting via `quota.py`'s existing pattern, two
+tiers; CORS scoped to real usage; baseline security headers; full CSP
+explicitly deferred.
+
+Trade-offs
+
+Pros
+
+Closes a real, demonstrable production vulnerability (unlimited public
+engine-route requests against a resource-constrained box) and a real,
+demonstrable production bug (wrong audit-trail IPs) with no new runtime
+dependency. CORS and header changes are strictly more restrictive than
+before with no observed frontend regression (see the build report's
+manual verification).
+
+Cons
+
+The rate limits (20/60s engine, 100/60s data) are hand-picked starting
+points sized against measured traffic, not calibrated against real
+production abuse patterns - the same caveat every prior threshold
+decision in this project carries (ADR-127, ADR-130's timeout). A shared
+public IP (NAT, a corporate proxy, a future CDN) will share one budget
+across all of its real users; this is an inherent limitation of any
+per-IP scheme, not specific to this implementation, and is not addressed
+here. No `Content-Security-Policy` is added - the app remains vulnerable
+to whatever a CSP would have mitigated (e.g. certain injected-script
+scenarios) until that dedicated work happens. Production is not actually
+protected until the operator applies the two uvicorn flags this ADR
+depends on (docs/60 §4.1) - the code change alone is not sufficient.
+
+Future Review
+
+Revisit the two rate-limit tiers' exact numbers once real production
+traffic (or a real abuse attempt) provides actual data instead of the
+measured-but-synthetic frontend page-load counts this decision was sized
+against. Revisit trusting only `127.0.0.1` as the proxy if the Nginx/app
+topology ever moves off a single host. Build the deferred
+`Content-Security-Policy` as its own dedicated piece of work, not folded
+into a future unrelated phase. Revisit per-IP keying generally if a CDN
+or corporate-NAT false-positive rate becomes a real, observed problem.
+
+---
+
 # Review Policy
 
 Review ADRs:

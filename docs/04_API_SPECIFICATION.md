@@ -901,6 +901,11 @@ Out of scope for Phase 6C: NLP symbol extraction from free text; multi-asset com
 
 GET /watchlists
 
+GET /watchlists/{id}
+
+Single watchlist with resolved asset rows (ADR-128, inferred addition
+for the 7D-B detail view - not in the original literal spec).
+
 POST /watchlists
 
 PUT /watchlists/{id}

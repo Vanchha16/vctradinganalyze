@@ -37,6 +37,8 @@ from app.models.system_setting import SystemSetting
 from app.models.telegram_account import TelegramAccount
 from app.models.user import User
 from app.models.user_session import UserSession
+from app.models.watchlist import Watchlist
+from app.models.watchlist_item import WatchlistItem
 
 __all__ = [
     "AIAnalysis",
@@ -76,4 +78,6 @@ __all__ = [
     "User",
     "UserRole",
     "UserSession",
+    "Watchlist",
+    "WatchlistItem",
 ]

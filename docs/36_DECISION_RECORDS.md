@@ -6000,6 +6000,108 @@ separate, larger scope - not an extension of this dependency.
 
 ---
 
+# ADR-128
+
+Title
+
+Watchlists Backend (7D-A): `GET /watchlists/{id}`, Item Uniqueness, and
+`CreatedAtMixin` Choice
+
+Status
+
+Accepted
+
+Context
+
+Phase 7D-A builds exactly `docs/03` §12's two tables
+(`watchlists`/`watchlist_items`) and `docs/58` §2's contract, per ADR-114's
+scope decision. Three schema/API details in this build are inferred
+beyond the literal text of `docs/03`/`docs/04` and need recording here per
+CLAUDE.md's "never invent architecture" rule, the same practice already
+applied to `signals.created_at` (ADR-091) and `signal_bookmarks`'
+uniqueness (ADR-090).
+
+Decision
+
+1. `GET /watchlists/{id}` is added as a new endpoint returning a single
+   watchlist with its member assets resolved to full `AssetResponse` rows
+   - `docs/04`'s literal Watchlists section only lists `GET /watchlists`,
+   `POST /watchlists`, `PUT /watchlists/{id}`, `DELETE /watchlists/{id}`,
+   and the two `.../assets` routes. `docs/58` §2.3 already anticipated
+   this addition for the 7D-B detail view; this ADR is what makes it
+   official per the "inferred addition" pattern ADR-091 established.
+2. `watchlist_items` gets a unique constraint on `(watchlist_id,
+   asset_id)` (`uq_watchlist_items_watchlist_asset`) - an asset cannot be
+   added to the same watchlist twice. Follows `OAuthAccount`'s
+   `(provider, provider_user_id)` precedent (ADR-022) and
+   `signal_bookmarks`' `(user_id, signal_id)` precedent (ADR-090)
+   directly; `docs/03` §12 lists the columns but never states a
+   uniqueness rule.
+3. Both `watchlists` and `watchlist_items` use `CreatedAtMixin`, not
+   `TimestampMixin` - `watchlists.name` is the only column either table
+   ever mutates after creation (renaming), and `watchlist_items` rows are
+   never updated in place at all (an item is either present or absent,
+   the same append-only reasoning as `signal_bookmarks`, ADR-090). Neither
+   table needs `updated_at`.
+
+Reason
+
+All three are the same class of decision this project has made
+repeatedly: `docs/03`/`docs/04` specify the columns/routes a table or
+endpoint set needs at the level of "what data, what shape," not every
+uniqueness constraint or supporting read endpoint a working
+implementation requires. Rather than silently adding these or, worse,
+leaving `GET /watchlists/{id}` unbuilt and blocking 7D-B's detail view,
+each is recorded here so the schema/API stays traceable back to an
+explicit decision instead of an implementation detail no one chose on
+purpose.
+
+Alternatives Considered
+
+Option A (`GET /watchlists/{id}`): Have the frontend compose a detail
+view purely from `GET /watchlists` (list, already has item counts) plus
+per-asset `GET /assets/{symbol}` calls - rejected; this means N+1 calls
+for every watchlist detail view for no benefit over one endpoint that
+already has the watchlist and its items in hand.
+
+Option B (item uniqueness): Allow duplicate `(watchlist_id, asset_id)`
+rows and de-duplicate for display - rejected; a duplicate row has no
+legitimate meaning (the asset either is or isn't on the list), same
+reasoning ADR-090 already gave for `signal_bookmarks`.
+
+Option C (mixin choice): Use `TimestampMixin` on both tables for
+consistency with `docs/03` §1's stated default - rejected; §1's default
+is already overridden case-by-case throughout this project
+(`ai_analysis`, `signals`, `signal_bookmarks`, `news_articles`) wherever a
+table is genuinely append-only or has no second mutable column, and
+`BACKLOG.md` §1 already flags §1's blanket rule as unreconciled with
+per-table reality.
+
+Trade-offs
+
+Pros
+
+Keeps the schema/API exactly as narrow as ADR-114 intends while still
+supporting the one read shape 7D-B genuinely needs; the uniqueness
+constraint prevents a meaningless duplicate state from ever existing;
+consistent with every prior inferred-schema ADR in this project.
+
+Cons
+
+`GET /watchlists/{id}` is one more endpoint than `docs/04`'s literal text
+lists, so a reader relying on `docs/04` alone without also checking this
+ADR could be surprised by it - mitigated by updating `docs/04` §Watchlists
+in the same phase (§2.7 of the build spec).
+
+Future Review
+
+None of ADR-114's excluded features (alerts, tags, pinning, AI summary,
+performance history) are touched or made easier/harder to build later by
+this ADR - they remain deferred exactly as ADR-114 left them, pending
+their own documentation-first pass.
+
+---
+
 # Review Policy
 
 Review ADRs:

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added - Phase 7D-A: Watchlists Backend (ADR-128)
+
+`Watchlist`/`WatchlistItem` models (`app/models/watchlist.py`/`watchlist_item.py`, docs/03 §12's minimal schema, `CreatedAtMixin` not `TimestampMixin` - `name` is the only mutable column and items are never updated in place) and migration `6dd25f6c4947`. `WatchlistRepository` covers both tables (a `WatchlistItem` never has meaning without its parent, unlike `Signal`/`SignalBookmark`'s split); `WatchlistService` mirrors `AdminUserService`'s shape (constructor-injected repos, one method per use case, a private `_resolve_owned` ownership guard)
+
+All 7 routes live under `app/api/v1/routes/watchlists.py`, auth-gated via the existing `get_current_user` (no quota - plain DB reads/writes, no LLM cost, ADR-127 stays scoped to its two token-costed endpoints): `GET/POST /watchlists`, `GET/PUT/DELETE /watchlists/{id}`, `POST /watchlists/{id}/assets`, `DELETE /watchlists/{id}/assets/{asset_id}`. Every operation is scoped to the calling user - a watchlist owned by someone else returns the same 404 as one that doesn't exist, never a distinguishable 403
+
+**ADR-128**: `GET /watchlists/{id}` added as an inferred endpoint beyond docs/04's literal list (needed for the 7D-B detail view, same category of inference as `signals.created_at`, ADR-091); `(watchlist_id, asset_id)` uniqueness follows `OAuthAccount`/`signal_bookmarks`' precedent (ADR-022/ADR-090); `CreatedAtMixin` chosen over `TimestampMixin` on both tables
+
+Deliberately excluded (per ADR-114, unchanged by this phase): custom alerts, tags, pinning, AI watchlist summaries, performance history, sharing between users, any admin override. 7D-B (Watchlists Frontend) remains Not Started - `frontend/app/(protected)/watchlists` untouched
+
+15 new tests (`backend/tests/test_watchlist_models.py`, `backend/tests/test_watchlist_routes.py`) - CRUD round-trip, add/remove asset, the unique-constraint and cascade-delete behavior (`PRAGMA foreign_keys=ON`), user-scoping across two identities, unauthenticated rejection
+
 ### Added - Per-User LLM Quota (ADR-127)
 
 `app/dependencies/quota.py` adds `require_quota(bucket, limit, window_seconds)`, a dependency factory mirroring `app/dependencies/rbac.py`'s shape - composes `get_current_user` via `Depends()` without modifying it, and maintains a per-user fixed-window counter in Redis keyed `quota:{bucket}:{user_id}` (TTL set to the window length so keys expire on their own). Wired onto the two routes that spend real OpenAI tokens per call: `POST /analysis/ai/{symbol}` (`ai_analysis_quota_limit`/`ai_analysis_quota_window_seconds`) and `POST /chat/conversations/{id}/messages` (`ai_chat_quota_limit`/`ai_chat_quota_window_seconds`), both new `app/config/settings.py` fields. Exceeding the limit raises the new `QuotaExceededException` (`app/exceptions/quota.py`), mapped to HTTP 429 through the project's standard `{"error", "message"}` envelope, the same way `InsufficientRoleException` already is

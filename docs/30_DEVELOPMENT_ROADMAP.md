@@ -206,7 +206,7 @@ Sub-Phases
 
 7C Frontend Experience & Advanced Trading UI (Markets sort/search/quick-actions; AI Analysis guided flow, confidence gauge, evidence timeline, `react-markdown` reasoning; AI Chat conversation search/archive/delete, suggested prompts, optimistic pending-message UX, markdown messages; Signal detail reuses Reasoning/Evidence components, adds chart + status timeline, symbol filter; `PriceChart` extended with zone + time-marker overlays for BOS/CHoCH/Order Blocks/FVG/Liquidity, ADR-107; Dashboard gains a sixth Quick Actions widget; app-wide loading-skeleton/transition/accessibility/code-splitting polish; zero new backend endpoints; docs/55_FRONTEND_EXPERIENCE_ADVANCED_UI.md, ADR-107 through ADR-109) - Completed
 
-7D-A Watchlists Backend (`watchlists`/`watchlist_items` models + migration per docs/03 §12's minimal schema, repository/service, `GET/POST/PUT/DELETE /watchlists` + add/remove asset; docs/58_WATCHLISTS_ADMIN_ARCHITECTURE.md, ADR-114) - Not Started
+7D-A Watchlists Backend (`Watchlist`/`WatchlistItem` models + migration per docs/03 §12's minimal schema, `WatchlistRepository`/`WatchlistService`, `GET/POST/PUT/DELETE /watchlists` + add/remove asset + inferred `GET /watchlists/{id}`, all auth-gated and user-scoped; docs/58_WATCHLISTS_ADMIN_ARCHITECTURE.md, ADR-114, ADR-128) - Completed
 
 7D-B Watchlists Frontend (replaces the ADR-103 placeholder with real CRUD - list, create, rename, delete, add/remove assets; docs/58) - Not Started
 

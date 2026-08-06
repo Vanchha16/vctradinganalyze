@@ -17,6 +17,7 @@ from app.api.v1.routes import (
     strategy,
     technical_analysis,
     telegram,
+    watchlists,
 )
 
 api_router = APIRouter()
@@ -36,3 +37,4 @@ api_router.include_router(ai_analysis.router)
 api_router.include_router(signals.router)
 api_router.include_router(ai_chat.router)
 api_router.include_router(telegram.router)
+api_router.include_router(watchlists.router)

@@ -6395,6 +6395,155 @@ thing. If a future phase ever needs true per-user signal filtering
 
 ---
 
+# ADR-131
+
+Title
+
+Admin Frontend (7D-D): No Chart Library, Confirmation-Gated Maintenance
+Actions
+
+Status
+
+Accepted
+
+Context
+
+`docs/58` §3.3 describes the Admin frontend as introducing "the first
+chart dependency" for Signal Statistics, assuming `docs/25` §15's richer
+analytics set (most-viewed assets, confidence distribution, average AI
+response time). ADR-130 already deferred all of that for lack of
+view-tracking/latency infrastructure - what `GET /admin/analytics`
+actually returns is two figures (`daily_active_users: int`,
+`signal_type_distribution: dict[str, int]`, roughly two keys), and
+`GET /admin/system` returns four scalars. `docs/58` §3.3's chart-library
+premise was written against data that was never built and, per ADR-130,
+isn't being built now either.
+
+Separately, `POST /admin/news`/`POST /admin/maintenance` (ADR-130) are
+real, consequence-bearing actions from this phase's frontend for the
+first time: they call a live vendor synchronously and can consume real
+production API quota. This project has already had two real-vendor-call
+incidents from insufficiently-isolated tooling (Twelve Data quota
+exhaustion, a live NewsAPI call during 7D-C manual verification - both
+recorded in `BACKLOG.md` §11/§16, mitigated for local dev by commit
+`9ccd471`). A frontend button is a third, user-facing way to trigger the
+same class of consequence, in production, deliberately - it needs its
+own explicit safeguard, not just a "hope the operator reads the docs"
+assumption.
+
+Decision
+
+1. **No charting library is added.** `admin/system-health` and
+   `admin/signal-statistics` (docs/58 §3.3) render their data as stat
+   tiles (`StatCard`, extracted from the existing `admin/page.tsx` for
+   reuse rather than duplicated) and a plain CSS proportion bar
+   (`SignalTypeDistributionBar`) built from `components/shared/premium`'s
+   `Panel`/`PanelHeader` and existing `Badge`/`lib/badge-variants`
+   mappings (a new `systemStatusVariant` added there for `"ok"`/`"down"`).
+   `lightweight-charts` (already a dependency, Phase 7B) is a financial
+   candlestick charting library and is not pressed into service for a
+   two-segment bar.
+2. `admin/signals`'s stale docstring claim - "the existing `GET /signals`
+   is scoped to the caller's own signals" - is corrected. ADR-130 already
+   established `Signal` has no `user_id` column at all; `GET /admin/signals`
+   is scope-identical to the public `GET /signals`, not a newly-unlocked
+   admin-only view.
+3. Exactly two maintenance-action buttons exist - Refresh News, Refresh
+   Calendar - placed on System Health (the operational liveness page,
+   which already shows today's activity counts these actions affect), not
+   Settings. Both are gated by the existing `ConfirmActionDialog` (no new
+   confirmation component), with copy that states the real consequence
+   ("calls the configured \[news/economic calendar\] provider... may
+   consume real vendor API quota... runs synchronously and can take
+   several seconds") rather than a generic "Are you sure?". Each
+   triggering button is disabled for the full in-flight duration (`useMutation`'s
+   `isPending`, not just while the dialog is open), and each mutation
+   (`use-admin-maintenance-actions.ts`) wraps its `apiPost` call in a
+   60-second client-side `AbortController` timeout, so a hung request
+   (dropped connection, an unresponsive vendor) surfaces as a toast error
+   and re-enables the button instead of leaving it disabled forever. On
+   success, the returned counts (`articles_ingested`, or
+   `events_created`/`events_updated`) are shown via the existing toast
+   pattern and the system-status query is invalidated so
+   `signals_today`/`ai_analyses_today` reflect the run without a manual
+   reload.
+4. `admin/api-usage` remains the Phase 8D placeholder - no request-metrics
+   infrastructure exists (`GET /metrics`, `BACKLOG.md` §3), and this phase
+   does not fabricate numbers to fill the gap.
+
+Reason
+
+Adding a chart dependency for four scalars and a two-key dictionary would
+be exactly the kind of premature-abstraction-for-hypothetical-future-data
+this project's own working style avoids - `docs/58` §3.3 scoped the chart
+for analytics that were deliberately deferred, not analytics that exist.
+Removing a chart dependency once added is real work (component rewrites,
+bundle-size regression, a second design pass); not adding one until the
+data justifies it costs nothing now. The maintenance-action safeguards
+are load-bearing, not decorative, precisely because this codebase has
+already demonstrated (twice) that "remember to be careful" is not a
+sufficient control for a real-vendor-call trigger - confirmation copy
+that states the actual consequence, an enforced disabled-while-in-flight
+state, and a bounded timeout are the three concrete failure modes (fired
+by accident, fired twice, stuck forever) a button like this can produce.
+
+Alternatives Considered
+
+Option A: Add `recharts` (or equivalent) anyway, per `docs/58` §3.3's
+literal text, and render simple bar/line components against the current
+two-figure payload - rejected; a chart library for two data points
+provides no more information than the tiles/bar it would replace, at the
+cost of a new dependency, bundle size, and a second design pass for
+almost no analytics currently in scope to chart against.
+
+Option B: Put the maintenance-action buttons on Admin Settings instead of
+System Health - considered; System Health was chosen because it already
+displays the exact counts (`signals_today`/`ai_analyses_today`... not
+directly the ingestion counts, but the operationally-adjacent liveness
+view) these actions affect, and is the more natural "trigger an
+operational action" destination than a general settings page. Settings
+remains untouched and out of scope for this phase either way.
+
+Option C: Skip the client-side timeout, relying on the backend's own
+(currently unbounded) synchronous request duration - rejected; ADR-130
+already accepted synchronous ingestion as a known tradeoff server-side,
+but the frontend has no visibility into whether a hung connection will
+ever resolve, and "the button stays disabled forever" is a worse failure
+mode than a timeout that might fire slightly early on a genuinely slow
+but still-succeeding request.
+
+Option D (chosen): No chart library; confirmation-gated, timeout-bounded,
+in-flight-disabled maintenance buttons on System Health.
+
+Trade-offs
+
+Pros
+
+Zero new frontend dependencies or bundle-size cost; the proportion bar
+and stat tiles are exactly as informative as the current payload
+supports; the maintenance-action safeguards directly address this
+project's own documented incident history rather than a hypothetical one.
+
+Cons
+
+If richer analytics ever ship (per `docs/25` §15, still deferred), the
+proportion-bar/stat-tile approach will need to be revisited - this is an
+explicitly deferred cost, not an oversight. The 60-second timeout is a
+hand-picked starting point, not empirically calibrated against real
+vendor latency.
+
+Future Review
+
+Revisit the no-chart-library decision the moment `docs/25` §15's richer
+analytics figures are actually built (real view-tracking, real latency
+recording) - that is the point ADR-130's Future Review already names as
+when a charting choice would be justified by real data. Revisit the
+60-second maintenance-action timeout if real vendor calls are observed
+routinely taking longer (or timing out spuriously sooner) once a real
+`TELEGRAM_BOT_TOKEN`/`NEWS_API_KEY`/`ECONOMIC_API_KEY` is in production use.
+
+---
+
 # Review Policy
 
 Review ADRs:

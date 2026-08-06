@@ -116,6 +116,41 @@ export interface AdminAuditLogListResponse {
   total: number;
 }
 
+// ---- Admin System/Analytics/Maintenance (docs/04 §Admin, docs/58 §3.2, Phase 7D-C, ADR-130) ----
+
+export interface AdminSystemStatusResponse {
+  database: "ok" | "down";
+  redis: "ok" | "down";
+  signals_today: number;
+  ai_analyses_today: number;
+}
+
+export interface AdminAnalyticsResponse {
+  daily_active_users: number;
+  signal_type_distribution: Record<string, number>;
+}
+
+export type MaintenanceAction = "refresh_news" | "refresh_calendar";
+
+export interface MaintenanceActionRequest {
+  action: MaintenanceAction;
+}
+
+export interface NewsRefreshResponse {
+  articles_ingested: number;
+}
+
+export interface CalendarRefreshResponse {
+  events_created: number;
+  events_updated: number;
+}
+
+export interface MaintenanceActionResponse {
+  action: MaintenanceAction;
+  news: NewsRefreshResponse | null;
+  calendar: CalendarRefreshResponse | null;
+}
+
 export type MarketType = "forex" | "metal" | "crypto" | "index";
 
 export type Timeframe = "m1" | "m5" | "m15" | "m30" | "h1" | "h4" | "d1" | "w1" | "mn";

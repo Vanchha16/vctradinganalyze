@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added - Phase 7D-D: Admin Frontend (ADR-131) - Phase 7D complete
+
+Replaces the remaining two Phase 8D placeholders (`admin/users`/`admin/audit-logs` were already real, from 8C/8F) over 7D-C's endpoints. `admin/system-health`: `Badge`/new `systemStatusVariant` ok/down indicators for `GET /admin/system`'s `database`/`redis`, `StatCard` tiles for `signals_today`/`ai_analyses_today`, an honest "liveness plus counts, not telemetry" note. `admin/signal-statistics`: a new `AdminSignalTable` (modeled on `UserTable`/`AuditLogTable`) for `GET /admin/signals`, paginated; `GET /admin/analytics`'s `daily_active_users` as a stat tile and `signal_type_distribution` as a new `SignalTypeDistributionBar` - plain CSS, no chart library
+
+`admin/page.tsx` gains a compact system-status summary (same data/components) linking to System Health; existing `GET /admin/users`-derived stats unchanged. `StatCard` extracted from `admin/page.tsx` into `features/admin/components/stat-card.tsx` so both pages share it
+
+Two maintenance-action buttons (Refresh News, Refresh Calendar) added to System Health - both behind the existing `ConfirmActionDialog` with copy naming the real vendor-quota consequence, both disabled for the full in-flight duration, both wrapped in a new 60-second client-side `AbortController` timeout (`use-admin-maintenance-actions.ts`) via a new optional `signal` param threaded through `apiPost`/`request` in `api-client.ts` - a hung request surfaces as a toast error and re-enables the button rather than leaving it stuck
+
+**ADR-131**: no chart library added - `GET /admin/system`/`GET /admin/analytics` return four scalars and a ~2-key dictionary, not the richer `docs/25` §15 set `docs/58` §3.3's chart-dependency assumption was scoped for (ADR-130 already deferred that richer set); the maintenance-action safeguards (confirm-before-fire, in-flight disable, bounded timeout) are recorded as load-bearing given this project's two prior real-vendor-call incidents (`BACKLOG.md` §11/§16); `admin/api-usage` remains a placeholder, no fabricated numbers
+
+Corrected a stale `admin/signal-statistics` docstring claiming "the existing `GET /signals` is scoped to the caller's own signals" - `Signal` has no `user_id` column at all (ADR-130). No new npm dependency (`git diff frontend/package.json` empty). No backend file modified; no nav items added (the Admin nav group and all its entries already existed, ADR-118)
+
 ### Fixed - Dev-Runtime Vendor Isolation
 
 `backend/tests/conftest.py`'s mock-provider isolation only ever covered the pytest session - a manually-started `uvicorn`, Celery worker, or Celery beat still read real `backend/.env` values, which has already caused a Twelve Data quota exhaustion and a real NewsAPI call during local development (BACKLOG.md §11/§16)

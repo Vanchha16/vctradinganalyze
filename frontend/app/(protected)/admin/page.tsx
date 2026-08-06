@@ -1,6 +1,6 @@
 "use client";
 
-import { ShieldAlert, ShieldCheck, UserCheck, UserX, Users as UsersIcon } from "lucide-react";
+import { Activity, ShieldAlert, ShieldCheck, UserCheck, UserX, Users as UsersIcon } from "lucide-react";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
@@ -8,42 +8,18 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Panel, PanelHeader } from "@/components/shared/premium";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageContainer } from "@/features/dashboard/components/page-container";
+import { StatCard } from "@/features/admin/components/stat-card";
+import { useAdminSystemStatus } from "@/hooks/use-admin-system-status";
 import { useAdminUsers } from "@/hooks/use-admin-users";
-import { userRoleVariant, userStatusVariant } from "@/lib/badge-variants";
+import { systemStatusVariant, userRoleVariant, userStatusVariant } from "@/lib/badge-variants";
 import { formatDateTime, formatEnumLabel } from "@/lib/format";
 
 /**
- * Composed client-side from real `GET /admin/users` calls with different
- * filters - same "no new backend endpoint" pattern Phase 7B's product
- * Dashboard established for `/dashboard` (ADR-106). No fabricated numbers:
- * every stat here is a real, currently-derivable count.
+ * Composed client-side from real `GET /admin/users`/`GET /admin/system`
+ * calls with different filters - same "no new backend endpoint" pattern
+ * Phase 7B's product Dashboard established for `/dashboard` (ADR-106). No
+ * fabricated numbers: every stat here is a real, currently-derivable count.
  */
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-  isLoading,
-}: {
-  label: string;
-  value: number | undefined;
-  icon: typeof UsersIcon;
-  isLoading: boolean;
-}) {
-  return (
-    <Panel className="p-4">
-      <div className="flex items-center justify-between">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-        <Icon className="size-4 text-muted-foreground" />
-      </div>
-      {isLoading ? (
-        <Skeleton className="mt-2 h-8 w-16" />
-      ) : (
-        <p className="mt-1 text-2xl font-semibold tabular-nums">{value ?? "—"}</p>
-      )}
-    </Panel>
-  );
-}
-
 export default function AdminDashboardPage() {
   const totalQuery = useAdminUsers({ limit: 1 });
   const activeQuery = useAdminUsers({ is_active: "true", limit: 1 });
@@ -51,6 +27,7 @@ export default function AdminDashboardPage() {
   const adminQuery = useAdminUsers({ role: "admin", limit: 1 });
   const superAdminQuery = useAdminUsers({ role: "super_admin", limit: 1 });
   const recentQuery = useAdminUsers({ limit: 8 });
+  const systemQuery = useAdminSystemStatus();
 
   return (
     <div>
@@ -63,6 +40,42 @@ export default function AdminDashboardPage() {
           <StatCard label="Disabled" value={disabledQuery.data?.total} icon={UserX} isLoading={disabledQuery.isLoading} />
           <StatCard label="Admins" value={adminQuery.data?.total} icon={ShieldCheck} isLoading={adminQuery.isLoading} />
           <StatCard label="Super Admins" value={superAdminQuery.data?.total} icon={ShieldAlert} isLoading={superAdminQuery.isLoading} />
+        </div>
+
+        <div className="mt-4">
+          <Panel>
+            <PanelHeader
+              title="System status"
+              subtitle="Liveness and today's activity"
+              icon={<Activity className="size-4" />}
+            />
+            <div className="flex flex-col gap-3 p-4">
+              {systemQuery.isLoading ? (
+                <Skeleton className="h-16 w-full" />
+              ) : systemQuery.data ? (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={systemStatusVariant(systemQuery.data.database)}>
+                      Database: {formatEnumLabel(systemQuery.data.database)}
+                    </Badge>
+                    <Badge variant={systemStatusVariant(systemQuery.data.redis)}>
+                      Redis: {formatEnumLabel(systemQuery.data.redis)}
+                    </Badge>
+                    <span className="text-[11px] text-muted-foreground">
+                      {systemQuery.data.signals_today} signal{systemQuery.data.signals_today === 1 ? "" : "s"} today ·{" "}
+                      {systemQuery.data.ai_analyses_today} AI{" "}
+                      {systemQuery.data.ai_analyses_today === 1 ? "analysis" : "analyses"} today
+                    </span>
+                  </div>
+                  <Link href="/admin/system-health" className="text-[11px] text-primary hover:underline">
+                    View System Health →
+                  </Link>
+                </>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">System status unavailable.</p>
+              )}
+            </div>
+          </Panel>
         </div>
 
         <div className="mt-4">

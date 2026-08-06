@@ -17,6 +17,10 @@ export class ApiError extends Error {
 interface RequestOptions {
   params?: Record<string, string | undefined>;
   body?: unknown;
+  /** Lets a caller enforce a client-side timeout/cancellation (Phase 7D-D's
+   * maintenance actions, which run synchronously server-side and can take
+   * many seconds, ADR-130) - optional, every other caller is unaffected. */
+  signal?: AbortSignal;
 }
 
 function buildUrl(path: string, params?: Record<string, string | undefined>): string {
@@ -66,6 +70,7 @@ async function request<T>(
     method,
     headers,
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    signal: options.signal,
   });
 
   if (response.status === 204) return undefined as T;
@@ -107,8 +112,9 @@ export function apiPost<T>(
   path: string,
   body?: unknown,
   params?: Record<string, string | undefined>,
+  signal?: AbortSignal,
 ): Promise<T> {
-  return request<T>("POST", path, { body, params });
+  return request<T>("POST", path, { body, params, signal });
 }
 
 export function apiPut<T>(path: string, body?: unknown): Promise<T> {

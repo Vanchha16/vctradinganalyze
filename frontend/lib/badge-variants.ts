@@ -84,3 +84,7 @@ export function userRoleVariant(value: string): Variant {
   if (value === "premium") return "default";
   return "secondary"; // guest, registered, moderator, support
 }
+
+export function systemStatusVariant(value: "ok" | "down"): Variant {
+  return value === "ok" ? "success" : "destructive";
+}

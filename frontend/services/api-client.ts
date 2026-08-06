@@ -52,7 +52,7 @@ async function refreshAccessTokenOnce(): Promise<string | null> {
 }
 
 async function request<T>(
-  method: "GET" | "POST" | "PATCH" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   options: RequestOptions = {},
   isRetry = false,
@@ -109,6 +109,10 @@ export function apiPost<T>(
   params?: Record<string, string | undefined>,
 ): Promise<T> {
   return request<T>("POST", path, { body, params });
+}
+
+export function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>("PUT", path, { body });
 }
 
 export function apiPatch<T>(path: string, body?: unknown): Promise<T> {

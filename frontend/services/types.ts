@@ -672,6 +672,38 @@ export interface SendMessageResponse {
   warnings: string[];
 }
 
+// ---- Watchlists (docs/04 §Watchlists, docs/58 §2.3, ADR-128) ----
+
+export interface WatchlistSummaryResponse {
+  id: string;
+  name: string;
+  item_count: number;
+  created_at: string;
+}
+
+export interface WatchlistListResponse {
+  items: WatchlistSummaryResponse[];
+}
+
+export interface WatchlistDetailResponse {
+  id: string;
+  name: string;
+  created_at: string;
+  assets: Asset[];
+}
+
+export interface WatchlistCreateRequest {
+  name: string;
+}
+
+export interface WatchlistRenameRequest {
+  name: string;
+}
+
+export interface WatchlistAddAssetRequest {
+  asset_id: string;
+}
+
 export interface TelegramLinkResponse {
   link_code: string;
   bot_username: string;

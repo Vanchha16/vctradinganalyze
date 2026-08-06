@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added - Phase 7D-B: Watchlists Frontend
+
+Replaces the ADR-103 `EmptyState`-only placeholder with real, server-backed CRUD against 7D-A's live API. `services/watchlists.ts` (mirrors `services/admin.ts`, no business logic); `apiPut` added to `services/api-client.ts` (only `apiGet`/`apiPost`/`apiPatch`/`apiDelete` existed - the rename endpoint is `PUT`, following `apiPatch`'s existing implementation exactly). `use-watchlists`/`use-watchlist`/`use-watchlist-actions` hooks (mirrors `use-admin-users`/`use-admin-user-actions`'s list-hook/mutations-hook split), all mutations invalidating the `["watchlists"]` query key so list and detail stay consistent
+
+`features/watchlists/components/`: `WatchlistCard` (name, item count from the list response only - never fetches detail per card - rename/delete quick actions), `WatchlistDetail` (reuses Markets' `AssetTable` rather than a new table), create/rename dialogs (react-hook-form + zod, mirrors `EditUserDialog`'s shape), `AddAssetDialog` (asset picker reuses `useAssets()`, the same data source `SymbolTimeframePicker` already builds its Select from - already-added assets filtered out client-side so the 409-duplicate path can't even be selected). Delete confirmation reuses the existing `ConfirmActionDialog`/`AlertDialog` primitives - no new UI primitives added, per docs/58 §2.4
+
+Markets' `AssetTable` (`features/markets/components/asset-table.tsx`) gains one additive optional prop, `onRemove?: (asset: Asset) => void` - renders a per-row "Remove" quick action only when provided; Markets itself never passes it, so its own Quick Actions column is unchanged
+
+`app/(protected)/watchlists/page.tsx` replaced (list + create dialog + genuine empty state); `app/(protected)/watchlists/[id]/page.tsx` added (detail view, add/remove assets, rename/delete). No nav change - `Watchlists` already existed in `nav-config.ts`, pointed at the placeholder
+
+Deliberately excluded (per docs/58 §2.4, ADR-114, unchanged by this phase): per-asset analysis columns (confidence/trade-quality/risk) on the watchlist asset table - not backed by a single endpoint; custom alerts, tags, pinning, AI watchlist summaries, performance history, sharing. No new ADR - the `AssetTable` change is a trivial additive prop, not the "non-trivial change" that would trigger one
+
+Verified via `npm run typecheck`/`lint`/`build` (all clean, no frontend test suite exists - BACKLOG.md §23/§24) plus a full manual walkthrough against the real local backend: empty state → create → add asset → count/table update → rename (list and detail both reflect it) → remove asset → delete → full-page-reload persistence (server-backed, confirmed) → an unknown/other-user's watchlist id resolves to a graceful `ErrorCard`, not a crash. The 409-duplicate-asset path was verified directly against the live API (confirmed exact `{"error":"conflict","message":"Asset is already in this watchlist."}`) rather than by clicking twice through the UI, since the picker's own filtering makes that scenario unreachable through normal use - see BACKLOG.md §26
+
+Two pre-existing, out-of-scope issues surfaced during the walkthrough and recorded in BACKLOG.md §26 rather than fixed here: a systemic SQLite-naive-datetime-vs-browser-local-time display bug affecting every timestamp app-wide (not Watchlists-specific), and `ErrorCard`'s hardcoded `resource_not_found` hint text being misleading outside its original Markets/candle-data context
+
 ### Added - Phase 7D-A: Watchlists Backend (ADR-128)
 
 `Watchlist`/`WatchlistItem` models (`app/models/watchlist.py`/`watchlist_item.py`, docs/03 §12's minimal schema, `CreatedAtMixin` not `TimestampMixin` - `name` is the only mutable column and items are never updated in place) and migration `6dd25f6c4947`. `WatchlistRepository` covers both tables (a `WatchlistItem` never has meaning without its parent, unlike `Signal`/`SignalBookmark`'s split); `WatchlistService` mirrors `AdminUserService`'s shape (constructor-injected repos, one method per use case, a private `_resolve_owned` ownership guard)

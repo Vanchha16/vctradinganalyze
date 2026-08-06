@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, LineChart, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, LineChart, Sparkles, Trash2 } from "lucide-react";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +29,7 @@ export function AssetTable({
   onSortChange,
   selectedSymbol,
   onSelectSymbol,
+  onRemove,
 }: {
   assets: Asset[];
   sort: AssetSortKey;
@@ -37,6 +38,10 @@ export function AssetTable({
   /** Optional: when provided, rows become selectable (desktop master-detail workspace) in addition to the Symbol link's normal navigation. */
   selectedSymbol?: string | null;
   onSelectSymbol?: (symbol: string) => void;
+  /** Optional: when provided, adds a "Remove" quick action per row
+   * (Phase 7D-B Watchlist detail) - purely additive, Markets never
+   * passes this so its Quick Actions column is unchanged. */
+  onRemove?: (asset: Asset) => void;
 }) {
   return (
     <Table>
@@ -98,6 +103,19 @@ export function AssetTable({
                   >
                     <LineChart className="h-4 w-4" />
                   </Link>
+                  {onRemove ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRemove(asset);
+                      }}
+                      aria-label={`Remove ${asset.symbol}`}
+                      className="focus-ring rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  ) : null}
                 </div>
               </TableCell>
             </TableRow>

@@ -208,7 +208,7 @@ Sub-Phases
 
 7D-A Watchlists Backend (`Watchlist`/`WatchlistItem` models + migration per docs/03 §12's minimal schema, `WatchlistRepository`/`WatchlistService`, `GET/POST/PUT/DELETE /watchlists` + add/remove asset + inferred `GET /watchlists/{id}`, all auth-gated and user-scoped; docs/58_WATCHLISTS_ADMIN_ARCHITECTURE.md, ADR-114, ADR-128) - Completed
 
-7D-B Watchlists Frontend (replaces the ADR-103 placeholder with real CRUD - list, create, rename, delete, add/remove assets; docs/58) - Not Started
+7D-B Watchlists Frontend (replaces the ADR-103 placeholder with real CRUD - list/create/rename/delete watchlists, add/remove assets; `services/watchlists.ts`, `apiPut` added to `api-client.ts`, `use-watchlists`/`use-watchlist`/`use-watchlist-actions` hooks, `features/watchlists/` components, Markets' `AssetTable` reused with an additive `onRemove` prop; docs/58 §2.4) - Completed
 
 7D-C Admin Backend (**user-management portion superseded by Phase 8C/docs/59** - the first-ever `require_role` RBAC-enforcement dependency over the existing `UserRole` enum, ADR-115, and the full `/admin/users*` surface (9 endpoints, `AdminUserService`) both shipped there instead; remaining scope is the non-user endpoints docs/04 §Admin lists - `GET /admin/{signals,system,logs,analytics}`, `POST /admin/{news,maintenance}`; `/admin/system` reuses existing health checks + counts, not live telemetry, ADR-116; `/admin/maintenance` limited to refresh-news/refresh-calendar, ADR-117; docs/58) - Not Started
 

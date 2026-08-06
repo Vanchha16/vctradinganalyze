@@ -1,8 +1,9 @@
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 from typing import cast
 
-from sqlalchemy import CursorResult, delete
+from sqlalchemy import CursorResult, delete, func, select
 
 from app.models.user_session import UserSession
 from app.repositories.base import BaseRepository
@@ -46,3 +47,14 @@ class UserSessionRepository(BaseRepository[UserSession]):
             stmt = stmt.where(UserSession.id != exclude_id)
         result = cast(CursorResult[UserSession], self.session.execute(stmt))
         return result.rowcount or 0
+
+    def count_distinct_users_since(self, since: datetime) -> int:
+        """Daily active users (docs/58 §3.2, Phase 7D-C) - a session's
+        `created_at` is its login time, so distinct `user_id` values with a
+        session created since `since` approximates "logged in today."
+        Distinct at the SQL level rather than counting rows, since a user
+        may log in more than once."""
+        query = select(func.count(func.distinct(UserSession.user_id))).where(
+            UserSession.created_at >= since
+        )
+        return self.session.execute(query).scalar_one()

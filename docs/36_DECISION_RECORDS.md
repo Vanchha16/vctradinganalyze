@@ -6222,6 +6222,179 @@ decision, never as a bare admin-triggered delete.
 
 ---
 
+# ADR-130
+
+Title
+
+Admin Backend (7D-C, Rescoped): Five Inferred Contracts, One Shared
+Ingestion Implementation, and a Signal Scoping Correction
+
+Status
+
+Accepted
+
+Context
+
+`docs/58` §3.2 lists seven `/admin/*` endpoints; `GET /admin/users`
+(Phase 8C) and `GET /admin/logs` (Phase 8F, ADR-129) already exist. This
+phase builds the remaining five - `GET /admin/{signals,system,analytics}`,
+`POST /admin/{news,maintenance}` - and resolves three things found while
+scoping it that this ADR records rather than re-litigates later:
+
+1. `docs/04` lists all five paths with no query params or response
+   shape - the same inferred-contract category ADR-091/ADR-128/ADR-129
+   already established.
+2. `BACKLOG.md` §16 stated `POST /admin/news` was "explicitly decided
+   against," citing `docs/04:567`. That citation actually reads
+   "deferred - not built," and `docs/58` §3.2 (later, approved,
+   ADR-backed) puts it back in scope. The Phase 5A reasoning BACKLOG
+   recorded - "would be the first auth-gated route in an otherwise
+   fully-public analysis surface" - is moot now that every `/admin/*`
+   route and the quota'd AI endpoints are already auth-gated.
+   `BACKLOG.md` §16 is corrected to say "deferred, then brought into
+   scope by docs/58," not "decided against."
+3. `docs/58` independently specifies both `POST /admin/news` and
+   `POST /admin/maintenance {"action": "refresh_news"}`, which do the
+   same thing. Docs are the source of truth, so both are built - but
+   backed by one shared implementation, not two copies of the ingestion
+   trigger.
+
+Decision
+
+1. New `app/api/v1/routes/admin_system.py` and `AdminSystemService`
+   (mirrors `AdminUserService`/`AdminAuditLogService`'s shape) cover all
+   five endpoints, every route gated by the existing `require_admin`
+   (Phase 8B) with no new role-check logic.
+2. `GET /admin/signals` reuses `SignalRepository.find_paginated`/
+   `count_filtered` verbatim, same `{"items","page","limit","total"}`
+   envelope and `symbol`/`status`/`page`/`limit` params `GET /signals`
+   already uses. **Signal scoping finding:** `docs/58`'s "admin view (all
+   users, not just caller's)" phrasing implies `GET /signals` is
+   per-user today. It is not - `app/models/signal.py` has no `user_id`
+   column at all (only `signal_bookmarks` is per-user, ADR-090), and the
+   existing `GET /signals` route never filters by `current_user`. This
+   admin endpoint is therefore scope-identical to the public one; it
+   exists to give `/admin/*` a consistent dashboard entry point, not to
+   unlock previously-hidden rows. Recorded as a misframing in docs/58,
+   not a requirement this phase needs to build against.
+3. `GET /admin/system` reuses `/health/ready`'s exact checks (`SELECT 1`,
+   Redis `ping()`) plus `SignalRepository.count_since`/`AIAnalysisRepository.
+   count_since` for today's activity (ADR-116 reaffirmed: liveness +
+   counts, not telemetry). Unlike `/health/ready`, each check is caught
+   independently - a dependency failure renders `"down"` in a 200
+   response; this endpoint must never 500 the way a bare liveness probe
+   is allowed to.
+4. `GET /admin/analytics` implements exactly `docs/58`'s two named
+   figures: daily active users (`UserSessionRepository.
+   count_distinct_users_since`, today's distinct `user_id`) and a
+   distribution grouped on `signals`. **Second docs/58 imprecision
+   found:** it says "GROUP BY on `signals.recommendation`," but `signals`
+   has no `recommendation` column - that field lives on `ai_analysis`.
+   `Signal.signal_type` (BUY/SELL) is the only field on `signals` a
+   distribution "on signals" can mean, and every `Signal` row is already
+   BUY-or-SELL-only by construction (ADR-086 - WAIT produces no row), so
+   this reading loses no information the literal wording would have
+   captured. `docs/25` §15's longer wishlist (most-viewed assets,
+   confidence distribution, average AI response time) is explicitly
+   deferred - no view-tracking or latency-recording infrastructure
+   exists to source those from.
+5. `POST /admin/news` and `POST /admin/maintenance {"action":
+   "refresh_news"}` both call `AdminSystemService.refresh_news`; `POST
+   /admin/maintenance {"action": "refresh_calendar"}` calls `.
+   refresh_calendar`. Each method builds the identical pipeline
+   (`NewsIngestionPipeline`/`EconomicCalendarIngestionPipeline`) the
+   `news_sentiment.ingest`/`economic_calendar.ingest` Celery tasks
+   already use, runs it inline, and writes exactly one `AuditLog` row
+   (`admin_news_refreshed`/`admin_calendar_refreshed`) recording the
+   acting admin and the outcome counts - following `AdminUserService.
+   _audit`'s established pattern, not new architecture.
+   `MaintenanceActionRequest.action` is a `Literal["refresh_news",
+   "refresh_calendar"]`, so an unknown action is rejected by schema
+   validation (422) before the handler runs - no "restart workers"/
+   "clear cache"/"rebuild indicators" (ADR-117 reaffirmed: none has a
+   concrete implementation to call, and this project's engines are
+   stateless).
+6. **Known, accepted tradeoff:** `docs/58` specifies calling the
+   pipeline directly, which makes both ingestion routes blocking HTTP
+   requests running a full ingestion inline - potentially several
+   seconds, a candidate for a gateway timeout under load. Dispatching
+   the existing Celery task instead (`.delay()`, returning `202`) would
+   avoid this, but deviates from the approved spec. This phase follows
+   docs/58 and calls directly; if inline latency becomes a real problem,
+   the fix is switching to Celery dispatch, not reworking the pipelines
+   themselves.
+
+Reason
+
+Every piece follows a precedent already established in this project
+rather than inventing one: the inferred-contract-needs-an-ADR pattern,
+`AdminUserService`'s constructor-injected/one-method-per-use-case shape,
+and `_audit`'s established mutation-logging pattern. The two docs/58
+imprecisions (signal scoping, `signals.recommendation`) are resolved by
+reading what actually exists in the schema rather than inventing a
+`user_id` column or a `recommendation` field neither `docs/03` nor any
+migration ever specified - consistent with "never invent architecture."
+Building both `POST /admin/news` and `/admin/maintenance` (rather than
+dropping the "redundant" one) respects "documentation is the source of
+truth" over an engineering judgment that one of them is unnecessary.
+
+Alternatives Considered
+
+Option A (signal scoping): Add a `user_id` column to `signals` to make
+docs/58's "all users" phrasing literally true - rejected; no such column
+exists in `docs/03`, no phase has ever proposed one, and inventing it
+here to match a two-word doc phrase is exactly the "invent architecture"
+failure mode this project avoids.
+
+Option B (`signals.recommendation`): Query `ai_analysis.recommendation`
+instead, since that field actually has that name - rejected; docs/58
+explicitly says "GROUP BY on signals.recommendation" (the table, not
+`ai_analysis`), and `ai_analysis` includes WAIT rows that never became a
+`Signal`, which would silently change what "signal distribution" means
+beyond what a `signals`-scoped query implies.
+
+Option C (ingestion latency): Dispatch via Celery (`.delay()`, `202
+Accepted`) instead of calling the pipeline inline - rejected for this
+pass; deviates from docs/58's literal spec without a demonstrated need,
+and an admin-invoked manual refresh is inherently low-frequency, unlike
+the scheduled Beat job this would otherwise resemble.
+
+Option D (chosen): Build all five endpoints exactly as docs/58
+specifies, correct the two documentation imprecisions found by reading
+the actual schema rather than working around them silently, and record
+the synchronous-ingestion tradeoff for future reconsideration rather
+than fixing it now.
+
+Trade-offs
+
+Pros
+
+Closes docs/58's remaining scope with zero new schema and zero
+duplicated ingestion logic; both documentation inaccuracies (BACKLOG §16,
+the `signals.recommendation` field name) are corrected in place rather
+than silently worked around, so a future reader doesn't rediscover
+either; `GET /admin/system` degrading instead of erroring makes it
+usable as an actual liveness dashboard.
+
+Cons
+
+`POST /admin/news`/`/admin/maintenance` remain blocking, multi-second
+requests under real provider load (Option C's deferred tradeoff);
+`GET /admin/analytics` covers only 2 of docs/25 §15's much longer
+wishlist, same gap ADR-129 already recorded for audit-log coverage.
+
+Future Review
+
+Revisit synchronous ingestion (Option C) if a real gateway-timeout
+incident occurs. Revisit `docs/25` §15's remaining analytics figures once
+view-tracking/latency-recording infrastructure exists to source them
+from - not by approximating with data that doesn't measure the same
+thing. If a future phase ever needs true per-user signal filtering
+(e.g. "signals for assets in my watchlist"), that is a new join against
+`watchlist_items` (Phase 7D-A), not a `user_id` column on `signals`.
+
+---
+
 # Review Policy
 
 Review ADRs:

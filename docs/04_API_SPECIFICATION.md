@@ -564,7 +564,7 @@ Response
 
 `sentiment` is one of `very_bullish`/`bullish`/`neutral`/`bearish`/`very_bearish` (docs/10 §7's 5-value enum) - never the free-text `"Bullish USD"` shape this doc previously (incorrectly) implied, and never the binary `Bullish`/`Bearish` this section previously documented. 404 only if the asset symbol is unknown - an empty `articles` list (no matching news in the window) is a valid 200, not a 404. No `/multi-asset` variant exists (deliberately not built, docs/46 §12).
 
-Out of scope for Phase 5A: `POST /admin/news` (deferred - not built), `/ws/news` (deferred - not built, tracked in BACKLOG.md).
+Out of scope for Phase 5A: `POST /admin/news` (deferred, then built in Phase 7D-C - see the Admin section below and ADR-130), `/ws/news` (deferred - not built, tracked in BACKLOG.md).
 
 ---
 
@@ -966,7 +966,20 @@ GET /admin/users
 
 GET /admin/signals
 
+Query params: `symbol`, `status`, `page`, `limit` - identical to `GET
+/signals`. Same `{"items","page","limit","total"}` envelope, same
+`SignalResponse` item shape. Contract is inferred (ADR-130). Scope note:
+`signals` has no `user_id` column, so this returns the same globally-scoped
+rows the public `GET /signals` already does - "admin view" means a
+consistent `/admin/*` dashboard entry point, not additional visibility.
+
 GET /admin/system
+
+Response: `{"database": "ok"|"down", "redis": "ok"|"down", "signals_today":
+int, "ai_analyses_today": int}`. Reuses `/health/ready`'s exact DB/Redis
+checks plus simple `COUNT` queries for today's activity - not telemetry
+(ADR-116). Always `200`; a dependency being unreachable renders as `"down"`
+in the body, never a `500`. Contract is inferred (ADR-130).
 
 GET /admin/logs
 
@@ -979,9 +992,32 @@ predates this read endpoint. Read-only: no route mutates or deletes a row.
 
 GET /admin/analytics
 
+Response: `{"daily_active_users": int, "signal_type_distribution":
+{"buy": int, "sell": int}}`. `daily_active_users` is distinct
+`UserSession.user_id` with a session created today. `signal_type_distribution`
+groups on `Signal.signal_type` (`signals` has no `recommendation` column -
+see ADR-130 for why this is the intended reading of docs/58 §3.2's
+"recommendation distribution" phrasing). Contract is inferred (ADR-130).
+
 POST /admin/news
 
+No request body. Runs the existing `NewsIngestionPipeline` inline (the same
+pipeline the `news_sentiment.ingest` Celery task uses) and returns
+`{"articles_ingested": int}`. Writes an `AuditLog` row
+(`admin_news_refreshed`). Blocking - see ADR-130 for the accepted
+synchronous-ingestion tradeoff. Contract is inferred (ADR-130).
+
 POST /admin/maintenance
+
+Body: `{"action": "refresh_news" | "refresh_calendar"}` - any other value is
+rejected with `422` (Pydantic `Literal`, ADR-117). `refresh_news` shares
+`POST /admin/news`'s exact implementation and response shape
+(`{"action": "refresh_news", "news": {"articles_ingested": int}, "calendar":
+null}`). `refresh_calendar` runs the existing
+`EconomicCalendarIngestionPipeline` inline and returns `{"action":
+"refresh_calendar", "news": null, "calendar": {"events_created": int,
+"events_updated": int}}`. Both write an `AuditLog` row. Contract is inferred
+(ADR-130).
 
 ---
 

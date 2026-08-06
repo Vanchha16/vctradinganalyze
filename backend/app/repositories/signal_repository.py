@@ -1,9 +1,10 @@
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.models.enums import SignalStatus, Timeframe
+from app.models.enums import SignalStatus, SignalType, Timeframe
 from app.models.signal import Signal
 from app.repositories.base import BaseRepository
 
@@ -56,3 +57,22 @@ class SignalRepository(BaseRepository[Signal]):
         if status is not None:
             query = query.where(Signal.status == status)
         return self._count(query)
+
+    def count_since(self, since: datetime) -> int:
+        """Today's "signals generated" count (docs/58 §3.2, `GET
+        /admin/system`)."""
+        query = select(func.count()).select_from(Signal).where(Signal.created_at >= since)
+        return self.session.execute(query).scalar_one()
+
+    def count_by_signal_type(self) -> dict[SignalType, int]:
+        """"Recommendation distribution" (docs/58 §3.2, `GET
+        /admin/analytics`) - `signals` has no `recommendation` column
+        (that field lives on `ai_analysis`); `signal_type` (BUY/SELL) is
+        the closest actual field on this table and the only one a
+        distribution grouped "on signals" can mean, since a `Signal` row
+        only ever exists for a BUY/SELL outcome in the first place
+        (ADR-086 - WAIT produces no `Signal` row to count). Recorded as an
+        inferred reading of docs/58's wording, not a literal match, in
+        ADR-130."""
+        query = select(Signal.signal_type, func.count()).group_by(Signal.signal_type)
+        return {signal_type: count for signal_type, count in self.session.execute(query)}

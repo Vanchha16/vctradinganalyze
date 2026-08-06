@@ -1,7 +1,8 @@
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.ai_analysis import AIAnalysis
 from app.models.enums import Timeframe
@@ -47,3 +48,8 @@ class AIAnalysisRepository(BaseRepository[AIAnalysis]):
         if timeframe is not None:
             query = query.where(AIAnalysis.timeframe == timeframe)
         return self._count(query)
+
+    def count_since(self, since: datetime) -> int:
+        """Today's "AI analyses run" count (docs/58 §3.2, `GET /admin/system`)."""
+        query = select(func.count()).select_from(AIAnalysis).where(AIAnalysis.created_at >= since)
+        return self.session.execute(query).scalar_one()

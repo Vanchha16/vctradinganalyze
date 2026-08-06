@@ -81,3 +81,24 @@ def test_is_duplicate_false_for_unrelated_article() -> None:
     candidate = make_raw_article(title="Bitcoin Rallies", url="https://coindesk.com/btc")
     existing = [_existing(title="Gold Prices Slide", url="https://forexfactory.com/gold")]
     assert is_duplicate(candidate, existing) is False
+
+
+def test_is_duplicate_handles_naive_existing_published_at() -> None:
+    """`existing.published_at` comes back naive from SQLite even though it
+    was written UTC-aware (BACKLOG.md §9) - a title-similarity comparison
+    against a naive value must not raise `TypeError: can't subtract
+    offset-naive and offset-aware datetimes` (found running `POST
+    /admin/news` twice in a row against a real SQLite DB, Phase 7D-C)."""
+    candidate = make_raw_article(
+        title="US CPI Rises Above Expectations, Fed Rate Hike Odds Increase",
+        url="https://bloomberg.com/different-url",
+        published_at=_BASE + timedelta(hours=1),
+    )
+    existing = [
+        _existing(
+            title="US CPI Rises Above Expectations Fed Rate Hike Odds Increase",
+            url="https://reuters.com/a",
+            published_at=_BASE.replace(tzinfo=None),
+        )
+    ]
+    assert is_duplicate(candidate, existing) is True

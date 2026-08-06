@@ -33,6 +33,7 @@ Usage:
     python scripts/run_dev.py worker
     python scripts/run_dev.py beat
     python scripts/run_dev.py api --real-providers     # deliberate opt-in only
+    python scripts/run_dev.py api --e2e-db             # point at e2e.db (Phase 9C E2E suite)
 """
 
 import argparse
@@ -43,6 +44,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from e2e_db import E2E_DATABASE_URL  # noqa: E402
 from local_env import SAFE_LOCAL_OVERRIDES, apply_safe_overrides  # noqa: E402
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -107,7 +109,9 @@ def _build_api_command(port: int, trusted_proxy_ips: str) -> list[str]:
     ]
 
 
-def _print_banner(mode: str, real_providers: bool, port: int, trusted_proxy_ips: str) -> None:
+def _print_banner(
+    mode: str, real_providers: bool, port: int, trusted_proxy_ips: str, e2e_db: bool = False
+) -> None:
     # `flush=True` on every line: Python fully buffers stdout when it is
     # not a TTY (piped/redirected to a file), so a long-running server's
     # banner could otherwise sit unflushed indefinitely - exactly when an
@@ -129,6 +133,8 @@ def _print_banner(mode: str, real_providers: bool, port: int, trusted_proxy_ips:
         print("Mode: MOCK PROVIDERS (default - safe, no vendor is ever called)", flush=True)
         for key, value in SAFE_LOCAL_OVERRIDES.items():
             print(f"  {key}={value}", flush=True)
+    if e2e_db:
+        print(f"Database: {E2E_DATABASE_URL} (--e2e-db was passed)", flush=True)
     print("=" * 64, flush=True)
 
 
@@ -154,6 +160,15 @@ def main() -> int:
             "default mock providers. May call a real vendor API. Never the default."
         ),
     )
+    parser.add_argument(
+        "--e2e-db",
+        action="store_true",
+        help=(
+            f"Point DATABASE_URL at the dedicated E2E database ({E2E_DATABASE_URL}) instead "
+            "of whatever backend/.env configures. For the Playwright E2E suite (Phase 9C) - "
+            "seed it first with scripts/seed_e2e_data.py. Never touches dev.db."
+        ),
+    )
     args = parser.parse_args()
 
     if args.mode != "api" and args.port != _DEFAULT_PORT:
@@ -162,10 +177,12 @@ def main() -> int:
     env = os.environ.copy()
     if not args.real_providers:
         apply_safe_overrides(env)
+    if args.e2e_db:
+        env["DATABASE_URL"] = E2E_DATABASE_URL
 
     trusted_proxy_ips = env.get("TRUSTED_PROXY_IPS", _DEFAULT_TRUSTED_PROXY_IPS)
 
-    _print_banner(args.mode, args.real_providers, args.port, trusted_proxy_ips)
+    _print_banner(args.mode, args.real_providers, args.port, trusted_proxy_ips, args.e2e_db)
 
     if args.mode == "api":
         command = _build_api_command(args.port, trusted_proxy_ips)

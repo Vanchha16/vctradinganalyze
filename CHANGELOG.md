@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added - Per-User LLM Quota (ADR-127)
+
+`app/dependencies/quota.py` adds `require_quota(bucket, limit, window_seconds)`, a dependency factory mirroring `app/dependencies/rbac.py`'s shape - composes `get_current_user` via `Depends()` without modifying it, and maintains a per-user fixed-window counter in Redis keyed `quota:{bucket}:{user_id}` (TTL set to the window length so keys expire on their own). Wired onto the two routes that spend real OpenAI tokens per call: `POST /analysis/ai/{symbol}` (`ai_analysis_quota_limit`/`ai_analysis_quota_window_seconds`) and `POST /chat/conversations/{id}/messages` (`ai_chat_quota_limit`/`ai_chat_quota_window_seconds`), both new `app/config/settings.py` fields. Exceeding the limit raises the new `QuotaExceededException` (`app/exceptions/quota.py`), mapped to HTTP 429 through the project's standard `{"error", "message"}` envelope, the same way `InsufficientRoleException` already is
+
+Fail-open by design (ADR-127) - if Redis is unreachable or raises any exception, the request is allowed through and a warning is logged, since this is a soft cost guard on a core product feature, not a security control. No role, including Super Admin, is exempt - the quota protects the project's OpenAI bill, not a privileged capability
+
+**ADR-127**: per-user fixed-window Redis quota on exactly the two per-call-costed LLM endpoints, fail-open, no role exemption - deliberately not a general-purpose rate limiter (BACKLOG.md §3 tracks that as a separate, larger, still-open question)
+
+Deliberately excluded (per ADR-127): sliding-window/token-bucket algorithms; a general rate-limiting middleware applied project-wide; an Admin/Super Admin exemption; refunding the quota if the downstream OpenAI call subsequently fails (tracked as a known limitation, BACKLOG.md §26)
+
+9 new tests (`tests/test_quota.py`)
+
+### Added - Signal Deduplication (ADR-125) & Chart Data Polling (ADR-126)
+
+`signals.generate_for_watchlist` (`app/workers/signal_tasks.py`) now skips an asset entirely - no AI call, no new `Signal` row, no Telegram send - if it already has an unresolved H1 signal, via a new `_has_open_signal()` helper that reuses `effective_status` (`status_resolver.py`, ADR-088) rather than trusting the stored `status` column. Fixes the same call being re-generated and re-broadcast to every linked Telegram account on every hourly run, a gap docs/57 §8 had already flagged as deferred. Generation resumes once the open call closes or its TTL expires
+
+Documents the already-implemented 15s `refetchInterval` polling in `use-candles.ts`/`use-latest-candle.ts` (ADR-126), restricted to the M1/M5 timeframes - the only ones `market_data_tasks.py`'s Celery Beat schedule refreshes often enough (every 60s/300s) for polling to surface genuinely new rows. This is polling against our own API, not streaming, so ADR-105's live-update/WebSocket deferral is narrowed, not violated. The two hooks' shared `LIVE_TIMEFRAMES`/`LIVE_POLL_INTERVAL_MS` constants are deduped into a new `frontend/hooks/live-polling.ts` module
+
+`components/shared/price-chart.tsx`: `createPriceLine` overlays (Support/Resistance, Order Block) were found to count toward the chart's default autoscale range - a single overlay far outside the actual candle range (e.g. a stale SMC order block) squeezed every real candle into a sliver at one edge. Fixed with a custom `autoscaleInfoProvider` on the candlestick series that scales to the candle data only, same as TradingView's own charts. Also adds Asia/Bangkok time-axis tick and crosshair formatters (`Intl.DateTimeFormat`, `timeZone: "Asia/Bangkok"`), matching commit `b6e75de`'s UTC+7 display convention and `lib/format.ts` elsewhere in the app - `lightweight-charts` labels its time axis in raw UTC otherwise
+
+`backend/scripts/seed_prod_assets.py` added to version control alongside the existing `create_admin.py`/`seed_dev_data.py` scripts; `.gitignore` extended for local Celery runtime artifacts and tooling config that shouldn't be tracked
+
+**ADR-125**: hourly watchlist signal generation skips assets with an already-open H1 call, scoped to asset+timeframe (not asset+direction), gated by `effective_status` so a stored-ACTIVE-but-TTL-expired row can't wedge an asset out of generation forever. **ADR-126**: chart data uses interval polling (15s, M1/M5 only) to narrow, not violate, ADR-105's live-update deferral - still no `/ws/prices` streaming backend
+
+Deliberately excluded (per ADR-125/ADR-126): a confidence-threshold or N-consecutive-run confirmation gate as an alternative dedup strategy; polling any timeframe above M5; any change to the broadcast-to-all-linked-accounts Telegram delivery model (docs/57 §5)
+
+5 new tests (`backend/tests/test_signal_tasks.py`)
+
 ### Added - Phase 7C: Frontend Experience & Advanced Trading UI
 
 `docs/55_FRONTEND_EXPERIENCE_ADVANCED_UI.md` - new architecture document defining the overlay-model extension, the shared `Markdown`/`smc-overlays` reuse points, and the per-page UX changes

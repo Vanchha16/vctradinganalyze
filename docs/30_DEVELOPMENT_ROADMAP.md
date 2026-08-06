@@ -210,7 +210,7 @@ Sub-Phases
 
 7D-B Watchlists Frontend (replaces the ADR-103 placeholder with real CRUD - list, create, rename, delete, add/remove assets; docs/58) - Not Started
 
-7D-C Admin Backend (first-ever `require_role` RBAC-enforcement dependency over the existing `UserRole` enum, ADR-115; the 7 endpoints docs/04 §Admin lists - `GET /admin/{users,signals,system,logs,analytics}`, `POST /admin/{news,maintenance}`; `/admin/system` reuses existing health checks + counts, not live telemetry, ADR-116; `/admin/maintenance` limited to refresh-news/refresh-calendar, ADR-117; docs/58) - Not Started
+7D-C Admin Backend (**user-management portion superseded by Phase 8C/docs/59** - the first-ever `require_role` RBAC-enforcement dependency over the existing `UserRole` enum, ADR-115, and the full `/admin/users*` surface (9 endpoints, `AdminUserService`) both shipped there instead; remaining scope is the non-user endpoints docs/04 §Admin lists - `GET /admin/{signals,system,logs,analytics}`, `POST /admin/{news,maintenance}`; `/admin/system` reuses existing health checks + counts, not live telemetry, ADR-116; `/admin/maintenance` limited to refresh-news/refresh-calendar, ADR-117; docs/58) - Not Started
 
 7D-D Admin Frontend (role-gated Admin nav item and pages - users/signals/system/logs/analytics - over 7D-C's endpoints only; ADR-118; docs/58) - Not Started
 
@@ -299,9 +299,10 @@ Phase 2B for every admin mutation) - Not Started
 
 **Note:** this phase number was previously an empty placeholder reserved for
 "Analytics, Reporting, Monitoring, Logging" (no sub-phases, nothing built). That content
-is relocated to Phase 12 (this doc's last section, after the existing Phase 10/11/
-Long-Term Vision) so it isn't lost, since Admin User Management is the work actually
-requested and scoped under the "Phase 8" name.
+is relocated to Phase 12 below, so it isn't lost, since Admin User Management is the
+work actually requested and scoped under the "Phase 8" name. Phase 12 is this
+document's final section - it appears further down, after Phase 10, Phase 11, and
+Long-Term Vision, in that order.
 
 ---
 

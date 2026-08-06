@@ -8,7 +8,7 @@ from app.api.v1.router import api_router
 from app.config import settings
 from app.core.logging import configure_logging
 from app.exceptions import register_exception_handlers
-from app.middleware import CorrelationIdMiddleware
+from app.middleware import CorrelationIdMiddleware, SecurityHeadersMiddleware
 
 
 @asynccontextmanager
@@ -28,11 +28,19 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.backend_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Phase 9A (ADR-132) - scoped down from allow-everything (flagged
+    # since before Phase 1.1, BACKLOG §4). `frontend/services/api-client.ts`
+    # is the only caller and never sends cookies (`fetch()` there has no
+    # `credentials: "include"`, so nothing cross-origin was ever actually
+    # relying on this) - it authenticates via a bearer token in the
+    # `Authorization` header instead, so `allow_credentials=True` was
+    # dead weight, not a real requirement.
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 register_exception_handlers(app)
 

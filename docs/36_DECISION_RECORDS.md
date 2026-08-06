@@ -6725,6 +6725,223 @@ or corporate-NAT false-positive rate becomes a real, observed problem.
 
 ---
 
+# ADR-133
+
+Title
+
+Phase 9B: Disabled/Deleted-User Cutoff at Request Time, Failed-Login
+Lockout, and the `jti` Denylist Deferral
+
+Status
+
+Accepted
+
+Context
+
+Phase 8C gave admins the ability to disable (`is_active=False`) or
+soft-delete (`deleted_at` set) a `User`, and `AuthenticationService.login`
+already rejected both at login. But `get_current_user`
+(`app/dependencies/auth.py`) - deliberately minimal since Phase 2C,
+per its own docstring and docs/37 §10 - decoded the bearer token, verified
+its type, and loaded the `User` without checking either flag. An
+already-issued access token kept working for its full remaining lifetime
+(up to `jwt_access_expire_minutes`, 15 minutes) regardless of what an
+admin did to the account afterward, leaving an admin responding to a
+compromised or malicious account with no way to actually cut it off
+before natural token expiry.
+
+Separately, docs/23 §17 ("Failed Login Protection") has specified a
+failed-login lockout requirement since early in the project, but only as
+four bare bullet points - Temporary Lock, CAPTCHA (Future), Notify User,
+Log Event - with no threshold, duration, or reset rule, and BACKLOG.md §4
+had tracked it as blocked on "Redis-backed attempt tracking/backoff
+logic" that this phase's build spec did not end up requiring. Meanwhile
+`AuthenticationService.login`'s credential check
+(`user is None or not verify_password(password, user.password_hash)`)
+never calls `verify_password` when the email doesn't match any user -
+since Argon2id verification is deliberately slow, this made a nonexistent
+address respond measurably faster than a real one, a timing oracle for
+user enumeration that matters more now that registration is closed
+(ADR-119) and every account is admin-provisioned.
+
+Decision
+
+1. **`get_current_user` now rejects a user whose `is_active` is `False`
+   or whose `deleted_at` is set**, raising the same
+   `InactiveAccountException` `AuthenticationService.login` already
+   raises for the identical condition. This costs nothing beyond a field
+   check - the `User` row is already loaded on every authenticated
+   request regardless. This is a deliberate narrowing of
+   `get_current_user`'s prior "authenticate only, never authorize"
+   contract; both its docstring and docs/37 §10 are corrected to say so.
+2. **Failed-login lockout is schema-only, no Redis.** Two new columns on
+   `users` - `failed_login_attempts` (int, default 0) and `locked_until`
+   (nullable, timezone-aware) - added via `op.batch_alter_table` (the
+   established pattern for altering an existing table in this project,
+   BACKLOG.md §26, `f3a9c1d2e5b7`). `AuthenticationService.login` rejects
+   with the lock in place (without verifying the password), increments
+   the counter on each wrong-password attempt, sets `locked_until` on
+   crossing the threshold, and resets both on a successful login. This
+   supersedes BACKLOG.md §4's older framing of the feature as needing
+   Redis-backed tracking - a DB column pair was sufficient once actually
+   scoped.
+3. **Threshold (`login_lockout_threshold` = 5) and duration
+   (`login_lockout_duration_minutes` = 15) are new settings**, hand-picked
+   starting points, not calibrated - the same caveat every prior
+   threshold decision in this project carries (ADR-127's quotas,
+   ADR-132's rate limits, ADR-130's timeout).
+4. **The lock auto-expires; there is no admin-unlock endpoint.** The
+   first login attempt observed after `locked_until` has passed resets
+   both it and the counter before continuing. A fresh deployment has
+   exactly one admin account, and `backend/scripts/create_admin.py`
+   refuses a second run - a lock with no self-expiry would be
+   unrecoverable without direct DB surgery. Auto-expiry is deliberately
+   the entire recovery mechanism.
+5. **A locked account is rejected via the same `InvalidCredentialsException`
+   a wrong password raises**, not a distinct exception or message - an
+   unauthenticated caller must not be able to tell "wrong password" apart
+   from "this account is currently locked," which would otherwise confirm
+   the address exists and is presently under attack.
+6. **"Notify User" (docs/23 §17) is dropped, not deferred.** It requires
+   email delivery, and the Phase 9 planning pass (docs/60 §2, 2026-08-06)
+   already dropped the email subsystem entirely, for reasons unrelated to
+   this ADR. There is no remaining path that would ever send this
+   notification.
+7. **"Log Event" is satisfied with three distinguishable audit actions**:
+   `login_failed` (wrong password, unchanged), `login_failed_locked` (an
+   attempt against an already-locked account), and `account_locked` (the
+   specific attempt that crosses the threshold and sets `locked_until`).
+8. **The user-enumeration timing oracle in `login()` is fixed, not
+   deferred to BACKLOG.** When `user is None`, `verify_password` now runs
+   against a fixed dummy Argon2id hash (`app/core/security.
+   DUMMY_PASSWORD_HASH`, generated once offline, not derived from any
+   real account) instead of being skipped - both paths now do equal
+   Argon2id work. Chosen over recording-and-deferring because the fix is
+   small, self-contained, and directly adjacent to the lockout work
+   already touching this method.
+9. **The `jti` access-token denylist (BACKLOG.md §4, tracked since Phase
+   2A) stays deferred**, not built. Item 1 above closes the practical
+   risk a denylist would have addressed - a disabled or deleted account
+   is now cut off on its very next request. A denylist would add a Redis
+   read to every authenticated request to close a narrower remaining
+   window (e.g. a role *downgrade*, which doesn't fail the active/deleted
+   check, mid-session) that is judged not worth that per-request cost
+   today. BACKLOG.md §4's entry is updated to reflect this reduced
+   framing rather than the original one.
+10. **`_as_aware_utc` (the SQLite-naive-vs-aware-datetime normalization
+    helper, BACKLOG.md §9) is promoted from a per-module copy to one
+    shared function, `app/utils/time.py::as_aware_utc`.** It had already
+    been independently copy-pasted into five modules
+    (`authentication_service`, `news_sentiment.dedup_detector`,
+    `analysis_confidence.freshness_analyzer`, `economic_calendar.
+    risk_window`, `signal.status_resolver`) before this phase - more than
+    the build spec assumed going in (it named two). Adding a sixth
+    (`locked_until` vs. `datetime.now(UTC)`) was the point past which
+    continuing to copy it was no longer defensible; all six call sites
+    now import the one function.
+
+Reason
+
+Item 1 is the higher-value fix of the two build items and is not what
+docs/23 §17 or BACKLOG.md §4 lead with - lockout only slows down
+*guessing* a password, while the disabled/deleted check closes a window
+where a *known-correct* credential (or a still-live token from before an
+account was compromised or fired) keeps working regardless of admin
+action. Both are real gaps Phase 8C's admin-lifecycle work exposed once
+it existed; neither was addressable before that phase, since there was no
+account lifecycle to invalidate against.
+
+Schema-only lockout (no Redis) was chosen over BACKLOG.md §4's original
+framing because nothing about "count consecutive failures, expire after a
+duration" requires a separate fast-expiring store - two columns already
+co-located with the row being protected, one already-open DB transaction
+per login attempt, is simpler than adding a Redis round-trip to the one
+path (`login`) that cannot already assume Redis is reachable without
+changing its failure semantics (unlike ADR-127/ADR-132's rate limiters,
+which fail open on a Redis outage by design - a lockout fail-open would
+defeat the feature).
+
+Auto-expiry instead of an admin-unlock endpoint is forced by this
+project's own bootstrap constraint, not a general security preference:
+`create_admin.py` intentionally refuses to create a second super-admin,
+so there is exactly one account capable of unlocking anyone on a fresh
+deployment - if lockout ever caught it, only direct DB access could
+recover, which is worse than a self-expiring lock ever being slightly
+too permissive.
+
+The `jti` deferral is a threat-model judgment call, not a capability
+gap: building the denylist was and remains straightforward, but every
+authenticated request would pay a Redis read to protect against a
+narrower window than existed before Item 1, for a threat (mid-session
+privilege change) this project has no evidence is more likely than the
+already-closed one.
+
+Alternatives Considered
+
+Option A (lockout storage): Redis-backed attempt tracking, per BACKLOG.
+md §4's original framing - rejected; adds a hard Redis dependency to the
+one auth path that previously had none, in exchange for no behavior this
+phase actually needed that two columns don't already provide.
+
+Option B (§3.4 fix): record the timing-oracle weakness in BACKLOG.md
+instead of fixing it now - rejected in favor of fixing it, since the fix
+is a few lines directly inside the method already being changed for
+lockout, and leaving a known, named, easily-fixed enumeration vector
+recorded-but-open serves no one.
+
+Option C (`jti`): build the Redis denylist now, closing the narrower
+role-downgrade window Item 9 describes - rejected; that window is real
+but wasn't the risk that motivated 9B (the disabled/deleted-account gap,
+now closed by Item 1), and paying a Redis read on every authenticated
+request is a cost this phase's scope does not justify taking on
+speculatively.
+
+Option D (`_as_aware_utc`): leave the fifth-then-sixth copy as-is,
+matching the existing (if unintentional) pattern - rejected once a sixth
+call site made "not worth consolidating" no longer true; five independent
+copies of an identical, non-trivial-to-rederive gotcha is exactly the
+kind of institutional-knowledge drift BACKLOG.md §9 exists to prevent
+rediscovering.
+
+Trade-offs
+
+Pros
+
+Closes a real, demonstrable gap (a disabled/deleted account's live token
+outliving admin action) with no added latency. Lockout stops online
+password-guessing against admin-provisioned accounts without any new
+runtime dependency. The enumeration timing oracle is closed rather than
+merely documented. One `as_aware_utc` implementation instead of six
+removes a live risk of the next copy silently drifting from the
+original's behavior.
+
+Cons
+
+The lockout threshold/duration (5 attempts / 15 minutes) are, like every
+prior threshold in this project, hand-picked rather than calibrated. Lock
+auto-expiry means a determined attacker with unlimited time still gets
+another five guesses every fifteen minutes indefinitely - this is the
+accepted cost of not building an admin-unlock endpoint (see Reason). The
+`jti` deferral leaves the role-downgrade-mid-session window open, by
+deliberate choice, until a Redis read on every request is judged worth
+it. `DUMMY_PASSWORD_HASH` is a module-level constant, not currently
+rotated - not a weakness in itself (it is never meant to be guessed, only
+to cost the same as a real hash to verify against), but worth naming as a
+new small piece of fixed state.
+
+Future Review
+
+Revisit the lockout threshold/duration once real login-failure patterns
+exist to calibrate against, same as every other hand-picked number in
+this project. Revisit the `jti` deferral if role changes for
+currently-logged-in users become a real, observed problem, or if Redis
+becomes an unconditional dependency for some other reason that removes
+the "adds a new hard dependency to `login`" objection. Build the
+Content-Security-Policy and other deferred 9A items per ADR-132's own
+Future Review, independently of this ADR.
+
+---
+
 # Review Policy
 
 Review ADRs:

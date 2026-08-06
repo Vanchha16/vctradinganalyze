@@ -51,6 +51,22 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
+# Phase 9B (ADR-133) - a fixed, valid Argon2id hash of no real password
+# (generated once, offline; not derived from any account's credentials).
+# AuthenticationService.login verifies against this when the email
+# doesn't match any user, instead of skipping verification outright.
+# Argon2id is deliberately slow; skipping it for an unknown email (the
+# prior behavior) made a nonexistent address respond measurably faster
+# than a real one - a timing oracle for user enumeration. Verifying
+# against a fixed hash costs the same as a real verification and always
+# fails (no real password will ever match it), so both paths take
+# roughly equal time.
+DUMMY_PASSWORD_HASH = (
+    "$argon2id$v=19$m=65536,t=3,p=4"
+    "$UBlnn8GOZJh1gpGpSnQBxg$wQDx91af4CJFYi/0U9KOT9V0i2d1bO6wO0PlmYKkjzA"
+)
+
+
 def _create_token(user_id: uuid.UUID, token_type: TokenType, expires_delta: timedelta) -> str:
     now = datetime.now(UTC)
     payload = {

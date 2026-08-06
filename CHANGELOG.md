@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added - Phase 9B: Auth Hardening (ADR-133)
+
+`get_current_user` (`app/dependencies/auth.py`) now rejects a user whose `is_active` is `False` or whose `deleted_at` is set, reusing `InactiveAccountException` - closes the window where an admin disabling/soft-deleting a user (Phase 8C) left their already-issued access token working for up to its full remaining 15-minute lifetime. Costs nothing extra: the `User` row was already loaded on every authenticated request. Docstring and docs/37 §10 corrected to reflect the narrowed contract
+
+Failed-login lockout built (docs/23 §17): new `users.failed_login_attempts`/`users.locked_until` columns (migration `dea127b4db12`, `op.batch_alter_table`); `AuthenticationService.login` locks after `settings.login_lockout_threshold` (5, new setting) consecutive failures for `settings.login_lockout_duration_minutes` (15, new setting), auto-expiring rather than needing an admin-unlock endpoint (`create_admin.py` refuses a second super-admin, so a permanent lock would be unrecoverable). A locked account is rejected via the same `InvalidCredentialsException` a wrong password raises - not distinguishable to an unauthenticated caller. Three distinguishable audit actions: `login_failed`, `login_failed_locked`, `account_locked`. "Notify User" dropped (email subsystem already dropped, docs/60 §2); "CAPTCHA" remains deferred
+
+Fixed a user-enumeration timing oracle in `login()`: a nonexistent email previously skipped `verify_password` entirely, responding measurably faster than a real one against Argon2id's deliberately-slow verification. Now verifies against a fixed dummy hash (`app.core.security.DUMMY_PASSWORD_HASH`) so both paths cost the same
+
+`jti` access-token denylist (BACKLOG.md §4, tracked since Phase 2A) decided against for now - the disabled/deleted-account cutoff above closes the practical risk it was meant to address; a denylist would add a Redis read to every authenticated request to close a narrower remaining window (mid-session role downgrade) not judged worth that cost today
+
+`_as_aware_utc` (SQLite naive-vs-aware datetime normalization, BACKLOG.md §9) promoted from five independent per-module copies to one shared `app/utils/time.py::as_aware_utc`, reused by `AuthenticationService`, `news_sentiment.dedup_detector`, `analysis_confidence.freshness_analyzer`, `economic_calendar.risk_window`, `signal.status_resolver`, and the new lockout auto-expiry check
+
+**ADR-133** records all of the above, including the alternatives considered for lockout storage (Redis vs. schema-only, schema-only chosen) and the `jti` deferral's updated reasoning
+
 ### Added - Phase 7D-D: Admin Frontend (ADR-131) - Phase 7D complete
 
 Replaces the remaining two Phase 8D placeholders (`admin/users`/`admin/audit-logs` were already real, from 8C/8F) over 7D-C's endpoints. `admin/system-health`: `Badge`/new `systemStatusVariant` ok/down indicators for `GET /admin/system`'s `database`/`redis`, `StatCard` tiles for `signals_today`/`ai_analyses_today`, an honest "liveness plus counts, not telemetry" note. `admin/signal-statistics`: a new `AdminSignalTable` (modeled on `UserTable`/`AuditLogTable`) for `GET /admin/signals`, paginated; `GET /admin/analytics`'s `daily_active_users` as a stat tile and `signal_type_distribution` as a new `SignalTypeDistributionBar` - plain CSS, no chart library

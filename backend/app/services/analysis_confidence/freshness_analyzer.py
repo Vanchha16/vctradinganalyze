@@ -8,13 +8,14 @@ cadence, not something this engine controls - it is diagnostic evidence,
 not a strong quality signal yet (docs/45 §7).
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from app.models.enums import Timeframe
 from app.services.analysis_confidence.types import FreshnessEvidence
 from app.services.market_regime.types import MarketRegimeResult
 from app.services.smc.types import SMCAnalysisResult
 from app.services.technical_analysis.types import TechnicalAnalysisResult
+from app.utils.time import as_aware_utc
 
 FRESHNESS_WEIGHT = 5.0
 
@@ -45,7 +46,7 @@ def analyze(
     threshold = STALENESS_THRESHOLDS[timeframe]
 
     timestamps = [
-        _as_aware_utc(result.calculated_at)
+        as_aware_utc(result.calculated_at)
         for result in (technical, smc, market_regime)
         if result is not None
     ]
@@ -65,12 +66,3 @@ def analyze(
         is_stale=is_stale,
         freshness_score=freshness_score,
     )
-
-
-def _as_aware_utc(value: datetime) -> datetime:
-    """SQLite returns naive datetimes for `DateTime(timezone=True)`
-    columns even though they were written UTC-aware (BACKLOG.md §9,
-    institutional knowledge) - candle timestamps flow into
-    `calculated_at` on every upstream engine, so this comparison hits
-    the same gotcha `AuthenticationService._as_aware_utc` was added for."""
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)

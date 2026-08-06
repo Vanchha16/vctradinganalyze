@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.security import create_access_token, create_refresh_token, hash_password, hash_token
 from app.database.base import Base
 from app.exceptions import (
@@ -226,6 +227,117 @@ def test_revoke_session_rejects_foreign_user(
 
     with pytest.raises(ResourceNotFoundException):
         auth_service.revoke_session(uuid.uuid4(), stored_session.id)
+
+
+# --- Failed-login lockout (Phase 9B, docs/23 §17, ADR-133) -----------------
+
+
+def test_login_locks_account_at_threshold_and_not_before(
+    auth_service: AuthenticationService, session: Session
+) -> None:
+    user = _make_user(session)
+
+    for _ in range(settings.login_lockout_threshold - 1):
+        with pytest.raises(InvalidCredentialsException):
+            auth_service.login("trader@example.com", "wrong-password")
+    session.refresh(user)
+    assert user.locked_until is None
+
+    with pytest.raises(InvalidCredentialsException):
+        auth_service.login("trader@example.com", "wrong-password")
+    session.refresh(user)
+    assert user.locked_until is not None
+    assert "account_locked" in _audit_actions(session)
+
+
+def test_login_rejects_locked_account_without_verifying_password(
+    auth_service: AuthenticationService, session: Session
+) -> None:
+    """The correct password must still be rejected while locked - and
+    rejected identically to a wrong one (InvalidCredentialsException, not a
+    distinct exception), so a locked account isn't distinguishable from a
+    plain wrong-password attempt to an unauthenticated caller."""
+    user = _make_user(session, locked_until=datetime.now(UTC) + timedelta(minutes=15))
+
+    with pytest.raises(InvalidCredentialsException):
+        auth_service.login("trader@example.com", _PASSWORD)
+
+    session.refresh(user)
+    assert user.last_login is None
+    assert "login_failed_locked" in _audit_actions(session)
+
+
+def test_login_auto_expires_lock_and_resets_counter(
+    auth_service: AuthenticationService, session: Session
+) -> None:
+    _make_user(
+        session,
+        locked_until=datetime.now(UTC) - timedelta(seconds=1),
+        failed_login_attempts=settings.login_lockout_threshold,
+    )
+
+    logged_in_user, access_token, _ = auth_service.login("trader@example.com", _PASSWORD)
+
+    assert access_token
+    assert logged_in_user.locked_until is None
+    assert logged_in_user.failed_login_attempts == 0
+
+
+def test_login_success_resets_failed_attempts(
+    auth_service: AuthenticationService, session: Session
+) -> None:
+    user = _make_user(session, failed_login_attempts=settings.login_lockout_threshold - 1)
+
+    auth_service.login("trader@example.com", _PASSWORD)
+
+    session.refresh(user)
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None
+
+
+def test_login_unknown_email_and_locked_account_return_same_exception_and_message(
+    auth_service: AuthenticationService, session: Session
+) -> None:
+    """Both a nonexistent email and a locked account must surface as a
+    plain `InvalidCredentialsException` with the same message - the caller
+    cannot distinguish "no such account", "wrong password", or "locked"."""
+    _make_user(session, locked_until=datetime.now(UTC) + timedelta(minutes=15))
+
+    with pytest.raises(InvalidCredentialsException) as locked_exc:
+        auth_service.login("trader@example.com", _PASSWORD)
+    with pytest.raises(InvalidCredentialsException) as unknown_exc:
+        auth_service.login("nobody@example.com", _PASSWORD)
+
+    assert str(locked_exc.value) == str(unknown_exc.value)
+
+
+def test_login_dummy_hash_verification_runs_for_unknown_email(
+    auth_service: AuthenticationService, session: Session
+) -> None:
+    """§3.4: an unknown email must still run a full Argon2id verification
+    (against the fixed dummy hash), not short-circuit, so both paths do
+    equal work rather than one being a timing oracle for the other."""
+    from app.core import security
+
+    calls: list[str] = []
+    original = security.verify_password
+
+    def _spy(password: str, password_hash: str) -> bool:
+        calls.append(password_hash)
+        return original(password, password_hash)
+
+    security_verify = security.verify_password
+    try:
+        import app.services.authentication_service as auth_service_module
+
+        auth_service_module.verify_password = _spy
+
+        with pytest.raises(InvalidCredentialsException):
+            auth_service.login("nobody@example.com", "irrelevant-password")
+
+        assert calls == [security.DUMMY_PASSWORD_HASH]
+    finally:
+        auth_service_module.verify_password = security_verify
 
 
 def test_revoke_all_sessions_keeps_excluded(

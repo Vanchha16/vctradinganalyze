@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Uuid
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,6 +54,20 @@ class User(Base, UUIDMixin, TimestampMixin):
     (blocking access until changed) is not built yet (docs/59 §7.1); this
     column exists so the flag is visible and future enforcement has
     something to read."""
+
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """Consecutive failed-password count since the last successful login or
+    the last auto-expired lock (Phase 9B, ADR-133, docs/23 §17). Reset to
+    0 on a successful login and also on the first login attempt observed
+    after `locked_until` has passed."""
+
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    """Set once `failed_login_attempts` reaches
+    `settings.login_lockout_threshold`; `NULL` = not locked. The lock is
+    temporary by design (docs/23 §17) - it expires on its own once this
+    timestamp passes, rather than requiring an admin-unlock endpoint,
+    because `create_admin.py` refuses a second run and there is exactly
+    one admin account on a fresh deployment (Phase 9B, ADR-133)."""
 
     created_by_admin_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True

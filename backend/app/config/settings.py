@@ -102,6 +102,14 @@ class Settings(BaseSettings):
     public_rate_limit_data_limit: int = 100
     public_rate_limit_window_seconds: int = 60
 
+    # Phase 9B (ADR-133, docs/23 §17) - failed-login lockout. docs/23 §17
+    # names the requirement ("Temporary Lock") with no threshold/duration;
+    # these are hand-picked starting points, not calibrated, same caveat
+    # as ADR-127's quotas and ADR-132's rate limits. Auto-expiry (not an
+    # admin-unlock endpoint) is the recovery path - see ADR-133.
+    login_lockout_threshold: int = 5
+    login_lockout_duration_minutes: int = 15
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

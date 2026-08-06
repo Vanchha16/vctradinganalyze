@@ -463,6 +463,17 @@ Notify User
 
 Log Event
 
+**Built in Phase 9B (ADR-133).** This section originally specified no
+threshold, duration, or reset rule - `settings.login_lockout_threshold`
+(5) and `settings.login_lockout_duration_minutes` (15) are hand-picked
+starting points, not calibrated (see ADR-133's Future Review). "Temporary
+Lock" auto-expires on its own (no admin-unlock endpoint - see ADR-133's
+Reason for why). "Notify User" is dropped, not built - it requires email
+delivery, which Phase 9 dropped entirely (docs/60 §2). "Log Event" is
+three distinguishable `AuditLog` actions: `login_failed`,
+`login_failed_locked`, `account_locked`. "CAPTCHA (Future)" remains
+deferred, unchanged.
+
 ---
 
 # 18. Audit Logging

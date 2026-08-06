@@ -321,8 +321,12 @@ scoping, and reasoning behind each.
   resolution behind the production reverse proxy, per-IP rate limiting on
   the ten previously-unlimited public routes, CORS scoped down, baseline
   security headers.
-- **9B Auth Hardening** - failed-login lockout, `jti` access-token
-  revocation decision. Not started.
+- **9B Auth Hardening** - **complete.** Disabled/deleted users are now
+  cut off at their next authenticated request (`get_current_user`), not
+  just at login; failed-login lockout (schema-only, no Redis); the
+  `login()` user-enumeration timing oracle fixed; `jti` access-token
+  denylist decided against for now, deferral reasoning updated
+  (ADR-133).
 - **9C Testing Foundation** - Playwright E2E on core flows, `pytest-cov`.
   Not started.
 - **9D Measurement** - `GET /metrics`. Not started, and a prerequisite

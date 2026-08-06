@@ -4,9 +4,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 
 from app.api.v1.routes.market_data import get_asset_or_404
+from app.config import settings
 from app.dependencies import get_current_user
 from app.dependencies.ai_orchestrator import get_ai_analysis_repository, get_ai_orchestrator_engine
 from app.dependencies.market_data import get_asset_repository
+from app.dependencies.quota import require_quota
 from app.exceptions import ResourceNotFoundException
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
@@ -77,7 +79,16 @@ def _row_to_response(row: AIAnalysis, symbol: str) -> AIAnalysisResponse:
 async def generate_ai_analysis(
     asset: Annotated[Asset, Depends(get_asset_or_404)],
     timeframe: Timeframe,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[
+        User,
+        Depends(
+            require_quota(
+                "ai_analysis",
+                settings.ai_analysis_quota_limit,
+                settings.ai_analysis_quota_window_seconds,
+            )
+        ),
+    ],
     engine: Annotated[AIOrchestratorEngine, Depends(get_ai_orchestrator_engine)],
 ) -> AIAnalysisResponse:
     result = engine.generate(asset, timeframe)

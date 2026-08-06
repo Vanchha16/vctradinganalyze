@@ -5873,6 +5873,133 @@ ADR-105's Live Updates deferral itself (true streaming) once a
 
 ---
 
+# ADR-127
+
+Title
+
+Per-User Fixed-Window Quota on the Two LLM-Token-Spending Endpoints
+
+Status
+
+Accepted
+
+Context
+
+`POST /analysis/ai/{symbol}` and `POST /chat/conversations/{id}/messages`
+are the only two routes in this project that spend real OpenAI tokens per
+call, and until now both were gated by authentication only - `get_current_
+user` (Phase 2C) has only ever authenticated, never throttled. With
+production about to run with a live OpenAI API key, an authenticated user
+could call either endpoint an unbounded number of times and run up
+unbounded spend. This is the first *inbound* throttle this project has
+ever built. All prior "rate limit" code (`RateLimitedProvider`, ADR-025)
+governs *outbound* calls to market-data/news providers to stay under
+their quota - a completely different concern from protecting our own
+spend against our own users. BACKLOG.md §20 and §22 flagged this exact
+gap for the AI Signal Engine and AI Chat Assistant respectively; §3
+separately tracks general-purpose API rate limiting (e.g. for the public,
+unauthenticated market-data routes) as still deferred - that is a much
+larger design question this change does not attempt to answer.
+
+Decision
+
+`app/dependencies/quota.py` adds `require_quota(bucket, limit,
+window_seconds)`, a dependency factory mirroring `app/dependencies/
+rbac.py`'s shape: it composes `get_current_user` via `Depends()` and does
+not modify it. It maintains a per-user fixed-window counter in Redis
+keyed on `quota:{bucket}:{user_id}`, using the module-level Redis client
+already established by `app/api/v1/routes/health.py` (but created once,
+not per-request, since this sits on a hot path rather than a healthcheck).
+The counter's TTL is set to the window length so keys expire on their own.
+Two independent buckets are wired up via `app/config/settings.py`:
+`ai_analysis_quota_limit`/`ai_analysis_quota_window_seconds` on `POST
+/analysis/ai/{symbol}`, and `ai_chat_quota_limit`/`ai_chat_quota_window_
+seconds` on `POST /chat/conversations/{id}/messages`. Exceeding the limit
+raises the new `QuotaExceededException` (`app/exceptions/quota.py`),
+mapped to HTTP 429 through the project's standard `{"error", "message"}`
+envelope the same way `InsufficientRoleException` already is. If Redis is
+unreachable or raises any exception, the dependency logs a warning and
+allows the request through (fail open). No role, including Super Admin,
+is exempt.
+
+Reason
+
+Fail-open beats fail-closed here because this is a soft cost guard on a
+core product feature, not a security control - a Redis outage taking down
+AI analysis or chat for every user would be a strictly worse outcome than
+occasionally letting a burst of requests through uncounted. This mirrors
+the degrade-rather-than-block precedent already set by `app/services/
+news_sentiment/ai_summary_generator.py` (ADR-051), which returns `None`
+on any OpenAI failure rather than blocking news ingestion. No admin
+exemption was a deliberate choice: an Admin or Super Admin account is not
+inherently less likely to be compromised or scripted against, and the
+quota is protecting the project's OpenAI bill, not gating a privileged
+capability, so role has no bearing on it. This is intentionally not a
+general rate limiter - it does not touch the public, unauthenticated
+market-data routes (still tracked in BACKLOG.md §3), does not use a
+sliding window or token-bucket algorithm, and exposes no reusable
+middleware; it is two narrowly-scoped `Depends()` calls on the two routes
+that actually cost money per call. Separately, the hourly Celery task
+`signals.generate_for_watchlist` (ADR-125) calls `SignalEngine.generate()`
+in-process, not over HTTP, so it never passes through `get_current_user`
+or this dependency at all - ADR-125's `_has_open_signal()` gate remains
+its only cost control. The two are complementary, not redundant: ADR-125
+bounds AI-orchestration spend from scheduled, system-initiated generation,
+while this ADR bounds it from user-initiated, per-call requests.
+
+Alternatives Considered
+
+Option A: Sliding-window or token-bucket rate limiting - rejected for
+this pass; a fixed window is simpler to reason about and implement
+correctly with two Redis calls, and the goal here is a hard per-window
+cost ceiling, not smoothing burst traffic.
+
+Option B: A general-purpose rate-limiting middleware applied project-wide
+- rejected; the two AI endpoints are the only ones with a real per-call
+cost, and applying throttling to routes that don't need it (including the
+public market-data routes) is a separate, larger design question
+(BACKLOG.md §3) that shouldn't be bundled into a narrow production-safety
+fix.
+
+Option C: Exempt Admin/Super Admin from the quota - rejected; an explicit
+user decision that the quota is a cost guard, not a privilege gate, so it
+applies uniformly.
+
+Option D (chosen): Per-user fixed-window Redis counters, fail-open, no
+role exemption, applied to exactly the two per-call-costed routes.
+
+Trade-offs
+
+Pros
+
+Directly bounds unbounded per-user spend on the only two token-costed
+endpoints before live OpenAI keys go into production; minimal, localized
+change (`app/dependencies/quota.py`, `app/exceptions/quota.py`, two route
+files, settings); reuses the existing Redis connection and exception-
+envelope patterns rather than inventing new ones.
+
+Cons
+
+Fixed windows allow a burst at the window boundary (e.g. a user could
+send `limit` requests at the end of one window and another `limit` just
+after it rolls over). Fail-open means a sustained Redis outage
+temporarily removes the cost guard entirely, trading spend protection for
+availability. The chosen limits are not derived from any observed usage
+data.
+
+Future Review
+
+The default limits (`ai_analysis_quota_limit`, `ai_chat_quota_limit`, and
+their window lengths) are hand-picked starting points, not empirically
+calibrated - the same caveat as every prior threshold ADR in this
+project. Revisit once real production usage data exists. If burst-at-
+boundary behavior proves to be a real problem, revisit with a sliding-
+window or token-bucket algorithm (Option A) as a replacement. If the
+public market-data routes ever need protection, that is BACKLOG.md §3's
+separate, larger scope - not an extension of this dependency.
+
+---
+
 # Review Policy
 
 Review ADRs:

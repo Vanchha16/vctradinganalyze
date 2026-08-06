@@ -74,6 +74,15 @@ class Settings(BaseSettings):
 
     chat_max_history_messages: int = 20
 
+    # Phase 9 (ADR-127) - the first inbound (per-user) throttle in this
+    # project, scoped to the two endpoints that spend real LLM tokens per
+    # call. Conservative starting points, not empirically calibrated - see
+    # ADR-127's Future Review.
+    ai_analysis_quota_limit: int = 10
+    ai_analysis_quota_window_seconds: int = 3600
+    ai_chat_quota_limit: int = 30
+    ai_chat_quota_window_seconds: int = 3600
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

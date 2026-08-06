@@ -3,12 +3,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 
+from app.config import settings
 from app.dependencies import get_current_user
 from app.dependencies.ai_chat import (
     get_ai_chat_engine,
     get_conversation_repository,
     get_message_repository,
 )
+from app.dependencies.quota import require_quota
 from app.exceptions import ResourceNotFoundException
 from app.models.conversation import Conversation
 from app.models.enums import ConversationStatus
@@ -98,7 +100,16 @@ async def get_conversation(
 async def send_message(
     conversation_id: UUID,
     body: SendMessageRequest,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[
+        User,
+        Depends(
+            require_quota(
+                "ai_chat",
+                settings.ai_chat_quota_limit,
+                settings.ai_chat_quota_window_seconds,
+            )
+        ),
+    ],
     conversation_repository: Annotated[
         ConversationRepository, Depends(get_conversation_repository)
     ],

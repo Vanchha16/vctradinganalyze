@@ -19,6 +19,7 @@ from app.exceptions.base import (
     ValidationException,
 )
 from app.exceptions.handlers import register_exception_handlers
+from app.exceptions.quota import QuotaExceededException
 
 __all__ = [
     "AppException",
@@ -33,6 +34,7 @@ __all__ = [
     "InvalidRefreshTokenException",
     "LastSuperAdminException",
     "PermissionDeniedException",
+    "QuotaExceededException",
     "RegistrationDisabledException",
     "ResourceNotFoundException",
     "ValidationException",

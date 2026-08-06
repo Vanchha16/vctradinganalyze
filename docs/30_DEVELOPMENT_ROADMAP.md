@@ -294,8 +294,13 @@ removed from the frontend; `backend/scripts/create_admin.py` bootstraps the firs
 Super Admin, ADR-123, refuses a second run; docs/23 §3 updated to describe the new
 flow; 6 new backend tests) - Completed
 
-8F Audit Logs (no new schema - reuses the existing `AuditLog` table/repository from
-Phase 2B for every admin mutation) - Not Started
+8F Audit Logs (no new schema - the write side already existed, Phase 2B's
+`AuthenticationService` and Phase 8C's `AdminUserService`; this phase adds only
+the read side: `AuditLogRepository.list_admin`/`count_admin`,
+`UserRepository.list_by_ids` for batch actor resolution, read-only
+`AdminAuditLogService`, `GET /admin/logs` mirroring `GET /admin/users`'
+pagination convention, and a real `AdminAuditLogsPage` replacing the Phase 8D
+placeholder; docs/59 §11, ADR-129) - Completed
 
 **Note:** this phase number was previously an empty placeholder reserved for
 "Analytics, Reporting, Monitoring, Logging" (no sub-phases, nothing built). That content

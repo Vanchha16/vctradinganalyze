@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added - Phase 8F: Audit Logs Frontend
+
+Replaces the Phase 8D `AdminComingSoon` placeholder at `/admin/audit-logs` with a real page against `GET /admin/logs`. `services/admin.ts` extended with `listAdminLogs`/`ListAdminLogsParams` (no second admin service module); `AdminAuditLogResponse`/`AdminAuditLogListResponse` types added to `services/types.ts`; `use-admin-logs.ts` mirrors `use-admin-users.ts`'s shape
+
+`AuditLogTable` (`features/admin/components/`) - read-only, no row actions (unlike `UserTable`), a `null` actor (nullable `user_id`, `ON DELETE SET NULL`) renders as an honest "System / deleted user," never a blank cell. `AuditLogFilterBar` - Action/Resource `Select`s (hardcoded known values, same pattern as `UserFilterBar`'s `ROLE_OPTIONS`), `from`/`to` date inputs, and a click-an-actor's-name-to-filter interaction (a removable badge) instead of a raw-UUID text field. No new UI primitives
+
+Verified via `npm run typecheck`/`lint`/`build` (all clean) plus a full manual walkthrough against the real local backend: real audit rows newest-first; disabling a user then reloading showed the new row with the correct actor/target; Action, Resource, actor, and date-range filters each independently verified to narrow results correctly; pagination confirmed past page 1; a non-admin is redirected client-side and the backend independently confirmed to return 403/401 directly (not just relying on the client-side gate). The other three Phase 8D placeholders (System Health, API Usage, Signal Statistics) are untouched
+
 ### Added - Phase 8F: Audit Logs Backend (ADR-129)
 
 The write side already existed (Phase 2B's `AuthenticationService`: `login_success`/`login_failed`/`logout`/`session_revoked`; Phase 8C's `AdminUserService`: `admin_user_created`/`admin_user_updated`/`admin_user_disabled`/`admin_user_activated`/`admin_role_changed`/`admin_password_reset`/`admin_user_deleted`) - this phase builds only the read side. No migration, no model change

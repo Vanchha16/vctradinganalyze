@@ -94,6 +94,28 @@ export interface AdminPasswordResetResponse {
   temporary_password: string;
 }
 
+// ---- Admin Audit Logs (docs/04 §Admin, docs/59 §11, Phase 8F, ADR-129) ----
+
+export interface AdminAuditLogResponse {
+  id: string;
+  user_id: string | null;
+  actor_email: string | null;
+  actor_username: string | null;
+  action: string;
+  resource: string;
+  resource_id: string | null;
+  ip_address: string | null;
+  context: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface AdminAuditLogListResponse {
+  items: AdminAuditLogResponse[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
 export type MarketType = "forex" | "metal" | "crypto" | "index";
 
 export type Timeframe = "m1" | "m5" | "m15" | "m30" | "h1" | "h4" | "d1" | "w1" | "mn";

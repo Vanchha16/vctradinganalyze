@@ -1,12 +1,28 @@
 import { ApiError } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 
-export function ErrorCard({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+/**
+ * `notFoundHint` is caller-supplied, not hardcoded - this card is shared
+ * across every list/detail page in the app, and a single hardcoded
+ * "no candle data" hint (this component's original shape) was wrong on
+ * every page except the one it was written for, and silently wrong once
+ * a second page adopted `ErrorCard` (surfaced on the Watchlist detail
+ * page's 404, BACKLOG.md §26). Only shown for a `resource_not_found`
+ * error and only when a caller actually supplies one - no hint at all
+ * beats a wrong one.
+ */
+export function ErrorCard({
+  error,
+  onRetry,
+  notFoundHint,
+}: {
+  error: unknown;
+  onRetry: () => void;
+  notFoundHint?: string;
+}) {
   const message = error instanceof ApiError ? error.message : "Something went wrong.";
   const hint =
-    error instanceof ApiError && error.errorCode === "resource_not_found"
-      ? "This asset likely has no candle data yet for the selected timeframe."
-      : null;
+    error instanceof ApiError && error.errorCode === "resource_not_found" ? notFoundHint : null;
 
   return (
     <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">

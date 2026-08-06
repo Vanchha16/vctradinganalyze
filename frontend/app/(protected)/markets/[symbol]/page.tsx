@@ -92,7 +92,11 @@ export default function MarketDetailPage() {
             <div className="flex flex-col gap-3 p-4">
               <SmcOverlayToggles enabled={enabledOverlays} onToggle={toggleOverlay} />
               {candlesQuery.isError ? (
-                <ErrorCard error={candlesQuery.error} onRetry={() => candlesQuery.refetch()} />
+                <ErrorCard
+                  error={candlesQuery.error}
+                  onRetry={() => candlesQuery.refetch()}
+                  notFoundHint="This asset likely has no candle data yet for the selected timeframe."
+                />
               ) : (
                 <PriceChart
                   candles={candlesQuery.data?.items ?? []}

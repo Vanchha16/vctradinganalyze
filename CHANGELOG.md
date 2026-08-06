@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed - Test Isolation, ErrorCard Hint, `.claude/` Tracking
+
+`backend/tests/conftest.py` (new - none existed anywhere under `backend/`) isolates the test session from ambient `backend/.env` config. `os.environ` is set for every provider list back to its documented `["mock"]` default (`MARKET_DATA_PROVIDERS`/`NEWS_PROVIDERS`/`ECONOMIC_CALENDAR_PROVIDERS`/`TELEGRAM_PROVIDERS`) and every real API key is blanked (`TWELVE_DATA_API_KEY`/`NEWS_API_KEY`/`ECONOMIC_API_KEY`/`OPENAI_API_KEY`/`TELEGRAM_BOT_TOKEN`), at module top level before any `app.*` import - pydantic-settings' precedence (init args > OS env > `.env` file > field defaults) means this overrides `.env` without editing or reading it. `ai_orchestrator_providers` is left at its correct default (`"openai"`, no `"mock"` implementation exists); blanking `OPENAI_API_KEY` neutralizes it instead, since `OpenAIProvider.generate()` raises immediately on an empty key. Also adds an autouse `socket.socket.connect` guard (recommended, not required, per the build spec) that raises on any non-loopback connection - verified it doesn't break any of the 931 tests before keeping it
+
+Fixes two tests that could never pass on this machine while passing in CI (`test_market_data_dependencies.py::test_get_market_data_providers_returns_rate_limited_mock`, `test_market_data_tasks.py::test_collect_market_data_task_persists_candles_for_active_assets`) and stops the suite from making real, quota-consuming calls to the live Twelve Data API - a recent run had exhausted the free tier's 800/day credit limit. **931 passed, 0 failed** (up from 929 passed, 2 failed)
+
+`ErrorCard` (`features/dashboard/components/error-card.tsx`) - the hardcoded "no candle data" hint for any `resource_not_found` error is now a caller-supplied `notFoundHint?: string` prop, shown only when provided. It was wrong on every page except the one it was written for, and had already surfaced as a real bug on the Watchlist detail page's 404 (BACKLOG.md §26/§28). Markets' candle-chart call site (`markets/[symbol]/page.tsx`) now passes the original wording explicitly; every other of the 20 `ErrorCard` call sites in the app shows no hint, correctly
+
+`.gitignore` gains a `.claude/settings.local.json` entry (local machine config - permission allowlists, MCP toggles). `.claude/specs/*.md` (the phase 7D-A/7D-B/8F/this build specs) are now tracked as project history - previously the whole `.claude/` directory was untracked, which would have excluded them too
+
+### Added - Phase 8F: Audit Logs Frontend
 ### Added - Phase 8F: Audit Logs Frontend
 
 Replaces the Phase 8D `AdminComingSoon` placeholder at `/admin/audit-logs` with a real page against `GET /admin/logs`. `services/admin.ts` extended with `listAdminLogs`/`ListAdminLogsParams` (no second admin service module); `AdminAuditLogResponse`/`AdminAuditLogListResponse` types added to `services/types.ts`; `use-admin-logs.ts` mirrors `use-admin-users.ts`'s shape

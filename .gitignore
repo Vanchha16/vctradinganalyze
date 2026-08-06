@@ -31,3 +31,4 @@ coverage/
 .myenv.txt
 .playwright-mcp/
 .mcp.json
+.claude/settings.local.json

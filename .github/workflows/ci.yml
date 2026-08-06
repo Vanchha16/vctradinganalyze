@@ -52,7 +52,11 @@ jobs:
         run: uv run alembic check
 
       - name: Pytest
-        run: uv run pytest -q
+        # --cov-fail-under=90 enforces docs/06 §21's already-documented 90%
+        # coverage goal (BACKLOG.md §4) - CI-only, `pytest` run locally by a
+        # developer stays gate-free. Requires pytest-cov to actually be
+        # present from `uv sync` above (Phase 9C-B build spec §1/§4).
+        run: uv run pytest -q --cov=app --cov-report=term --cov-fail-under=90
 
   frontend:
     name: Frontend
@@ -81,3 +85,78 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --all-groups
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # Keyed on the pinned @playwright/test version (package-lock.json) so
+      # a version bump invalidates the cache automatically instead of
+      # silently reusing a stale browser build.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Seed E2E database
+        working-directory: backend
+        run: uv run python scripts/seed_e2e_data.py
+
+      - name: Build frontend
+        working-directory: frontend
+        # Next.js bakes NEXT_PUBLIC_* into the bundle at build time, not at
+        # runtime - this must be set here, before `npm run build`, matching
+        # the backend URL the E2E-mode server below listens on.
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+        run: npm run build
+
+      - name: Run E2E suite
+        working-directory: frontend
+        # BACKEND_CORS_ORIGINS matches the exact origin the frontend is
+        # served from (playwright.config.ts's webServer starts both the
+        # `--e2e-db` backend and `next start`, on their default ports) -
+        # a mismatch here fails every API call in the browser with CORS
+        # and the suite dies at login with no useful message.
+        env:
+          CI: "true"
+          BACKEND_CORS_ORIGINS: '["http://localhost:3000"]'
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 7

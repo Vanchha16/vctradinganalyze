@@ -283,28 +283,59 @@ compile-on-first-request cost per route, not to paper over flakiness.
 `pytest-cov` is configured (`backend/pyproject.toml`'s
 `[tool.coverage.*]`, `source = ["app"]`). **Measured total: 93%**
 (`cd backend && .venv/Scripts/python.exe -m pytest -q --cov=app
---cov-report=term`). No failing threshold - see BACKLOG.md §4.
+--cov-report=term`). **Enforced in CI only as of Phase 9C-B**
+(`--cov-fail-under=90`, §7.3) - the local default stays gate-free.
 
 ## 7.2 What is not covered
 
 - Component/unit tests (Vitest/RTL) - the planning decision was E2E
   first (§1).
 - Cross-browser E2E (Firefox/WebKit) - Chromium only for now.
-- A coverage gate/threshold - deliberately not set yet (§6 of the build
-  spec; BACKLOG.md §4).
 - Any flow beyond the six above - notably no AI Analysis/AI Chat/Signals
   E2E coverage yet, since those either call the (mocked) AI orchestrator
   or have no equivalent manual-verification precedent driving this
   phase's flow selection.
 
-## 7.3 CI integration - the explicit next step, and why it waits
+## 7.3 CI integration (Phase 9C-B, ADR-135)
 
-Wiring the Playwright suite into `.github/workflows/ci.yml` needs
-Chromium binaries, a running backend (with a seeded database), a served
-frontend, and Postgres in the runner - a substantial job in its own
-right that would have roughly doubled this phase's scope alongside the
-`pytest-cov` work. **Local-first, CI next** was the explicit build-spec
-instruction (§1). A suite nobody runs automatically will rot silently;
-this is recorded here specifically so that risk doesn't get lost the way
-the missing 9A CHANGELOG entry did (found and backfilled during 9C -
-CHANGELOG.md).
+Wired in the very next phase, as planned. `.github/workflows/ci.yml` gained
+a third job, `e2e`, alongside the existing `backend`/`frontend` jobs -
+**no Postgres in that runner**, contrary to what this section originally
+predicted: the E2E suite runs entirely against the dedicated SQLite
+`e2e.db` (ADR-134), so the job only needs Python (via `uv`), Node, and a
+Chromium install (`npx playwright install --with-deps chromium`, cached
+on the Playwright version).
+
+**Server startup uses Playwright's `webServer` config** (`frontend/
+playwright.config.ts`), gated on `process.env.CI` so the local workflow
+above is completely unaffected - a developer's manually-started servers
+are never touched by this. In CI, Playwright itself starts the E2E-mode
+backend (`uv run python scripts/run_dev.py api --e2e-db`) and the
+frontend (`npm run start`, i.e. a **production build**, not `next dev`),
+polling `/api/v1/health` for backend readiness rather than an arbitrary
+sleep - that endpoint deliberately has no DB/Redis dependency and is
+excluded from rate limiting (§4.2).
+
+**`NEXT_PUBLIC_API_URL` is exported before the CI workflow's `npm run
+build` step**, not before the server-start step - Next.js bakes
+`NEXT_PUBLIC_*` values into the client bundle at build time, so setting
+it any later would silently do nothing. `BACKEND_CORS_ORIGINS` is set
+explicitly to the frontend's serving origin for the same reason CORS
+already required care locally (§7's "Backend test coverage" setup notes
+above) - a mismatch fails every browser API call with no useful login
+error.
+
+**E2E is a required (blocking) check, not advisory** - see ADR-135 for
+the full reasoning and the conditions under which that should be
+revisited.
+
+**Coverage is now enforced in CI only.** `--cov-fail-under=90` was added
+to the `backend` job's `pytest` invocation (docs/06 §21's already-
+documented goal, BACKLOG.md §4) - the local default stays gate-free so a
+developer running `pytest` casually is never blocked by it.
+
+**What CI cannot verify from a local session**: whether the job actually
+passes on GitHub's real Ubuntu runners. Browser install, path handling,
+and service startup timing can all differ from every local Windows run
+this phase's verification was based on - see the Phase 9C-B build report
+for the exact local results and what to watch on the first real push.

@@ -153,16 +153,41 @@ default `Settings.backend_cors_origins`), also set
 `BACKEND_CORS_ORIGINS='["http://localhost:<port>"]'` as an environment
 variable before step 2, or the browser's requests will fail CORS.
 
-### Backend test coverage (Phase 9C)
+**This suite also runs in CI** (Phase 9C-B, `.github/workflows/ci.yml`'s
+`e2e` job) as a required, blocking check (ADR-135) - it starts both
+servers itself (`frontend/playwright.config.ts`'s `webServer`, active only
+when `CI` is set) against a **production build** (`next build` + `next
+start`), not `next dev`. To reproduce a CI failure locally as closely as
+possible, run the four steps above but build+start the frontend instead
+of `npm run dev`:
 
 ```
 cd backend
-.venv/Scripts/python.exe -m pytest -q --cov=app --cov-report=term
+.venv/Scripts/python.exe scripts/seed_e2e_data.py
+.venv/Scripts/python.exe scripts/run_dev.py api --e2e-db
+
+cd frontend
+$env:NEXT_PUBLIC_API_URL="http://localhost:8000/api/v1"; npm run build
+npm run start
+npm run test:e2e
 ```
 
-Configured in `backend/pyproject.toml`'s `[tool.coverage.*]`. No failing
-threshold is set yet - see `BACKLOG.md` §4 for why, and for the current
-measured number.
+`NEXT_PUBLIC_API_URL` must be set before `npm run build`, not just before
+`npm run start` - Next.js bakes `NEXT_PUBLIC_*` values into the client
+bundle at build time.
+
+### Backend test coverage (Phase 9C, gated in CI since Phase 9C-B)
+
+```
+cd backend
+.venv/Scripts/python.exe -m pytest -q --cov=app --cov-report=term --cov-fail-under=90
+```
+
+Configured in `backend/pyproject.toml`'s `[tool.coverage.*]`. CI enforces
+`--cov-fail-under=90` (docs/06 §21's documented goal, ADR-135's sibling
+decision in `.github/workflows/ci.yml`'s `backend` job); running `pytest`
+locally without the flag stays gate-free, matching the command above
+without `--cov-fail-under`.
 
 ---
 

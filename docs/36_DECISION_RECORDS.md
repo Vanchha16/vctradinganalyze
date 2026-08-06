@@ -7084,6 +7084,76 @@ runner.
 
 ---
 
+# ADR-135
+
+Title
+
+Phase 9C-B: E2E Is a Required, Blocking CI Check, Not Advisory
+
+Status
+
+Accepted
+
+Context
+
+Phase 9C built the Playwright suite (ADR-134) but deliberately left it
+local-only (docs/60 §7.3) - wiring it into CI was called out explicitly
+as the next step. Phase 9C-B does that wiring (`.github/workflows/
+ci.yml`'s new `e2e` job). The open question the build spec posed was
+whether that job should be allowed to fail a run (a required check, like
+`backend`/`frontend` already are) or be advisory (`continue-on-error`,
+visible but non-blocking).
+
+Decision
+
+The `e2e` job is a normal job in the same workflow, with no
+`continue-on-error`. A failing E2E run fails the check the same way a
+failing `backend` or `frontend` job does.
+
+Reason
+
+The suite passed twice locally with zero waits before this phase (docs/
+60 §7.1) and a third time here against the CI-equivalent production
+build (§7 of this phase's build report) - there is no accumulated
+evidence of flakiness to justify treating it as advisory from day one.
+An advisory check that nobody is required to look at tends to be
+ignored exactly when it matters most (a real regression), which defeats
+the purpose of building it. If flakiness is observed in practice on
+GitHub's actual runners - genuinely different environment from every
+local run so far - the corrective action is fixing the suite (removing
+whatever nondeterminism was introduced), not quietly downgrading the
+check to advisory. Recorded here so a future maintainer under deadline
+pressure doesn't make that downgrade without knowing it reverses a
+deliberate decision.
+
+Trade-offs
+
+Pros
+
+A blocking check is the only kind that reliably gets attention - an
+advisory one rots the same way local-only E2E was already rotting
+(docs/60 §7.3's stated reason for prioritizing this phase). Consistent
+with how `backend`/`frontend` already behave, no special-casing to
+remember.
+
+Cons
+
+The suite has never run on GitHub's actual runners (Ubuntu, real
+network/filesystem timing, cold Chromium install) - if Ubuntu-specific
+flakiness exists that none of the Windows-local runs surfaced, the first
+few real CI runs could block unrelated merges until it's found and
+fixed. Judged an acceptable, temporary cost against the alternative of
+building a check nobody has to heed.
+
+Future Review
+
+If the first real CI runs show flakiness that isn't a straightforward
+test bug (e.g. genuine timing sensitivity tied to GitHub's runner
+environment specifically), revisit - but the default corrective action
+remains fixing the suite, not flipping this to advisory.
+
+---
+
 # Review Policy
 
 Review ADRs:

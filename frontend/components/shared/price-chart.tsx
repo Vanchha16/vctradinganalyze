@@ -5,6 +5,7 @@ import {
   ColorType,
   createChart,
   createSeriesMarkers,
+  LineStyle,
   type IChartApi,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
@@ -21,6 +22,23 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { LatestCandleResponse, Timeframe } from "@/services/types";
 
 const TIMEFRAMES: Timeframe[] = ["m1", "m5", "m15", "m30", "h1", "h4", "d1", "w1", "mn"];
+
+//: `lightweight-charts` formats time-axis labels in raw UTC by default,
+//: not the viewer's local time - candle timestamps land here as UTC
+//: epoch seconds and get relabeled straight through. Pinned to
+//: Asia/Bangkok to match `lib/format.ts`'s UTC+7 convention elsewhere in
+//: the app, rather than silently showing UTC.
+const BANGKOK_TICK_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "Asia/Bangkok",
+});
+const BANGKOK_CROSSHAIR_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "Asia/Bangkok",
+});
 
 export interface PriceLineOverlay {
   price: number;
@@ -85,6 +103,8 @@ export function PriceChart({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const candlesRef = useRef<LatestCandleResponse[]>(candles);
+  candlesRef.current = candles;
   const { resolvedTheme } = useTheme();
 
   // Create the chart once per mount. `autoSize: true` internally wires a
@@ -104,7 +124,14 @@ export function PriceChart({
         vertLines: { color: "rgba(148, 163, 184, 0.1)" },
         horzLines: { color: "rgba(148, 163, 184, 0.1)" },
       },
-      timeScale: { timeVisible: true, secondsVisible: false },
+      localization: {
+        timeFormatter: (time: Time) => BANGKOK_CROSSHAIR_FORMATTER.format(new Date((time as number) * 1000)),
+      },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: Time) => BANGKOK_TICK_FORMATTER.format(new Date((time as number) * 1000)),
+      },
     });
     const series = chart.addSeries(CandlestickSeries, {
       upColor: "#22C55E",
@@ -112,6 +139,31 @@ export function PriceChart({
       borderVisible: false,
       wickUpColor: "#22C55E",
       wickDownColor: "#EF4444",
+      // `createPriceLine` (Support/Resistance/Order Block overlays below)
+      // counts toward the default autoscale range - an overlay far outside
+      // the actual candle range (e.g. a stale SMC order block) squeezes
+      // every real candle into a sliver at one edge. Scale to the candle
+      // data only, same as TradingView's own charts do.
+      autoscaleInfoProvider: () => {
+        const values = candlesRef.current;
+        if (values.length === 0) return null;
+        let min = Number(values[0].low);
+        let max = Number(values[0].high);
+        for (const candle of values) {
+          min = Math.min(min, Number(candle.low));
+          max = Math.max(max, Number(candle.high));
+        }
+        return { priceRange: { minValue: min, maxValue: max } };
+      },
+      // TradingView's floating current-price tag on the right axis - this
+      // is `lightweight-charts`' built-in last-value indicator, made
+      // explicit (and thicker/solid) so it reads as the live price rather
+      // than blending into the Support/Resistance/Order Block overlay
+      // lines drawn on the same series below.
+      priceLineVisible: true,
+      priceLineWidth: 2,
+      priceLineStyle: LineStyle.Solid,
+      lastValueVisible: true,
     });
 
     chartRef.current = chart;

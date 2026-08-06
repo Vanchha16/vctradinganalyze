@@ -16,6 +16,12 @@ backend/.pytest_cache/
 backend/.ruff_cache/
 backend/.mypy_cache/
 backend/dev.db
+backend/celery_*.log
+backend/celery_*.err*.log
+backend/celery_*.out*.log
+backend/celerybeat-schedule
+backend/celerybeat-schedule-shm
+backend/celerybeat-schedule-wal
 
 # Tooling
 .coverage
@@ -23,3 +29,5 @@ coverage/
 .DS_Store
 .image_test
 .myenv.txt
+.playwright-mcp/
+.mcp.json

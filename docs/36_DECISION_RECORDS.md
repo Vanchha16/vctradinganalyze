@@ -5711,6 +5711,168 @@ telemetry should replace this proxy, not sit alongside it indefinitely.
 
 ---
 
+# ADR-125
+
+Title
+
+Hourly Watchlist Signal Generation Skips Assets With an Open Call
+
+Status
+
+Accepted
+
+Context
+
+`signals.generate_for_watchlist` (`app/workers/signal_tasks.py`, ADR-089/
+docs/51 §6, docs/57 §1) re-runs the full AI orchestration for every
+active/seeded asset every hour regardless of whether that asset already
+has an unresolved BUY/SELL call outstanding. Because H1 candles rarely
+move enough between runs to flip the AI's recommendation, this produced
+the same asset+direction signal being generated and broadcast to Telegram
+again on the very next run, often several times before the original call
+ever resolved (docs/57 §8 already flagged "deduplication" as a deferred
+gap).
+
+Decision
+
+Before calling `SignalEngine.generate()` for an asset, the task checks
+`_has_open_signal()`: does that asset already have a `Signal` on
+`Timeframe.H1` whose `effective_status` (`status_resolver.py`, ADR-088) is
+still `ACTIVE` right now? If so, skip the asset for this run entirely -
+no AI call, no new `Signal` row, no Telegram send. Generation resumes for
+that asset once the open call closes (TP/SL hit, via
+`signal_monitoring_tasks.py`) or expires (`signal_ttl_hours` TTL).
+
+Reason
+
+The confirmation gate is scoped to asset+timeframe, not asset+direction:
+an asset with an open BUY call shouldn't also get a contradicting SELL
+call broadcast an hour later either. Reusing `effective_status` (rather
+than trusting the stored `status` column) means a stored-ACTIVE-but-
+TTL-expired row can't wedge an asset out of generation forever - it's the
+exact same read-time check `signal_monitoring_tasks.py` already applies.
+This is a generation-time gate, not a new per-user notification
+preference, so the broadcast-to-all-linked-accounts delivery model (docs/57
+§5) is unchanged.
+
+Alternatives Considered
+
+Option A: Confidence threshold (only send if `confidence_score` above some
+cutoff) - rejected for this pass; doesn't address the core issue (an
+unchanged setup re-alerting every hour) and requires picking an arbitrary
+number with no product input.
+
+Option B: Require N consecutive hourly runs to agree before sending -
+rejected for this pass; adds cross-run state tracking for a benefit
+(filtering one-off noise) distinct from the reported problem (repeat
+alerts for the same already-open call).
+
+Option C (chosen): Skip generation entirely while an open call exists for
+that asset/timeframe.
+
+Trade-offs
+
+Pros
+
+Directly fixes the reported spam; saves AI-orchestration/API cost on
+assets that would just re-confirm the same call; minimal, localized
+change (`app/workers/signal_tasks.py` only).
+
+Cons
+
+An asset can still only ever have one open call at a time on H1 - by
+design, but means a genuinely new, stronger setup on the same asset won't
+generate a second signal until the first resolves or expires.
+
+Future Review
+
+If users want faster reaction to a strengthening/reversing setup while a
+call is still open, revisit with either Option A or B above as an
+addition, not a replacement.
+
+---
+
+# ADR-126
+
+Title
+
+Chart Data Uses Interval Polling, Narrowing ADR-105's Live-Update
+Deferral
+
+Status
+
+Accepted
+
+Context
+
+ADR-105 (Phase 7B, docs/54) deferred "live/streaming updates" alongside
+drawing tools and fullscreen, on the grounds that no live-price WebSocket
+backend exists - `docs/04`'s `/ws/prices` endpoint is still an
+unimplemented stub, tracked in BACKLOG.md §3 since Phase 3. That
+deferral remains true: this project still has no streaming price
+infrastructure.
+
+Decision
+
+`use-candles.ts` and `use-latest-candle.ts` poll `GET
+/market/{symbol}/candles` and `GET /market/{symbol}/latest` on a 15s
+`refetchInterval`, restricted to the M1 and M5 timeframes only, with
+`refetchIntervalInBackground: false`. The two hooks' shared
+`LIVE_TIMEFRAMES`/`LIVE_POLL_INTERVAL_MS` constants live in one module,
+`frontend/hooks/live-polling.ts`.
+
+Reason
+
+This is polling, not streaming - it does not implement or presuppose
+`/ws/prices`, so ADR-105's WebSocket deferral stands unchanged. M1/M5
+are the only timeframes Celery Beat's `collect_market_data_task`
+refreshes often enough (every 60s/300s respectively, see
+`app/workers/market_data_tasks.py`) for polling to surface genuinely new
+rows - anything H1 and above would just re-fetch identical data, so
+polling is scoped out for those timeframes. This is also a plain DB read
+against our own API, not an external provider call, so it costs nothing
+against the Twelve Data daily/per-minute quota (docs/40, ADR-025).
+Drawing tools and fullscreen from ADR-105 remain deferred and untouched
+by this change.
+
+Alternatives Considered
+
+Option A: Leave chart data static until the user manually refreshes -
+rejected; M1/M5 candles go stale within a minute, and the underlying
+data already refreshes on that cadence server-side, so not surfacing it
+client-side is needless staleness for free.
+
+Option B: Poll all timeframes uniformly - rejected; H1 and above only
+get new rows on a much longer cadence, so polling them every 15s would
+just re-fetch identical data for no benefit.
+
+Option C (chosen): Poll M1/M5 only, at 15s, via a shared
+`live-polling.ts` constants module used by both chart hooks.
+
+Trade-offs
+
+Pros
+
+Chart data on the two shortest timeframes stays close to current without
+any new backend work, streaming infrastructure, or provider cost; the
+polling constants live in one place instead of being duplicated across
+hooks.
+
+Cons
+
+Still not true live/streaming updates - a genuinely live tick feed still
+requires the deferred `/ws/prices` work from ADR-105. M15 and above see
+no improvement.
+
+Future Review
+
+The 15s interval is a starting point, not empirically calibrated - same
+caveat as every prior scoring/threshold ADR in this project. Revisit
+ADR-105's Live Updates deferral itself (true streaming) once a
+`/ws/prices` backend exists.
+
+---
+
 # Review Policy
 
 Review ADRs:

@@ -20,7 +20,18 @@ is delivered to their linked chat as a formatted message.**
 Explicitly out of scope for this phase (real docs/19/20 scope, deferred, not
 forgotten): `/help`, `/status`, `/signals`, `/analyze`, `/watchlist`, `/settings`
 and other bot commands; quiet hours; email/in-app/push channels; per-type
-notification preferences; deduplication/retry queue; admin escalation. ADR-110.
+notification preferences; retry queue; admin escalation. ADR-110.
+
+**Deduplication (ADR-125):** `signals.generate_for_watchlist`
+(`app/workers/signal_tasks.py`) skips re-running AI orchestration for any
+asset that already has an unresolved BUY/SELL call on `Timeframe.H1` -
+checked via `_has_open_signal()`, which reuses `status_resolver.effective_status`
+(ADR-088) so a stored-ACTIVE-but-TTL-expired row doesn't block a fresh
+signal. This is asset+timeframe scoped, not per-user, so it's a generation-time
+gate rather than a delivery-time notification preference (the broadcast
+model in §5 is unchanged). Without it, the hourly job would re-confirm the
+same open call every run and re-broadcast a near-duplicate Telegram
+message each time.
 
 ---
 

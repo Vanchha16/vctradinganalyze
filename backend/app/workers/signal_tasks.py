@@ -1,3 +1,6 @@
+import uuid
+from datetime import UTC, datetime
+
 from app.database.session import SessionLocal
 from app.dependencies.ai_orchestrator import (
     get_ai_analysis_repository,
@@ -14,12 +17,13 @@ from app.dependencies.signal import get_signal_engine
 from app.dependencies.smc import get_smc_engine
 from app.dependencies.strategy import get_strategy_engine
 from app.dependencies.technical_analysis import get_technical_analysis_engine
-from app.models.enums import Timeframe
+from app.models.enums import SignalStatus, Timeframe
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.economic_event_repository import EconomicEventRepository
 from app.repositories.news_sentiment_repository import NewsSentimentRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
+from app.services.signal.status_resolver import effective_status
 from app.workers.celery_app import celery_app
 
 #: Automatic generation runs against the seeded/active asset set only
@@ -31,6 +35,26 @@ from app.workers.celery_app import celery_app
 #: market-data usage predictable at this cadence.
 _TIMEFRAME = Timeframe.H1
 _SIGNAL_GENERATION_INTERVAL_SECONDS = 3600.0
+
+
+def _has_open_signal(
+    signal_repository: SignalRepository, asset_id: uuid.UUID, now: datetime
+) -> bool:
+    """True if this asset already has a BUY/SELL call on `_TIMEFRAME` that
+    hasn't expired yet (ADR-088's `effective_status`, same check
+    `signal_monitoring_tasks.py` uses) - the hourly job's confirmation
+    gate: don't re-signal an asset that already has an open, unresolved
+    call outstanding."""
+    stored = signal_repository.find_paginated(
+        asset_id=asset_id,
+        timeframe=_TIMEFRAME,
+        status=SignalStatus.ACTIVE,
+        limit=1,
+    )
+    return any(
+        effective_status(signal.status, signal.created_at, now) == SignalStatus.ACTIVE
+        for signal in stored
+    )
 
 
 @celery_app.task(name="signals.generate_for_watchlist")  # type: ignore[untyped-decorator]
@@ -81,13 +105,26 @@ def generate_signals_task() -> None:
             get_ai_provider(),
             get_ai_analysis_repository(session),
         )
-        signal_engine = get_signal_engine(ai_orchestrator_engine, SignalRepository(session))
+        signal_repository = SignalRepository(session)
+        signal_engine = get_signal_engine(ai_orchestrator_engine, signal_repository)
 
         # `SignalEngine.generate()` already commits internally (via
         # `SignalRepository.commit()`, same as `AIOrchestratorEngine`) -
         # no extra commit needed here, unlike `market_data_tasks.py`'s
         # `MarketDataService.collect()`, which doesn't self-commit.
+        now = datetime.now(UTC)
         for asset in asset_repository.list_active(limit=1000):
+            if _has_open_signal(signal_repository, asset.id, now):
+                # An unresolved BUY/SELL call already exists for this
+                # asset/timeframe (ADR-088 EXPIRED is read-time-only, so
+                # this re-checks effective_status rather than trusting
+                # the stored ACTIVE status). Re-running the full AI
+                # orchestration hourly would only ever re-confirm or
+                # contradict that same open call, spamming Telegram with
+                # near-duplicate signals (docs/57 §8's deferred
+                # "deduplication" gap) - skip until it closes/expires.
+                continue
+
             result = signal_engine.generate(asset, _TIMEFRAME)
             if result.signal is not None:
                 # Deferred import: avoids a module-level import cycle

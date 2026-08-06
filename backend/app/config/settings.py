@@ -110,6 +110,17 @@ class Settings(BaseSettings):
     login_lockout_threshold: int = 5
     login_lockout_duration_minutes: int = 15
 
+    # Phase 9D (ADR-136) - GET /metrics access control. Empty by default:
+    # an unconfigured deployment gets a 404 (not 403, not an empty 200),
+    # so the endpoint does not advertise its own existence until someone
+    # deliberately opts in. A static bearer token, not `require_admin` -
+    # scrapers cannot hold a user session, and this must keep responding
+    # when the database is unhealthy, which is exactly when metrics
+    # matter most. The real production boundary is Nginx denying
+    # external access to the path; this token is defence in depth, not
+    # a substitute.
+    metrics_auth_token: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

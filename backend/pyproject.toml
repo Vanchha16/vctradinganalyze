@@ -9,6 +9,7 @@ dependencies = [
   "celery[redis]>=5.4.0",
   "fastapi>=0.115.6",
   "httpx>=0.28.1",
+  "prometheus-client>=0.26.0",
   "psycopg[binary]>=3.2.3",
   "pydantic-settings>=2.7.0",
   "pyjwt>=2.13.0",

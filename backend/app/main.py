@@ -8,7 +8,7 @@ from app.api.v1.router import api_router
 from app.config import settings
 from app.core.logging import configure_logging
 from app.exceptions import register_exception_handlers
-from app.middleware import CorrelationIdMiddleware, SecurityHeadersMiddleware
+from app.middleware import CorrelationIdMiddleware, MetricsMiddleware, SecurityHeadersMiddleware
 
 
 @asynccontextmanager
@@ -41,6 +41,7 @@ app.add_middleware(
 )
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(MetricsMiddleware)
 
 register_exception_handlers(app)
 

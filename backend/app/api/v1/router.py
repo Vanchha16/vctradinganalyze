@@ -12,6 +12,7 @@ from app.api.v1.routes import (
     health,
     market_data,
     market_regime,
+    metrics,
     news,
     risk_management,
     signals,
@@ -27,9 +28,10 @@ from app.dependencies.rate_limit import rate_limit_public
 # Phase 9A (ADR-132) - per-IP rate limiting for the public, unauthenticated
 # route modules (docs/60 §4.2). Applied at router-include time so it
 # covers every handler on each router without touching ~30 individual
-# handlers. `/health*` is deliberately excluded - uptime probes must never
-# be rate limited - and every other router below already requires
-# authentication (`get_current_user`/`require_admin`) or a per-user quota
+# handlers. `/health*` and `/metrics` (Phase 9D, ADR-136) are deliberately
+# excluded - uptime probes and scrapers must never be rate limited - and
+# every other router below already requires authentication
+# (`get_current_user`/`require_admin`) or a per-user quota
 # (`require_quota`), so a per-IP limit on top would be redundant.
 _engine_rate_limit = Depends(
     rate_limit_public(
@@ -48,6 +50,7 @@ _data_rate_limit = Depends(
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
+api_router.include_router(metrics.router, tags=["metrics"])
 api_router.include_router(auth.router)
 api_router.include_router(admin_users.router)
 api_router.include_router(admin_logs.router)

@@ -26,14 +26,20 @@ that construction), and every caller must call `apply_safe_overrides()`
 the override becomes a silent no-op - the ambient `.env` wins instead.
 
 Values below are each field's own documented default in
-`app/config/settings.py` - not invented here. `ai_orchestrator_providers`
-is deliberately not included: it has no `"mock"` implementation
-(`app/dependencies/ai_orchestrator.py`'s `_PROVIDER_FACTORIES` maps only
-`"openai"`) - `"openai"` *is* its correct default, and blanking
-`OPENAI_API_KEY` is what neutralises it instead (`OpenAIProvider.
-generate()` raises immediately on an empty key). Pydantic-settings
-expects list-typed fields to arrive from the environment as JSON,
-matching how `.env` itself already encodes them.
+`app/config/settings.py` - not invented here, with two exceptions.
+`ai_orchestrator_providers` is deliberately not included: it has no
+`"mock"` implementation (`app/dependencies/ai_orchestrator.py`'s
+`_PROVIDER_FACTORIES` maps only `"openai"`) - `"openai"` *is* its
+correct default, and blanking `OPENAI_API_KEY` is what neutralises it
+instead (`OpenAIProvider.generate()` raises immediately on an empty
+key). `METRICS_AUTH_TOKEN` (Phase 9D, ADR-136) is the other: its real
+default is `""` (fail-closed - `GET /metrics` 404s until deliberately
+configured), but a *local* session with no token configured would just
+never be able to exercise the endpoint at all, so this module sets a
+fixed dev value here instead of the real default - the one deliberate
+divergence from "matches the field's own default" in this file.
+Pydantic-settings expects list-typed fields to arrive from the
+environment as JSON, matching how `.env` itself already encodes them.
 """
 
 import os
@@ -49,6 +55,12 @@ SAFE_LOCAL_OVERRIDES: dict[str, str] = {
     "TELEGRAM_PROVIDERS": '["mock"]',
     "TELEGRAM_BOT_TOKEN": "",
     "OPENAI_API_KEY": "",
+    # Phase 9D (ADR-136) - a fixed, obviously-fake dev token so
+    # GET /metrics is usable locally via run_dev.py without an operator
+    # having to set backend/.env's METRICS_AUTH_TOKEN first. Not a vendor
+    # credential like the others above, so - unlike them - it is not
+    # blanked to "": the whole point is that it works out of the box.
+    "METRICS_AUTH_TOKEN": "dev-metrics-token",
 }
 
 #: Which override keys are secrets (API keys/tokens) - never print their

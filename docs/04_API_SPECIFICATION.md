@@ -1037,7 +1037,33 @@ Response
 
 GET /metrics
 
-Internal monitoring.
+Prometheus text-format exposition (Phase 9D, ADR-136) - request
+count/latency labeled by route template plus the client library's
+default process/GC collectors. Not part of the standard `{"success"/
+"error"}` response envelope - this returns Prometheus's own
+`text/plain; version=0.0.4` format, the same way `GET /health` returns
+a bare liveness object rather than the standard envelope.
+
+Auth: `Authorization: Bearer <METRICS_AUTH_TOKEN>`. Fail-closed - if
+`METRICS_AUTH_TOKEN` is unset (the default) or the token is missing or
+wrong, this returns `404`, not `401`/`403`, so an unconfigured
+deployment does not advertise the route's existence. Never rate
+limited (matches `GET /health*`) and never counted in its own metrics.
+
+Response (200, token valid)
+
+```
+# HELP http_requests_total Total HTTP requests received, labeled by method/route template/status.
+# TYPE http_requests_total counter
+http_requests_total{method="GET",route="/health",status="200"} 42.0
+...
+```
+
+Response (404, token unset/missing/wrong)
+
+```json
+{"error": "resource_not_found", "message": "Not Found"}
+```
 
 ---
 

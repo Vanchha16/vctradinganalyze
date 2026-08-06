@@ -7154,6 +7154,128 @@ remains fixing the suite, not flipping this to advisory.
 
 ---
 
+# ADR-136
+
+Title
+
+Phase 9D: `GET /metrics` - Route-Template Cardinality, Fail-Closed
+Access Control, Worker Metrics Excluded
+
+Status
+
+Accepted
+
+Context
+
+`docs/04` said, in full, "GET /metrics — Internal monitoring." `docs/06`
+§25 listed four bare bullets (Metrics Endpoint, Prometheus Ready,
+Structured Logs, Error Tracking, Background Task Monitoring). There was
+no contract anywhere - everything concrete in this phase is inferred.
+`GET /admin/system` (ADR-116) was explicitly limited to liveness plus
+today's counts because "genuine telemetry is gated on the pre-existing
+`GET /metrics` gap" - this phase removes that gate. There is no
+Prometheus or Grafana deployed, so the near-term consumer is not a
+scraper: it is `GET /admin/system` and manual `curl` inspection of a
+live box.
+
+Decision
+
+1. **`prometheus_client`**, the standard library for this, not a
+   hand-rolled exporter or a FastAPI-specific wrapper - well-maintained,
+   does the OpenMetrics text-format encoding correctly, and ships
+   default process/GC collectors for free.
+2. **Labels are the matched route *template*, never the raw request
+   path.** `MetricsMiddleware` (`app/middleware/metrics.py`) reads
+   `request.scope["route"].path`, set by Starlette once routing
+   resolves. Raw-path labeling would create one time series per symbol
+   per timeframe per status - unbounded, held in memory forever, a real
+   availability risk on the 911MB production box already ~330MB into
+   swap (BACKLOG.md §10), not a theoretical tidiness concern. Verified
+   directly (not just argued): two requests to the same route template
+   with different path params produce exactly one series with the
+   count summed (Phase 9D build report §8 has the pasted proof). Paths
+   matching no route at all collapse into a single `"unmatched"`
+   bucket, same reasoning.
+3. **Fail-closed 404, not `require_admin`.** `settings.
+   metrics_auth_token` defaults to `""`; an unconfigured deployment
+   gets 404 (not 403, not an empty 200), so the endpoint does not
+   advertise its own existence. A static bearer token rather than a
+   session/role check because scrapers cannot hold a user session, and
+   because this must keep responding when the database is unhealthy -
+   exactly when metrics matter most, and exactly when `require_admin`
+   (which needs a DB round-trip via `get_current_user`) would be least
+   reliable. The real production access boundary is Nginx denying
+   external access to `/metrics`; the token is defence in depth, not a
+   substitute for it.
+4. **Excluded from 9A's per-IP rate limiting and from its own request
+   metrics.** Not attached to `_engine_rate_limit`/`_data_rate_limit`
+   in `app/api/v1/router.py`, the same mechanism that already excludes
+   `/health*` - a scraper polling every 15s must never be throttled.
+   `MetricsMiddleware` explicitly skips instrumenting `/metrics`
+   itself, so a scrape never inflates the numbers it reports.
+5. **Celery worker/beat metrics are explicitly out of scope**, not
+   deferred silently. Those are separate processes; exporting their
+   metrics needs a multi-process registry or a pushgateway, which is
+   its own design pass - and the worker cannot run on this Windows
+   sandbox at all (BACKLOG.md §9), so it could not have been verified
+   here regardless. `docs/06` §25's "Background Task Monitoring" stays
+   open.
+6. **CPU/memory/queue-length gauges are not hand-rolled.** Process-level
+   resource metrics already come from `prometheus_client`'s default
+   collectors (decision 1); queue length needs Celery introspection,
+   tied to decision 5's exclusion.
+
+Reason
+
+A monitoring endpoint that becomes the outage cause is a strictly worse
+outcome than no endpoint at all - the cardinality decision is the one
+that actually matters here, everything else is comparatively
+low-stakes. Fail-closed-by-default was chosen over fail-open (e.g.
+defaulting to some placeholder token, or serving without auth if none
+is configured) because `/metrics` leaks operational internals (route
+names, error rates, traffic volumes, latency) that must not be
+world-readable on a public site by accident - an operator has to
+deliberately opt in, not deliberately opt out.
+
+Trade-offs
+
+Pros
+
+Route-template labeling gives useful, bounded-cardinality dimensions
+(is `/analysis/technical/{symbol}` slow in aggregate?) without the
+unbounded blow-up per-symbol labeling would cause. The fail-closed
+default means this phase cannot itself introduce a new public
+information-disclosure surface on the live box, even if the operator
+never gets around to configuring a token. Reusing `prometheus_client`'s
+default collectors instead of hand-rolling `psutil` sampling avoids a
+second, likely-worse implementation of something already solved.
+
+Cons
+
+Per-symbol/per-timeframe breakdowns are not observable in these
+metrics (only per-route-template aggregates are) - if that granularity
+is ever needed, it requires either a bounded low-cardinality label
+(e.g. market type, not raw symbol) or a different mechanism entirely,
+not simply un-collapsing this one. A static token is weaker than a
+per-caller-scoped credential (any holder of the token can scrape
+everything) - judged acceptable for a single internal scraper/operator
+use case, revisit if that assumption changes. Worker/queue metrics
+remaining unbuilt means Celery-side behavior (task backlog, retry
+rates) is still only visible via logs, not metrics.
+
+Future Review
+
+Revisit worker/queue metrics once a real need for them is observed (not
+preemptively) and once there's an environment where the worker can
+actually run to verify them (BACKLOG.md §9's Windows/`billiard`
+limitation, or production). Revisit surfacing these metrics in `GET
+/admin/system`/the Admin UI as its own follow-up (BACKLOG.md §3) -
+deliberately not bundled into this phase. Revisit the static-token
+model if a second consumer with different trust requirements ever needs
+scrape access.
+
+---
+
 # Review Policy
 
 Review ADRs:

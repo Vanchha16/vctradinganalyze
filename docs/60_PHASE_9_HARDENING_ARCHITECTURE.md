@@ -5,8 +5,10 @@
 `docs/30_DEVELOPMENT_ROADMAP.md` listed Phase 9 as five bare words
 (Performance, Security, Testing, Bug Fixes, Optimization) with no
 architecture doc. A planning pass (2026-08-06) broke it into four
-sub-phases and made three product decisions (§2). **This document covers
-9A only** - 9B/9C/9D are recorded here for context and are not yet built.
+sub-phases and made three product decisions (§2). **All four sub-phases
+are now complete** - 9A (§3-§6), 9C (§7), 9D (§8) have their own
+sections below; 9B is covered in ADR-133 (`docs/36`) and the roadmap
+entry (`docs/30`).
 
 - **9A Public Surface Protection** (this phase) - correct client-IP
   resolution behind the production reverse proxy, per-IP rate limiting on
@@ -339,3 +341,67 @@ passes on GitHub's real Ubuntu runners. Browser install, path handling,
 and service startup timing can all differ from every local Windows run
 this phase's verification was based on - see the Phase 9C-B build report
 for the exact local results and what to watch on the first real push.
+
+# 8. Phase 9D: Measurement (complete)
+
+`GET /metrics` (ADR-136) - the prerequisite §1 flagged: Performance and
+Optimization stay unscheduled until something actually measures what
+they'd be optimizing.
+
+## 8.1 What is covered
+
+Prometheus text-format exposition via `prometheus_client`
+(`app/api/v1/routes/metrics.py`, `app/middleware/metrics.py`):
+
+- `http_requests_total{method, route, status}` and
+  `http_request_duration_seconds{method, route}` (a histogram) for
+  every request, instrumented by `MetricsMiddleware`.
+- The client library's default process/GC collectors (`python_gc_*`,
+  `process_*`, `python_info`) - free, not hand-rolled.
+
+**Labeled by matched route template, never the raw path** - the
+cardinality landmine the build spec called out. FastAPI records the
+matched route on `request.scope["route"]` once routing resolves;
+`_route_template()` reads `route.path` from it. **Discovered while
+building this**: in the FastAPI version pinned here, `route.path` only
+ever reflects prefixes a router applied to *itself*
+(`APIRouter(prefix="/analysis/technical")`), never a prefix passed as
+an argument to `include_router(router, prefix=...)` - the outermost
+`/api/v1` (applied exactly that second way in `app/main.py`) never
+appears in the label. This does not reintroduce the cardinality problem
+(the label is still a fixed template, not a per-request path) and every
+production route already self-prefixes, so labels read like
+`/analysis/technical/{symbol}` rather than
+`/api/v1/analysis/technical/{symbol}` - cosmetically shorter, not less
+safe. Verified directly: two requests to the same route template with
+different path params produce exactly one series with the count summed
+(Phase 9D build report §8 has the pasted proof). Paths matching no
+route at all collapse into a single `"unmatched"` bucket, for the same
+cardinality reason.
+
+Access control is fail-closed (`app/dependencies/metrics_auth.py`):
+`settings.metrics_auth_token` defaults to `""`, and an unconfigured
+deployment gets a 404, not 403 or an empty 200 - the endpoint does not
+advertise its own existence. A static bearer token, not `require_admin`
+- see ADR-136 for why. Excluded from 9A's per-IP rate limiting
+(`app/api/v1/router.py`, same as `/health*`) and from its own request
+metrics (a scrape must not inflate the numbers it reports).
+
+This unblocks `GET /admin/system` (ADR-116), which was explicitly
+limited to liveness + counts pending this gap.
+
+## 8.2 What is not covered
+
+- **Celery worker/beat metrics** - separate processes, need a
+  multi-process registry or pushgateway (its own design pass); the
+  worker also cannot run on this Windows sandbox at all (BACKLOG.md
+  §9), so it could not have been verified here regardless.
+- **CPU/memory/queue-length gauges** (`docs/25` §12-13) - process-level
+  resource metrics already come from the client library's default
+  collectors (§8.1); queue length needs Celery introspection, tied to
+  the worker-metrics gap above.
+- **Surfacing metrics in `GET /admin/system` or the Admin UI** -
+  follow-up work, not this phase (BACKLOG.md §3).
+- Alerting, dashboards, and any new infrastructure - there is no
+  Prometheus/Grafana deployed; the near-term consumer is manual `curl`
+  inspection and the `GET /admin/system` unblock above, not a scraper.

@@ -333,9 +333,16 @@ scoping, and reasoning behind each.
   regression guard), against a dedicated seeded `e2e.db`; `pytest-cov`
   configured, measured at 93% (no threshold gate yet). CI integration
   deliberately deferred to a follow-up (ADR-134, docs/60 §7).
-- **9D Measurement** - `GET /metrics`. Not started, and a prerequisite
-  for Performance/Optimization, which remain unscheduled until this
-  exists.
+- **9D Measurement** - **complete.** `GET /metrics` (Prometheus text
+  format via `prometheus_client`): request count/latency labeled by
+  route *template* (never raw path - unbounded-cardinality guard,
+  verified directly), plus the client library's default process/GC
+  collectors. Fail-closed 404 access control (empty token = endpoint
+  doesn't exist), excluded from 9A's rate limiting and from its own
+  metrics (ADR-136, docs/60 §8). Unblocks `GET /admin/system`'s
+  telemetry limitation (ADR-116). Celery worker/queue metrics and
+  surfacing this in the Admin UI remain open (BACKLOG.md §3) -
+  Performance/Optimization can now be scheduled against a real number.
 
 ---
 

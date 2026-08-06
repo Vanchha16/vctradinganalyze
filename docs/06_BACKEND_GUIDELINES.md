@@ -554,17 +554,30 @@ Batch Operations
 
 # 25. Monitoring
 
-Health Endpoint
+Health Endpoint - built (`GET /health`, `GET /health/ready`, Phase 1).
 
-Metrics Endpoint
+Metrics Endpoint - built (Phase 9D, ADR-136). `GET /metrics`, gated by
+`METRICS_AUTH_TOKEN` (fail-closed 404 when unset), route-template-labeled
+request count/latency, excluded from rate limiting and from its own
+output. See `docs/04` for the contract and `docs/60` §8 for the full
+design.
 
-Prometheus Ready
+Prometheus Ready - built as of the above. `prometheus_client`'s standard
+text-format exposition; no Prometheus server is actually deployed yet,
+so the near-term consumer is manual inspection and `GET /admin/system`
+(ADR-116), not a scraper.
 
-Structured Logs
+Structured Logs - built (`structlog`, Phase 1).
 
-Error Tracking
+Error Tracking - not built. No Sentry/equivalent wired in; unhandled
+exceptions are logged (`app/exceptions/handlers.py`) but not shipped
+anywhere external.
 
-Background Task Monitoring
+Background Task Monitoring - not built. Celery worker/beat metrics need
+a multi-process registry or pushgateway, deliberately out of Phase 9D's
+scope (BACKLOG.md §3) - and the worker cannot run on this Windows
+sandbox at all (BACKLOG.md §9), so it could not have been verified here
+regardless.
 
 ---
 

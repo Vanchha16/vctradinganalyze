@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.core.client_ip import get_client_ip
 from app.dependencies.admin import get_admin_user_service
 from app.dependencies.rbac import require_admin, require_super_admin
 from app.models.enums import UserRole
@@ -32,10 +33,6 @@ from app.services.admin_user_service import AdminUserService
 router = APIRouter(prefix="/admin/users", tags=["admin"])
 
 _Service = Annotated[AdminUserService, Depends(get_admin_user_service)]
-
-
-def _client_ip(request: Request) -> str | None:
-    return request.client.host if request.client else None
 
 
 @router.get("", response_model=AdminUserListResponse)
@@ -83,7 +80,7 @@ async def create_user(
         full_name=payload.full_name,
         role=payload.role,
         password=payload.password,
-        ip_address=_client_ip(request),
+        ip_address=get_client_ip(request),
     )
     return AdminUserCreateResponse(
         **AdminUserResponse.model_validate(user).model_dump(),
@@ -118,7 +115,7 @@ async def update_user(
         full_name=payload.full_name,
         username=payload.username,
         email=payload.email,
-        ip_address=_client_ip(request),
+        ip_address=get_client_ip(request),
     )
     return AdminUserResponse.model_validate(user)
 
@@ -130,7 +127,7 @@ async def delete_user(
     actor: Annotated[User, Depends(require_admin)],
     service: _Service,
 ) -> None:
-    service.delete_user(actor, user_id, ip_address=_client_ip(request))
+    service.delete_user(actor, user_id, ip_address=get_client_ip(request))
 
 
 @router.post("/{user_id}/reset-password", response_model=AdminPasswordResetResponse)
@@ -140,7 +137,7 @@ async def reset_password(
     actor: Annotated[User, Depends(require_admin)],
     service: _Service,
 ) -> AdminPasswordResetResponse:
-    temporary_password = service.reset_password(actor, user_id, ip_address=_client_ip(request))
+    temporary_password = service.reset_password(actor, user_id, ip_address=get_client_ip(request))
     return AdminPasswordResetResponse(temporary_password=temporary_password)
 
 
@@ -153,7 +150,7 @@ async def set_status(
     service: _Service,
 ) -> AdminUserResponse:
     user = service.set_status(
-        actor, user_id, is_active=payload.is_active, ip_address=_client_ip(request)
+        actor, user_id, is_active=payload.is_active, ip_address=get_client_ip(request)
     )
     return AdminUserResponse.model_validate(user)
 
@@ -170,6 +167,6 @@ async def change_role(
     isolated to this endpoint specifically so the escalation guard has one
     enforcement point (docs/59 §6.2)."""
     user = service.change_role(
-        actor, user_id, new_role=payload.role, ip_address=_client_ip(request)
+        actor, user_id, new_role=payload.role, ip_address=get_client_ip(request)
     )
     return AdminUserResponse.model_validate(user)

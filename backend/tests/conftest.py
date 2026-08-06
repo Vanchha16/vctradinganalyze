@@ -82,3 +82,35 @@ def _guarded_connect(sock: socket.socket, address: tuple[str, int] | str) -> obj
 @pytest.fixture(autouse=True)
 def _block_external_network_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket.socket, "connect", _guarded_connect)
+
+
+class _FakeRateLimitRedis:
+    """Per-test in-memory stand-in for `app.dependencies.rate_limit`'s
+    Redis client (Phase 9A, ADR-132).
+
+    Unlike `app/dependencies/quota.py`'s per-user quota (a fresh user
+    factory per test means a fresh Redis key every time, so it never needs
+    this), the new per-IP rate limiter is now applied at the *router*
+    level to public routes (`app/api/v1/router.py`) - every route test in
+    this suite that hits `TestClient(app)` shares the same "testclient"
+    peer IP and the same real local Redis (see `_guarded_connect` above),
+    so counts would accumulate *across unrelated tests* in the same
+    session and eventually return 429 for reasons that have nothing to do
+    with what the test is actually checking. This is the same class of
+    problem the `.env` isolation at the top of this file exists to
+    prevent, just for Redis state instead of environment variables."""
+
+    def __init__(self) -> None:
+        self.counts: dict[str, int] = {}
+
+    def incr(self, key: str) -> int:
+        self.counts[key] = self.counts.get(key, 0) + 1
+        return self.counts[key]
+
+    def expire(self, key: str, seconds: int) -> None:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _isolate_public_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.dependencies.rate_limit._redis_client", _FakeRateLimitRedis())

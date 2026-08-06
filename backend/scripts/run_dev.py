@@ -54,6 +54,16 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent
 #: default.
 _DEFAULT_PORT = 8000
 
+#: Must match `Settings.trusted_proxy_ips`'s default (`app/config/
+#: settings.py`) - duplicated rather than imported, since this script
+#: deliberately never imports any `app.*` module (see module docstring).
+#: An OS-level `TRUSTED_PROXY_IPS` env var (not `.env` - this script never
+#: reads that file) overrides it, same as any other setting here.
+#: `--proxy-headers` is passed explicitly rather than relied on as
+#: uvicorn's own default, so behavior doesn't silently change if that
+#: default ever does (Phase 9A, ADR-132, docs/60 §4.1).
+_DEFAULT_TRUSTED_PROXY_IPS = "127.0.0.1"
+
 #: `worker`/`beat` take no port - only built here, not parameterized,
 #: since `--port` is meaningless for either.
 _STATIC_COMMANDS: dict[str, list[str]] = {
@@ -80,7 +90,7 @@ _STATIC_COMMANDS: dict[str, list[str]] = {
 _MODE_CHOICES = sorted({"api", *_STATIC_COMMANDS})
 
 
-def _build_api_command(port: int) -> list[str]:
+def _build_api_command(port: int, trusted_proxy_ips: str) -> list[str]:
     return [
         sys.executable,
         "-m",
@@ -90,11 +100,14 @@ def _build_api_command(port: int) -> list[str]:
         "0.0.0.0",
         "--port",
         str(port),
+        "--proxy-headers",
+        "--forwarded-allow-ips",
+        trusted_proxy_ips,
         "--reload",
     ]
 
 
-def _print_banner(mode: str, real_providers: bool, port: int) -> None:
+def _print_banner(mode: str, real_providers: bool, port: int, trusted_proxy_ips: str) -> None:
     # `flush=True` on every line: Python fully buffers stdout when it is
     # not a TTY (piped/redirected to a file), so a long-running server's
     # banner could otherwise sit unflushed indefinitely - exactly when an
@@ -105,6 +118,7 @@ def _print_banner(mode: str, real_providers: bool, port: int) -> None:
     print(f"ClaudeTrading AI - local '{mode}' (scripts/run_dev.py)", flush=True)
     if mode == "api":
         print(f"Port: {port}", flush=True)
+        print(f"Trusted proxy IPs (--forwarded-allow-ips): {trusted_proxy_ips}", flush=True)
     print("=" * 64, flush=True)
     if real_providers:
         print("Mode: REAL PROVIDERS (--real-providers was passed)", flush=True)
@@ -149,9 +163,14 @@ def main() -> int:
     if not args.real_providers:
         apply_safe_overrides(env)
 
-    _print_banner(args.mode, args.real_providers, args.port)
+    trusted_proxy_ips = env.get("TRUSTED_PROXY_IPS", _DEFAULT_TRUSTED_PROXY_IPS)
 
-    command = _build_api_command(args.port) if args.mode == "api" else _STATIC_COMMANDS[args.mode]
+    _print_banner(args.mode, args.real_providers, args.port, trusted_proxy_ips)
+
+    if args.mode == "api":
+        command = _build_api_command(args.port, trusted_proxy_ips)
+    else:
+        command = _STATIC_COMMANDS[args.mode]
     result = subprocess.run(command, cwd=_BACKEND_DIR, env=env, check=False)
     return result.returncode
 

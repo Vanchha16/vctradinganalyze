@@ -83,6 +83,25 @@ class Settings(BaseSettings):
     ai_chat_quota_limit: int = 30
     ai_chat_quota_window_seconds: int = 3600
 
+    # Phase 9A (ADR-132) - trusted immediate-peer address(es) for resolving
+    # the real client IP behind a reverse proxy, passed verbatim to
+    # uvicorn's `--forwarded-allow-ips` (comma-separated, or "*"). Defaults
+    # to loopback: correct for local dev (no proxy - the flag has no
+    # effect) and for production, where Nginx runs on the same host
+    # (docs/27) and connects to uvicorn via 127.0.0.1.
+    trusted_proxy_ips: str = "127.0.0.1"
+
+    # Phase 9A (ADR-132) - per-IP rate limits for the public, unauthenticated
+    # route modules (docs/60 §4.2). Two tiers: "engine" routes
+    # (technical/SMC/regime/confidence/strategy/risk) run a full pass over
+    # ~500 candles per request; "data" routes (assets/candles/news/calendar)
+    # are cheap reads. Sized generously above measured real page-load
+    # traffic (docs/60 §4.2) - hand-picked starting points, not calibrated,
+    # same caveat as ADR-127's quotas.
+    public_rate_limit_engine_limit: int = 20
+    public_rate_limit_data_limit: int = 100
+    public_rate_limit_window_seconds: int = 60
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

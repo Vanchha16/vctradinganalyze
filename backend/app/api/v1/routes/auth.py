@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request, status
 
 from app.config import settings
+from app.core.client_ip import get_client_ip
 from app.dependencies import get_authentication_service, get_current_user, get_user_service
 from app.exceptions import RegistrationDisabledException
 from app.models.user import User
@@ -53,7 +54,7 @@ async def login(
     _, access_token, refresh_token = auth_service.login(
         payload.email,
         payload.password,
-        ip_address=request.client.host if request.client else None,
+        ip_address=get_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
     return TokenResponse(

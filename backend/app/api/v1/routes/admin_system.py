@@ -9,6 +9,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.core.client_ip import get_client_ip
 from app.dependencies.admin import get_admin_system_service
 from app.dependencies.market_data import get_asset_repository
 from app.dependencies.rbac import require_admin
@@ -31,10 +32,6 @@ from app.services.signal import status_resolver
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 _Service = Annotated[AdminSystemService, Depends(get_admin_system_service)]
-
-
-def _client_ip(request: Request) -> str | None:
-    return request.client.host if request.client else None
 
 
 @router.get("/signals", response_model=SignalListResponse)
@@ -110,7 +107,7 @@ async def refresh_news(
     """docs/58 §3.2 - calls the same `NewsIngestionPipeline` the Celery
     beat schedule uses, just admin-invoked. Runs inline/blocking per the
     approved spec - see ADR-130 for the synchronous-ingestion tradeoff."""
-    articles_ingested = service.refresh_news(actor, ip_address=_client_ip(request))
+    articles_ingested = service.refresh_news(actor, ip_address=get_client_ip(request))
     return NewsRefreshResponse(articles_ingested=articles_ingested)
 
 
@@ -127,12 +124,12 @@ async def run_maintenance(
     refresh_news`/`refresh_calendar` with `POST /admin/news` (docs/58 §3.2's
     deliberate overlap, ADR-130) - not duplicated here."""
     if body.action == "refresh_news":
-        articles_ingested = service.refresh_news(actor, ip_address=_client_ip(request))
+        articles_ingested = service.refresh_news(actor, ip_address=get_client_ip(request))
         return MaintenanceActionResponse(
             action="refresh_news", news=NewsRefreshResponse(articles_ingested=articles_ingested)
         )
 
-    created, updated = service.refresh_calendar(actor, ip_address=_client_ip(request))
+    created, updated = service.refresh_calendar(actor, ip_address=get_client_ip(request))
     return MaintenanceActionResponse(
         action="refresh_calendar",
         calendar=CalendarRefreshResponse(events_created=created, events_updated=updated),

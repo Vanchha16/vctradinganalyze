@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed - Cleanup: Ruff and Mypy failures on `main`
+
+`ruff check .` and `mypy app` both now report zero errors - both had been failing on `main` since Phase 9A, unnoticed because nothing had been pushed in sixteen commits and neither tool was ever run locally (see the new BACKLOG.md §4 entry). The two mypy errors (`app/dependencies/rate_limit.py`/`quota.py` - redis-py's `incr` is typed `ResponseT`, a union that also covers the async client mypy can't rule out, even though both callers only ever use the synchronous `redis.Redis`) were fixed by extracting the two modules' identical `incr`/`expire`/compare block into one shared helper, `app/utils/redis_fixed_window.py::increment_and_check` - one documented `cast(int, ...)` instead of two unexplained ones, and real duplication removed as a side effect. Fail-open semantics, the `count > limit` boundary, and both modules' logging/fallback behavior are unchanged; `test_quota.py`/`test_rate_limit.py` pass unmodified. The seven `E501` line-length violations (`app/exceptions/quota.py`, `app/services/telegram/message_sections.py` ×2, three test files) were wrapped in place - Telegram message *string content* is byte-identical, only code layout changed. Coverage held at 93%, 986 tests
+
+`CONTRIBUTING.md` and README.md now document `ruff check .`/`mypy app` as part of the local pre-commit check, alongside `pytest`
+
 ### Added - Phase 9C-B: CI Integration for E2E + Coverage (ADR-135)
 
 `.github/workflows/ci.yml` gained a third required job, `e2e`, alongside the existing `backend`/`frontend` jobs - `uv sync --all-groups`, Node 22, `npx playwright install --with-deps chromium` (Chromium binaries cached on the Playwright version via `package-lock.json`'s hash), seeds `e2e.db`, builds the frontend with `NEXT_PUBLIC_API_URL` exported *before* `npm run build` (Next.js bakes `NEXT_PUBLIC_*` in at build time), then runs `npm run test:e2e` against that **production build**. No Postgres needed in this job - the E2E suite runs entirely against the dedicated SQLite `e2e.db` (ADR-134). Server startup uses Playwright's `webServer` config (`frontend/playwright.config.ts`), gated on `process.env.CI` so the existing local workflow (developers starting both servers themselves) is completely unaffected; readiness is polled via `/api/v1/health`, not an arbitrary sleep. **`e2e` is a required, blocking check, not advisory - see ADR-135**

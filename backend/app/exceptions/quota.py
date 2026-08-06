@@ -8,5 +8,7 @@ class QuotaExceededException(AppException):
     status_code = 429
     error_code = "quota_exceeded"
 
-    def __init__(self, message: str = "You have exceeded the request quota for this action.") -> None:
+    def __init__(
+        self, message: str = "You have exceeded the request quota for this action."
+    ) -> None:
         super().__init__(message)

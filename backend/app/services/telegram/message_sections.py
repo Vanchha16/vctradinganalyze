@@ -78,7 +78,9 @@ def render_trade_setup(signal: Signal) -> str:
 
 
 def render_risk_management(signal: Signal, analysis: AIAnalysis) -> str:
-    position = _title_case(analysis.execution_guidance) if analysis.execution_guidance else "Not Available"
+    position = (
+        _title_case(analysis.execution_guidance) if analysis.execution_guidance else "Not Available"
+    )
     risk_label = _title_case(analysis.risk_level) if analysis.risk_level else "Not Available"
     lines = [
         _SEPARATOR,
@@ -145,7 +147,11 @@ def compose_signal_outcome_message(signal: Signal, asset: Asset, *, now: datetim
     has touched its Take Profit or Stop Loss (docs/51 §10's deferred
     outcome-tracking work) - same layout style as `compose_signal_message`,
     reusing the same section-composition pattern."""
-    sections = [render_outcome_header(signal, asset), render_outcome_result(signal), render_timestamp(now)]
+    sections = [
+        render_outcome_header(signal, asset),
+        render_outcome_result(signal),
+        render_timestamp(now),
+    ]
     return "\n\n".join(sections)
 
 

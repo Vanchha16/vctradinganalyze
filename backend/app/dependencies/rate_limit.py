@@ -25,6 +25,7 @@ from fastapi import Request
 from app.config import settings
 from app.core.client_ip import get_client_ip
 from app.exceptions import QuotaExceededException
+from app.utils.redis_fixed_window import increment_and_check
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +51,7 @@ def rate_limit_public(bucket: str, limit: int, window_seconds: int) -> Callable[
         key = f"ratelimit:{bucket}:{ip}"
 
         try:
-            count = _redis_client.incr(key)
-            if count == 1:
-                _redis_client.expire(key, window_seconds)
+            exceeded = increment_and_check(_redis_client, key, limit, window_seconds)
         except Exception as exc:  # noqa: BLE001 - fail open on any Redis failure
             logger.warning(
                 "Rate limit check failed for bucket=%s ip=%s, failing open: %s",
@@ -62,7 +61,7 @@ def rate_limit_public(bucket: str, limit: int, window_seconds: int) -> Callable[
             )
             return
 
-        if count > limit:
+        if exceeded:
             raise QuotaExceededException(
                 f"Rate limit exceeded for {bucket}: {limit} requests per "
                 f"{window_seconds} seconds. Please try again later."

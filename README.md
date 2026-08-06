@@ -189,6 +189,19 @@ decision in `.github/workflows/ci.yml`'s `backend` job); running `pytest`
 locally without the flag stays gate-free, matching the command above
 without `--cov-fail-under`.
 
+### Before committing backend changes
+
+`ruff check .` and `mypy app` are part of the local pre-commit check,
+alongside `pytest` above - CI's `backend` job runs all three
+(`ci.yml:42-46`), and a change that fails either blocks the PR the same
+way a failing test does:
+
+```
+cd backend
+.venv/Scripts/python.exe -m ruff check .
+.venv/Scripts/python.exe -m mypy app
+```
+
 ---
 
 ## 🤝 Contributing

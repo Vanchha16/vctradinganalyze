@@ -50,7 +50,10 @@ def _make_signal(*, analysis_id: uuid.UUID, asset_id: uuid.UUID) -> Signal:
 
 
 def _make_analysis(
-    *, asset_id: uuid.UUID, risk_level: str | None = "high", execution_guidance: str | None = "normal"
+    *,
+    asset_id: uuid.UUID,
+    risk_level: str | None = "high",
+    execution_guidance: str | None = "normal",
 ) -> AIAnalysis:
     return AIAnalysis(
         id=uuid.uuid4(),
@@ -179,7 +182,10 @@ def test_compose_signal_outcome_message_take_profit_hit() -> None:
     asset = _make_asset()
     analysis = _make_analysis(asset_id=asset.id)
     signal = _make_closed_signal(
-        analysis_id=analysis.id, asset_id=asset.id, status=SignalStatus.SUCCESSFUL, profit_loss=Decimal("574.26")
+        analysis_id=analysis.id,
+        asset_id=asset.id,
+        status=SignalStatus.SUCCESSFUL,
+        profit_loss=Decimal("574.26"),
     )
 
     text = compose_signal_outcome_message(signal, asset, now=_NOW)
@@ -197,7 +203,10 @@ def test_compose_signal_outcome_message_stop_loss_hit() -> None:
     asset = _make_asset()
     analysis = _make_analysis(asset_id=asset.id)
     signal = _make_closed_signal(
-        analysis_id=analysis.id, asset_id=asset.id, status=SignalStatus.STOPPED_OUT, profit_loss=Decimal("-287.63")
+        analysis_id=analysis.id,
+        asset_id=asset.id,
+        status=SignalStatus.STOPPED_OUT,
+        profit_loss=Decimal("-287.63"),
     )
 
     text = compose_signal_outcome_message(signal, asset, now=_NOW)

@@ -22,7 +22,9 @@ _TABLES = [Asset.__table__, AIAnalysis.__table__, Signal.__table__, PriceCandle.
 
 
 @pytest.fixture
-def session_factory(monkeypatch: pytest.MonkeyPatch) -> Generator[sessionmaker[Session], None, None]:
+def session_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[sessionmaker[Session], None, None]:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine, tables=_TABLES)
     factory = sessionmaker(bind=engine, autocommit=False, autoflush=False, class_=Session)

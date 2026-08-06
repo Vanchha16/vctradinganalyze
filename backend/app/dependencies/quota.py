@@ -29,6 +29,7 @@ from app.config import settings
 from app.dependencies.auth import get_current_user
 from app.exceptions import QuotaExceededException
 from app.models.user import User
+from app.utils.redis_fixed_window import increment_and_check
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +57,7 @@ def require_quota(bucket: str, limit: int, window_seconds: int) -> Callable[...,
         key = f"quota:{bucket}:{current_user.id}"
 
         try:
-            count = _redis_client.incr(key)
-            if count == 1:
-                _redis_client.expire(key, window_seconds)
+            exceeded = increment_and_check(_redis_client, key, limit, window_seconds)
         except Exception as exc:  # noqa: BLE001 - fail open on any Redis failure
             logger.warning(
                 "Quota check failed for bucket=%s user=%s, failing open: %s",
@@ -68,7 +67,7 @@ def require_quota(bucket: str, limit: int, window_seconds: int) -> Callable[...,
             )
             return current_user
 
-        if count > limit:
+        if exceeded:
             raise QuotaExceededException(
                 f"You have exceeded the {bucket} quota of {limit} requests "
                 f"per {window_seconds} seconds. Please try again later."

@@ -56,6 +56,7 @@ def client() -> Generator[TestClient, None, None]:
 
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
+        test_client.engine = engine  # type: ignore[attr-defined]
         yield test_client
     app.dependency_overrides.clear()
 
@@ -207,3 +208,60 @@ def test_me_rejects_invalid_token(client: TestClient) -> None:
 
     assert response.status_code == 401
     assert response.json()["error"] == "invalid_access_token"
+
+
+# --- Phase 9B (ADR-133): get_current_user active/deleted enforcement -------
+
+
+def _disable_user(client: TestClient, *, deleted: bool = False) -> None:
+    """Mutate the already-registered `trader@example.com` row directly,
+    bypassing the API - simulates an admin disabling/deleting a user whose
+    already-issued access token is still live (the exact scenario Item A
+    closes)."""
+    from datetime import UTC, datetime
+
+    with Session(client.engine) as session:  # type: ignore[attr-defined]
+        user = session.query(User).filter_by(email="trader@example.com").one()
+        user.is_active = False
+        if deleted:
+            user.deleted_at = datetime.now(UTC)
+        session.commit()
+
+
+def test_me_rejects_token_for_now_disabled_user(client: TestClient) -> None:
+    _register(client)
+    tokens = _login(client)
+    _disable_user(client)
+
+    response = client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "inactive_account"
+
+
+def test_me_rejects_token_for_now_soft_deleted_user(client: TestClient) -> None:
+    _register(client)
+    tokens = _login(client)
+    _disable_user(client, deleted=True)
+
+    response = client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"] == "inactive_account"
+
+
+def test_me_allows_token_for_still_active_user(client: TestClient) -> None:
+    """Control case: an active user's token keeps working - Item A only
+    narrows the disabled/deleted path, nothing else."""
+    _register(client)
+    tokens = _login(client)
+
+    response = client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+
+    assert response.status_code == 200

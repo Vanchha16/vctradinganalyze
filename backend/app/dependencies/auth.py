@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import decode_token
 from app.dependencies.database import get_db
-from app.exceptions import InvalidAccessTokenException
+from app.exceptions import InactiveAccountException, InvalidAccessTokenException
 from app.models.user import User
 from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.user_repository import UserRepository
@@ -35,9 +35,16 @@ def get_current_user(
 ) -> User:
     """Resolve the bearer access token to a `User`.
 
-    Intentionally minimal: extract the token, decode it, verify its type,
-    and load the user. No authorization (active/verified/role) checks are
-    made here - those remain out of scope for this phase.
+    Extract the token, decode it, verify its type, load the user, and
+    reject one still-active/deleted-check: is `is_active`/`deleted_at`.
+    No *other* authorization (verified/role) checks are made here - those
+    remain out of scope for this phase. The active/deleted check was added
+    in Phase 9B (ADR-133): an access token is otherwise valid for its full
+    15-minute lifetime even after an admin disables or soft-deletes the
+    account it belongs to, since `AuthenticationService.login` only
+    enforces this at login. The `User` row is already loaded below for
+    every authenticated request regardless, so this is a field check, not
+    an added query.
     """
     try:
         claims = decode_token(credentials.credentials)
@@ -52,4 +59,12 @@ def get_current_user(
     except (KeyError, ValueError) as exc:
         raise InvalidAccessTokenException() from exc
 
-    return user_service.get_user_by_id(user_id)
+    user = user_service.get_user_by_id(user_id)
+
+    if not user.is_active or user.deleted_at is not None:
+        # Same exception as the login path's equivalent check
+        # (AuthenticationService.login) - deliberately does not distinguish
+        # "deleted" from "inactive" to the caller.
+        raise InactiveAccountException()
+
+    return user

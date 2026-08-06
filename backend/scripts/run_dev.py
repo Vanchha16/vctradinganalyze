@@ -28,10 +28,11 @@ it simply does not apply the mock overrides, so the child process reads
 prints that file's contents (rule 9, never expose secrets).
 
 Usage:
-    python scripts/run_dev.py api                  # mock providers (default)
+    python scripts/run_dev.py api                     # mock providers (default), port 8000
+    python scripts/run_dev.py api --port 8001          # match a non-default local setup
     python scripts/run_dev.py worker
     python scripts/run_dev.py beat
-    python scripts/run_dev.py api --real-providers  # deliberate opt-in only
+    python scripts/run_dev.py api --real-providers     # deliberate opt-in only
 """
 
 import argparse
@@ -46,18 +47,16 @@ from local_env import SAFE_LOCAL_OVERRIDES, apply_safe_overrides  # noqa: E402
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-_COMMANDS: dict[str, list[str]] = {
-    "api": [
-        sys.executable,
-        "-m",
-        "uvicorn",
-        "app.main:app",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8000",
-        "--reload",
-    ],
+#: 8000 is this project's canonical backend port (`frontend/services/
+#: api-client.ts`, `.env.example`, `docker-compose.yml`'s `uvicorn`
+#: command and `${BACKEND_PORT:-8000}` mapping all agree) - `--port`
+#: exists to match a machine-specific override, not to change the
+#: default.
+_DEFAULT_PORT = 8000
+
+#: `worker`/`beat` take no port - only built here, not parameterized,
+#: since `--port` is meaningless for either.
+_STATIC_COMMANDS: dict[str, list[str]] = {
     "worker": [
         sys.executable,
         "-m",
@@ -78,28 +77,61 @@ _COMMANDS: dict[str, list[str]] = {
     ],
 }
 
+_MODE_CHOICES = sorted({"api", *_STATIC_COMMANDS})
 
-def _print_banner(mode: str, real_providers: bool) -> None:
-    print("=" * 64)
-    print(f"ClaudeTrading AI - local '{mode}' (scripts/run_dev.py)")
-    print("=" * 64)
+
+def _build_api_command(port: int) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        str(port),
+        "--reload",
+    ]
+
+
+def _print_banner(mode: str, real_providers: bool, port: int) -> None:
+    # `flush=True` on every line: Python fully buffers stdout when it is
+    # not a TTY (piped/redirected to a file), so a long-running server's
+    # banner could otherwise sit unflushed indefinitely - exactly when an
+    # unattended operator most needs to see which mode is live (found
+    # during the 9ccd471 verification, only visible there because `-u`
+    # happened to be passed).
+    print("=" * 64, flush=True)
+    print(f"ClaudeTrading AI - local '{mode}' (scripts/run_dev.py)", flush=True)
+    if mode == "api":
+        print(f"Port: {port}", flush=True)
+    print("=" * 64, flush=True)
     if real_providers:
-        print("Mode: REAL PROVIDERS (--real-providers was passed)")
-        print("backend/.env is used as-is and is NOT read or displayed by this")
-        print("launcher - whatever real vendors/keys it configures are now live.")
-        print("This can call a real vendor API and consume real quota.")
+        print("Mode: REAL PROVIDERS (--real-providers was passed)", flush=True)
+        print("backend/.env is used as-is and is NOT read or displayed by this", flush=True)
+        print("launcher - whatever real vendors/keys it configures are now live.", flush=True)
+        print("This can call a real vendor API and consume real quota.", flush=True)
     else:
-        print("Mode: MOCK PROVIDERS (default - safe, no vendor is ever called)")
+        print("Mode: MOCK PROVIDERS (default - safe, no vendor is ever called)", flush=True)
         for key, value in SAFE_LOCAL_OVERRIDES.items():
-            print(f"  {key}={value}")
-    print("=" * 64)
+            print(f"  {key}={value}", flush=True)
+    print("=" * 64, flush=True)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Safe local launcher for the API server, Celery worker, or Celery beat."
     )
-    parser.add_argument("mode", choices=sorted(_COMMANDS))
+    parser.add_argument("mode", choices=_MODE_CHOICES)
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=_DEFAULT_PORT,
+        help=(
+            f"Port for the 'api' mode's uvicorn server (default {_DEFAULT_PORT}, "
+            "this project's canonical port). Meaningless for worker/beat."
+        ),
+    )
     parser.add_argument(
         "--real-providers",
         action="store_true",
@@ -110,13 +142,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.mode != "api" and args.port != _DEFAULT_PORT:
+        parser.error(f"--port is only meaningful for the 'api' mode (got mode={args.mode!r}).")
+
     env = os.environ.copy()
     if not args.real_providers:
         apply_safe_overrides(env)
 
-    _print_banner(args.mode, args.real_providers)
+    _print_banner(args.mode, args.real_providers, args.port)
 
-    result = subprocess.run(_COMMANDS[args.mode], cwd=_BACKEND_DIR, env=env, check=False)
+    command = _build_api_command(args.port) if args.mode == "api" else _STATIC_COMMANDS[args.mode]
+    result = subprocess.run(command, cwd=_BACKEND_DIR, env=env, check=False)
     return result.returncode
 
 

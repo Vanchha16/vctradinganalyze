@@ -99,6 +99,14 @@ never the default:
 .venv/Scripts/python.exe scripts/run_dev.py api --real-providers
 ```
 
+The `api` mode defaults to port 8000 (this project's canonical port). Pass
+`--port` to match a machine-specific override instead - it has no effect on
+`worker`/`beat`:
+
+```
+.venv/Scripts/python.exe scripts/run_dev.py api --port 8001
+```
+
 The old direct commands (`uvicorn app.main:app --reload`,
 `celery -A app.workers.celery_app.celery_app worker`, `... beat`) still work
 unchanged - this is an additive, safer alternative, not a replacement.

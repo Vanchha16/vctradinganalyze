@@ -6102,6 +6102,126 @@ their own documentation-first pass.
 
 ---
 
+# ADR-129
+
+Title
+
+Audit Logs (8F) Is a Read-Only API Over an Already-Written Table, With an
+Inferred `GET /admin/logs` Contract
+
+Status
+
+Accepted
+
+Context
+
+`BACKLOG.md`'s 8F entry describes "reuses the existing `AuditLog` table
+for every admin mutation," which reads like a wiring task. It is not:
+`AuthenticationService` (Phase 2B - `login_success`, `login_failed`,
+`logout`, `session_revoked`) and `AdminUserService` (Phase 8C -
+`admin_user_created`, `admin_user_updated`, `admin_user_disabled`,
+`admin_user_activated`, `admin_role_changed`, `admin_password_reset`,
+`admin_user_deleted`) already write every audit row this project
+produces today. What was actually missing was the read side:
+`AuditLogRepository` had only `list_for_user` (no admin-wide listing,
+filtering, or count), no `GET /admin/logs` route existed, and
+`docs/04` lists the bare path with no query params or response shape -
+the contract is therefore inferred, the same category of gap ADR-091
+(`signals.created_at`) and ADR-128 (`GET /watchlists/{id}`) already
+covered for other phases.
+
+Decision
+
+1. `AuditLogRepository` gains `list_admin`/`count_admin`, filterable by
+   `user_id`, `action`, `resource`, and a `created_at` `from`/`to` range,
+   always ordered newest-first. `UserRepository` gains `list_by_ids` (a
+   batch lookup) so `AdminAuditLogService.list_logs` can resolve every
+   distinct actor on a page in one query instead of one per row.
+2. `GET /admin/logs` (`app/api/v1/routes/admin_logs.py`) is the endpoint
+   `docs/04` names but never specified - `user_id`/`action`/`resource`/
+   `from`/`to`/`page`/`limit` query params, the same
+   `{"items", "page", "limit", "total"}` envelope `GET /admin/users`
+   already uses, gated by the existing `require_admin` (ADR-115/ADR-122,
+   Phase 8B) with no new role-check logic.
+3. The API is read-only by construction, not just by convention:
+   `AdminAuditLogService` has no create/update/delete method, and no
+   route exists that could mutate or remove a row. An audit trail that
+   its own viewing API could tamper with would defeat the reason it
+   exists.
+4. This phase adds zero new audit-write call sites. `docs/25` §14 names
+   seven record types - User Action, Admin Action, AI Decision,
+   Configuration Change, Login, Logout, Security Events - and only
+   Admin Action, Login, and Logout are actually written anywhere in this
+   codebase today. "AI Decision" and "Configuration Change" have no
+   write call site at all. That gap is recorded here as explicitly
+   deferred, not built speculatively now, per "never invent
+   architecture" - a real AI Decision/Configuration Change audit trail
+   needs its own scoping pass (which mutations count, what the context
+   shape is) rather than a guess bundled into a read-side phase.
+
+Reason
+
+Every part of this decision follows an existing precedent rather than
+inventing a new one: the inferred-endpoint-needs-an-ADR pattern
+(ADR-091/ADR-128), the list/count/pagination shape `AdminUserService`/
+`GET /admin/users` already established, and the batch-lookup-over-N+1
+reasoning any admin list view with a foreign-key-to-display problem
+would need. The read-only constraint is the one genuinely load-bearing
+choice: `AuditLog` rows are the evidence trail for every other admin
+decision in this system, so the read API is deliberately incapable of
+being the thing that erases or edits that evidence.
+
+Alternatives Considered
+
+Option A: Add a `DELETE /admin/logs/{id}` for retention/cleanup purposes
+- rejected; no retention policy has been specified anywhere (`docs/03`
+§18's general data-retention gap, `BACKLOG.md` §5), and building
+deletion before a retention decision exists risks becoming the
+mechanism an admin uses to cover their own tracks, which is the exact
+failure mode an audit log exists to prevent.
+
+Option B: Build write call sites for "AI Decision"/"Configuration
+Change" now, since the table already supports it - rejected; docs/25
+§14 names the categories but specifies neither which mutations qualify
+nor what `context` shape they'd carry. Guessing both violates "never
+invent architecture" for a table that already has real, correctly-
+scoped writers; this is real follow-up work needing its own pass, not a
+free addition to a read-side phase.
+
+Option C (chosen): Read-only `GET /admin/logs`, filtered/paginated/
+newest-first, zero new write call sites, the docs/25 §14 gap recorded
+as deferred rather than filled.
+
+Trade-offs
+
+Pros
+
+Closes the actual gap (nobody could browse audit history through the
+API before this) without touching the parts of the system that were
+already correct; batch actor-resolution keeps the list view from
+becoming an N+1 liability; the read-only constraint needs no new
+authorization nuance - `require_admin` is sufficient since there is
+nothing more dangerous than reading available to gate.
+
+Cons
+
+Four of docs/25 §14's seven record types remain unwritten
+(`Configuration Change`, `AI Decision` - two are simply *categories*
+`Admin Action` already covers under different phrasing, e.g. `User
+Action` overlaps `Admin Action`'s existing rows). An admin cannot yet
+see AI recommendation history or configuration changes in this view,
+because nothing generates those rows yet.
+
+Future Review
+
+Revisit `Configuration Change`/`AI Decision` write coverage as its own
+scoped phase once a concrete need names which mutations qualify and what
+`context` they should carry - not by guessing here. Revisit deletion/
+retention only alongside a real `docs/03` §18 data-retention policy
+decision, never as a bare admin-triggered delete.
+
+---
+
 # Review Policy
 
 Review ADRs:

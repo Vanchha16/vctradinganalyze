@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added - Phase 8F: Audit Logs Backend (ADR-129)
+
+The write side already existed (Phase 2B's `AuthenticationService`: `login_success`/`login_failed`/`logout`/`session_revoked`; Phase 8C's `AdminUserService`: `admin_user_created`/`admin_user_updated`/`admin_user_disabled`/`admin_user_activated`/`admin_role_changed`/`admin_password_reset`/`admin_user_deleted`) - this phase builds only the read side. No migration, no model change
+
+`AuditLogRepository` gains `list_admin`/`count_admin`, filterable by `user_id`/`action`/`resource`/`created_at` `from`/`to` range (all optional, combinable), always newest-first. `UserRepository` gains `list_by_ids` for batch actor-resolution (one query per page, not one per row). `AdminAuditLogService` (`app/services/admin_audit_log_service.py`) mirrors `AdminUserService`'s shape - constructor-injected repositories, one method per use case - and deliberately has no create/update/delete method
+
+`GET /admin/logs` (`app/api/v1/routes/admin_logs.py`), `require_admin`-gated (Phase 8B, no new role-check logic), query params `user_id`/`action`/`resource`/`from`/`to`/`page`/`limit`, same `{"items","page","limit","total"}` envelope as `GET /admin/users`. Read-only by construction - no route exists that can mutate or delete an audit log
+
+**Sensitive-context audit (build-spec requirement):** every existing `_audit(...)` call site was read before deciding to return `context` verbatim in the API response. None carry a plaintext password or other sensitive value - `admin_password_reset`/`delete_user` pass no `context` at all (the former has an explicit source comment enforcing this), every other call site's context is limited to old/new email/username/full_name/role/is_active/bulk-count
+
+**ADR-129**: the `GET /admin/logs` contract is inferred (docs/04 lists only the bare path), same category of gap as `signals.created_at` (ADR-091) and `GET /watchlists/{id}` (ADR-128); read-only by design since an audit trail's own viewing API being able to tamper with it would defeat its purpose; records that `docs/25` §14 names seven record types (User Action, Admin Action, AI Decision, Configuration Change, Login, Logout, Security Events) but only Admin Action, Login, and Logout are actually written anywhere today - "AI Decision"/"Configuration Change" have no write call site and are explicitly deferred, not invented here
+
+12 new tests (`tests/test_admin_logs_api.py`) - newest-first ordering, each filter individually and combined, pagination/count, a NULL-`user_id` row serializing without error, 403/401, and that the OpenAPI schema exposes no non-GET method under `/admin/logs`
+
+Two pre-existing, unrelated test failures surfaced during verification (confirmed reproducing identically at the prior commit before any 8F change, recorded in BACKLOG.md §26): both `test_market_data_dependencies.py`'s and `test_market_data_tasks.py`'s failures trace to the local `.env`'s `MARKET_DATA_PROVIDERS=["twelve_data"]` override hitting the real, quota-exhausted Twelve Data API - not touched, per the build spec's explicit instruction not to modify `.env`
+
 ### Added - Phase 7D-B: Watchlists Frontend
 
 Replaces the ADR-103 `EmptyState`-only placeholder with real, server-backed CRUD against 7D-A's live API. `services/watchlists.ts` (mirrors `services/admin.ts`, no business logic); `apiPut` added to `services/api-client.ts` (only `apiGet`/`apiPost`/`apiPatch`/`apiDelete` existed - the rename endpoint is `PUT`, following `apiPatch`'s existing implementation exactly). `use-watchlists`/`use-watchlist`/`use-watchlist-actions` hooks (mirrors `use-admin-users`/`use-admin-user-actions`'s list-hook/mutations-hook split), all mutations invalidating the `["watchlists"]` query key so list and detail stay consistent

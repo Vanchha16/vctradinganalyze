@@ -7,6 +7,7 @@ from app.dependencies.database import get_db
 from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.user_session_repository import UserSessionRepository
+from app.services.admin_audit_log_service import AdminAuditLogService
 from app.services.admin_user_service import AdminUserService
 from app.services.user_service import UserService
 
@@ -18,4 +19,10 @@ def get_admin_user_service(db: Annotated[Session, Depends(get_db)]) -> AdminUser
         user_session_repository=UserSessionRepository(db),
         audit_log_repository=AuditLogRepository(db),
         user_service=UserService(user_repository),
+    )
+
+
+def get_admin_audit_log_service(db: Annotated[Session, Depends(get_db)]) -> AdminAuditLogService:
+    return AdminAuditLogService(
+        audit_log_repository=AuditLogRepository(db), user_repository=UserRepository(db)
     )

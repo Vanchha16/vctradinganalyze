@@ -27,6 +27,17 @@ class UserRepository(BaseRepository[User]):
         query = self._filter_by(self._query(), username=username)
         return self.session.execute(query).scalar_one_or_none()
 
+    def list_by_ids(self, user_ids: Sequence[uuid.UUID]) -> Sequence[User]:
+        """Batch lookup (Phase 8F, `AdminAuditLogService`) - resolving each
+        audit row's actor one-by-one would be an N+1 query per page;
+        returns regardless of `deleted_at`/`is_active` since a since-
+        deleted actor's name should still display on their historical
+        audit rows (docs/59 §4's "never hard-delete" reasoning)."""
+        if not user_ids:
+            return []
+        query = self._query().where(User.id.in_(user_ids))
+        return self.session.execute(query).scalars().all()
+
     def create(self, user: User) -> User:
         self.session.add(user)
         self.session.flush()

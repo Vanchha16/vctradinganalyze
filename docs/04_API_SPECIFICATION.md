@@ -970,6 +970,13 @@ GET /admin/system
 
 GET /admin/logs
 
+Query params: `user_id`, `action`, `resource`, `from`, `to`, `page`, `limit`
+(all optional, combinable). Newest first. Response items include a
+server-resolved `actor_email`/`actor_username` (both `null` when `user_id`
+is `null` - no actor, e.g. a failed login or a since-deleted user). Contract
+is inferred (ADR-129) - this project's audit-log write side (Phase 2B/8C)
+predates this read endpoint. Read-only: no route mutates or deletes a row.
+
 GET /admin/analytics
 
 POST /admin/news

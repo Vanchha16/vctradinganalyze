@@ -23,6 +23,7 @@ dev = [
   "black>=24.10.0",
   "mypy>=1.14.0",
   "pytest>=8.3.4",
+  "pytest-cov>=7.1.0",
   "ruff>=0.8.4",
 ]
 
@@ -44,6 +45,26 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+# `source = ["app"]` alone already excludes `alembic/` (migrations,
+# verified separately via `alembic upgrade`/`downgrade`/`check`, not the
+# unit suite - docs/06 §21's "migrations" exclusion) and `scripts/`
+# (one-off operator tooling - create_admin.py, seed_*.py, run_dev.py -
+# run manually, not imported by any test), since neither lives under
+# `app/`. `__init__.py` omitted separately below - every one in this
+# codebase is a re-export aggregator only (e.g. `app/models/__init__.py`),
+# no branches to miss.
+source = ["app"]
+omit = ["*/__init__.py"]
+
+[tool.coverage.report]
+# Phase 9C (docs/60 §7, BACKLOG.md §4) - measure first, no failing
+# threshold yet. Nobody has ever measured this number; a gate that fails
+# on day one gets disabled and never re-enabled. Choosing a threshold is
+# a follow-up decision informed by the real figure below.
+show_missing = true
+skip_covered = false
 
 [build-system]
 requires = ["hatchling"]

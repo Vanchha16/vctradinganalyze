@@ -7,6 +7,10 @@
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
 
 # Backend
 backend/.venv/
@@ -16,6 +20,8 @@ backend/.pytest_cache/
 backend/.ruff_cache/
 backend/.mypy_cache/
 backend/dev.db
+backend/e2e.db
+backend/e2e.db-*
 backend/celery_*.log
 backend/celery_*.err*.log
 backend/celery_*.out*.log
@@ -25,6 +31,9 @@ backend/celerybeat-schedule-wal
 
 # Tooling
 .coverage
+backend/.coverage
+backend/htmlcov/
+backend/coverage.xml
 coverage/
 .DS_Store
 .image_test

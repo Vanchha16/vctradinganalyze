@@ -243,3 +243,68 @@ Everything listed under 9B/9C/9D in §1, plus: a full CSP (§5); calibrating
 the rate limits against real production traffic; anything to do with the
 Windows/billiard Celery worker limitation (unrelated, tracked separately
 in BACKLOG.md §9).
+
+---
+
+# 7. Phase 9C: Testing Foundation (complete)
+
+Two deliverables, per the 9C build spec: Playwright E2E on the core
+flows, and a real backend coverage number via `pytest-cov`. See
+ADR-134 for the E2E database/seeding strategy in full.
+
+## 7.1 What is covered
+
+`frontend/tests/e2e/` (Chromium only - cross-browser deferred, low value
+at this stage), six flows:
+
+1. Auth - login, session persists across reload, logout, protected
+   routes redirect to login afterward.
+2. Watchlists CRUD (Phase 7D-B) - create, add/remove an asset, rename,
+   delete, in one sequential lifecycle test.
+3. Admin user management (Phase 8C/8D) - list loads, search narrows,
+   Add/Edit dialogs open. Never exercises delete/role-change against the
+   seeded admin the whole suite depends on.
+4. Admin maintenance actions (Phase 7D-C) - Refresh News's confirm
+   dialog, successful completion, and the resulting audit row.
+5. Role gating - the seeded non-admin sees no Admin nav group and is
+   redirected away from `/admin/*`.
+6. A regression guard for 9A's riskiest failure mode (rate limits set
+   below real usage): a normal multi-page walk asserts zero `429`
+   responses and zero CORS console errors.
+
+Determinism: `workers: 1`, `fullyParallel: false` - tests share one
+seeded backend, and the current suite's assertions were not designed
+against concurrent mutation of that shared state (judgment call, see the
+9C build report). No `waitForTimeout`/arbitrary sleeps anywhere - only
+Playwright's web-first assertions, with a raised global `expect` timeout
+(10s, 15s for the shared login helper) to absorb `next dev`'s
+compile-on-first-request cost per route, not to paper over flakiness.
+
+`pytest-cov` is configured (`backend/pyproject.toml`'s
+`[tool.coverage.*]`, `source = ["app"]`). **Measured total: 93%**
+(`cd backend && .venv/Scripts/python.exe -m pytest -q --cov=app
+--cov-report=term`). No failing threshold - see BACKLOG.md §4.
+
+## 7.2 What is not covered
+
+- Component/unit tests (Vitest/RTL) - the planning decision was E2E
+  first (§1).
+- Cross-browser E2E (Firefox/WebKit) - Chromium only for now.
+- A coverage gate/threshold - deliberately not set yet (§6 of the build
+  spec; BACKLOG.md §4).
+- Any flow beyond the six above - notably no AI Analysis/AI Chat/Signals
+  E2E coverage yet, since those either call the (mocked) AI orchestrator
+  or have no equivalent manual-verification precedent driving this
+  phase's flow selection.
+
+## 7.3 CI integration - the explicit next step, and why it waits
+
+Wiring the Playwright suite into `.github/workflows/ci.yml` needs
+Chromium binaries, a running backend (with a seeded database), a served
+frontend, and Postgres in the runner - a substantial job in its own
+right that would have roughly doubled this phase's scope alongside the
+`pytest-cov` work. **Local-first, CI next** was the explicit build-spec
+instruction (§1). A suite nobody runs automatically will rot silently;
+this is recorded here specifically so that risk doesn't get lost the way
+the missing 9A CHANGELOG entry did (found and backfilled during 9C -
+CHANGELOG.md).

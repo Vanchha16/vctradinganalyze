@@ -327,8 +327,12 @@ scoping, and reasoning behind each.
   `login()` user-enumeration timing oracle fixed; `jti` access-token
   denylist decided against for now, deferral reasoning updated
   (ADR-133).
-- **9C Testing Foundation** - Playwright E2E on core flows, `pytest-cov`.
-  Not started.
+- **9C Testing Foundation** - **complete.** Playwright E2E (Chromium) on
+  the six core flows (auth, watchlists CRUD, admin user management,
+  admin maintenance actions, role gating, a 9A rate-limit/CORS
+  regression guard), against a dedicated seeded `e2e.db`; `pytest-cov`
+  configured, measured at 93% (no threshold gate yet). CI integration
+  deliberately deferred to a follow-up (ADR-134, docs/60 §7).
 - **9D Measurement** - `GET /metrics`. Not started, and a prerequisite
   for Performance/Optimization, which remain unscheduled until this
   exists.

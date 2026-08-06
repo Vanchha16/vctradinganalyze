@@ -113,6 +113,57 @@ unchanged - this is an additive, safer alternative, not a replacement.
 
 Implementation otherwise follows the roadmap defined in the architecture documents.
 
+### Running the E2E suite (Phase 9C)
+
+The Playwright suite (`frontend/tests/e2e/`) runs against a **dedicated
+seeded database, `backend/e2e.db`** - never `backend/dev.db`. See ADR-134
+(`docs/36`) for why. Four steps, in order:
+
+```
+# 1. Seed the E2E database (idempotent - safe to re-run any time to reset)
+cd backend
+.venv/Scripts/python.exe scripts/seed_e2e_data.py
+
+# 2. Start the backend pointed at it (mock providers, never a real vendor call)
+.venv/Scripts/python.exe scripts/run_dev.py api --e2e-db
+
+# 3. Start the frontend (reads NEXT_PUBLIC_API_URL from frontend/.env.local -
+#    make sure it points at the backend port from step 2)
+cd frontend
+npm run dev
+
+# 4. Run the suite
+npm run test:e2e            # headless
+npm run test:e2e:headed     # headed, watch it click through the app
+npm run test:e2e:debug      # Playwright's step-through debugger
+npm run test:e2e:report     # open the last run's HTML report
+```
+
+`E2E_BASE_URL` overrides the frontend URL Playwright targets (default
+`http://localhost:3000`) if you're running the frontend on a non-default
+port. Chromium only for now; traces/screenshots/video are captured on
+failure only (`playwright.config.ts`). Re-run step 1 between sessions to
+reset to a known state - the suite itself is self-cleaning (each test
+either mutates nothing or undoes its own mutation), but re-seeding is the
+fastest way back to a known-good starting point if a run is interrupted
+mid-test.
+
+If you run the frontend on a port other than `3000` (the backend's
+default `Settings.backend_cors_origins`), also set
+`BACKEND_CORS_ORIGINS='["http://localhost:<port>"]'` as an environment
+variable before step 2, or the browser's requests will fail CORS.
+
+### Backend test coverage (Phase 9C)
+
+```
+cd backend
+.venv/Scripts/python.exe -m pytest -q --cov=app --cov-report=term
+```
+
+Configured in `backend/pyproject.toml`'s `[tool.coverage.*]`. No failing
+threshold is set yet - see `BACKLOG.md` §4 for why, and for the current
+measured number.
+
 ---
 
 ## 🤝 Contributing

@@ -6942,6 +6942,148 @@ Future Review, independently of this ADR.
 
 ---
 
+# ADR-134
+
+Title
+
+Phase 9C: Dedicated E2E Database and Seed Script, Rather Than `dev.db`
+
+Status
+
+Accepted
+
+Context
+
+Building a real Playwright E2E suite requires the tests to log in as a
+known account. Two paths that would normally provide one are both
+closed: public registration returns `403` (`allow_public_registration=
+False`, ADR-119), and `backend/scripts/create_admin.py` refuses to run a
+second time once any `super_admin` row exists (ADR-123's bootstrap
+guard) - `dev.db` already has one from earlier phases. `dev.db` itself
+has also been mutated repeatedly by manual verification across this
+session (the dev super-admin's password was overwritten during 7D-C; a
+throwaway `lockout-9b-verify@example.com` account was added in 9B) - an
+E2E suite built against it would be non-deterministic and
+order-dependent, asserting against whatever state happened to survive
+the last person's manual testing.
+
+Decision
+
+1. **A dedicated SQLite file, `backend/e2e.db`, never `dev.db`.** A new
+   shared constant module, `backend/scripts/e2e_db.py`
+   (`E2E_DATABASE_URL`), is imported by both `run_dev.py --e2e-db`
+   (points a manually-started backend's `DATABASE_URL` at it) and
+   `seed_e2e_data.py` (seeds it) - one definition, the same pattern
+   `local_env.py` already established for the mock-provider overrides.
+2. **`seed_e2e_data.py` resets to a known state by dropping and
+   recreating every table on each run**, not by upserting - idempotency
+   here means "always ends up identical," not "safe to run twice
+   without erroring." This is deliberately more aggressive than
+   `seed_dev_data.py` (which only adds what's missing, since `dev.db` is
+   meant to *accumulate* manual-verification state across phases) - the
+   two scripts now have genuinely different idempotency contracts for a
+   genuinely different reason, not an accidental inconsistency.
+3. **A safety refusal, `e2e_db.assert_safe_e2e_target`, gates the whole
+   script**: it must reject anything that isn't `sqlite:///` (Postgres,
+   including production, is rejected by dialect alone) and additionally
+   requires the resolved filename to be exactly `e2e.db` - so a
+   misconfigured `DATABASE_URL` pointing at `dev.db`, or anything else,
+   is refused too, not just non-SQLite targets. Tested directly
+   (`tests/test_seed_e2e_data_safety.py`), not just exercised
+   incidentally by running the script.
+4. **Test credentials are `*.invalid` (RFC 2606) and a fixed, obviously
+   fake password**, never derived from or read out of `backend/.env`.
+   One seeded `super_admin` and one seeded `registered` account cover
+   every flow the build spec's six flows need (§4.3's Admin-tier UI,
+   §4.5's role gating) without needing a third role tier.
+5. **Schema via `Base.metadata.create_all`, not `alembic upgrade
+   head`**, mirroring the existing pytest-session pattern
+   (`tests/conftest.py`'s ephemeral SQLite fixtures) rather than
+   introducing a second schema-provisioning path. `e2e.db` is a
+   throwaway file recreated every seed run, not a database whose
+   migration history needs to mean anything.
+
+Reason
+
+The safety refusal is not decorative: a seed script that creates a
+known-password admin account is a genuine hazard if it can ever run
+against a real database, and the build spec called this out explicitly.
+Rejecting by dialect alone (any Postgres URL) would already catch the
+most likely real accident (a stray `DATABASE_URL` env var from a real
+`.env`), but the additional filename check catches the second most
+likely one - a misconfigured pointer at `dev.db` itself, which is also
+SQLite and would otherwise pass a dialect-only check. Two independent
+checks for two independent, plausible misconfigurations.
+
+Drop-and-recreate instead of upsert was chosen because the E2E suite's
+own tests mutate state (watchlist create/rename/delete, admin dialogs)
+and the whole point of a dedicated database is that a test run's outcome
+must not depend on what a previous run - or a differently-ordered one -
+left behind. An upsert-based seed would still need to reconcile
+leftover watchlists/assets from prior runs; dropping everything sidesteps
+that reconciliation entirely rather than building it.
+
+Alternatives Considered
+
+Option A: Seed `dev.db` directly with known test accounts alongside the
+real manual-verification data - rejected; this is exactly the
+non-determinism the build spec identified. A test asserting "the user
+list shows N accounts" would break every time a future phase's manual
+verification adds or removes one.
+
+Option B: A fixture-per-test approach (create a user via direct DB
+access at the start of each spec file, delete it at the end) instead of
+one upfront seed script - rejected for this first pass; it would
+multiply the number of places that need the same safety-refusal logic,
+and the six flows in scope share enough fixture data (the same admin,
+the same non-admin, the same assets) that one seed script is simpler
+than six ad-hoc ones. Revisit if the suite grows enough those flows
+diverge.
+
+Option C: Reuse `create_admin.py`'s interactive prompt flow against
+`e2e.db` instead of a new non-interactive script - rejected; E2E runs
+need to be scriptable/idempotent, and `create_admin.py`'s `getpass`
+prompts and one-shot bootstrap guard are both wrong shapes for that.
+
+Trade-offs
+
+Pros
+
+The suite is fully deterministic - any developer, any order, any number
+of runs, same starting state. The safety refusal makes the "seed script
+points at production" failure mode structurally hard to hit rather than
+relying on developer discipline. Sharing `e2e_db.py` between `run_dev.py`
+and `seed_e2e_data.py` means the database target can't drift between the
+two the way it could if each hardcoded its own URL string.
+
+Cons
+
+A second local SQLite file to know about, alongside `dev.db` - a
+developer running the E2E suite for the first time needs to read
+README.md's setup steps rather than it being self-evident. `Base.
+metadata.create_all` (not `alembic upgrade head`) means `e2e.db`'s
+schema could in principle drift from what a real migration chain would
+produce if a future migration does something `create_all` can't express
+(a data migration, a non-model-derivable constraint) - low risk given
+this project's migrations have so far been straightforward column
+adds, but worth naming. Drop-and-recreate means the seed script must run
+before every E2E session, not just once ever - a minor extra step the
+alternative (upsert) would have avoided.
+
+Future Review
+
+Revisit Option B (per-spec-file fixtures) if the E2E suite grows enough
+that the six flows' shared fixture data stops being a good fit for one
+upfront seed. Revisit `create_all` vs. `alembic upgrade head` if a
+future migration ever does something the former can't reproduce
+faithfully. Move E2E into CI once the infrastructure work docs/60 §7.3
+defers is taken on as its own phase - the database/seeding strategy
+here does not need to change for that, `e2e_db.py` and
+`seed_e2e_data.py` were both written to run identically in an automated
+runner.
+
+---
+
 # Review Policy
 
 Review ADRs:

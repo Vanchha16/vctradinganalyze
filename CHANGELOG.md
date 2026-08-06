@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added - Phase 9C: Testing Foundation (ADR-134)
+
+Playwright E2E suite (`frontend/tests/e2e/`, Chromium only) covering the six flows that had only ever been walked by hand each phase: Auth (login/reload/logout/protected-redirect), Watchlists CRUD, Admin user management (list/search/Add/Edit dialogs), Admin maintenance actions (Refresh News confirm-succeed-audit), role gating (non-admin sees no Admin nav and is redirected from `/admin/*`), and a new regression guard walking Dashboard→Markets→asset detail→Watchlists→Admin asserting no `429` and no CORS console error - directly protects 9A's riskiest failure mode (rate limits set below real usage), previously checked only once by hand. `npm run test:e2e`/`test:e2e:headed`/`test:e2e:debug`/`test:e2e:report`. No arbitrary waits - web-first assertions only, with a raised global `expect` timeout to absorb `next dev`'s first-request-per-route compile cost
+
+New `backend/scripts/seed_e2e_data.py` seeds a dedicated `e2e.db` (never `dev.db`) with a known admin, a known non-admin, and deterministic EURUSD/XAUUSD candle data - idempotent (drops and recreates every table each run) and refuses to run against anything that isn't unambiguously the local `e2e.db` SQLite file (`scripts/e2e_db.py::assert_safe_e2e_target`, tested in `tests/test_seed_e2e_data_safety.py`). `run_dev.py api --e2e-db` points a manually-started backend at it. See **ADR-134** for the full database/seeding strategy and why a second database was introduced rather than reusing `dev.db`
+
+`pytest-cov` added and configured (`[tool.coverage.*]` in `pyproject.toml`, `source = ["app"]`, `__init__.py` re-exports omitted) - closes the gap BACKLOG.md §4 has tracked since Phase 2A. **Measured coverage: 93%** (`pytest --cov=app --cov-report=term`, 986 tests). No failing threshold set - measuring first, per the build spec; a gate is a follow-up decision once the number has been seen at least once
+
+CI integration is the explicit next step, deferred out of this phase (docs/60 §7) - wiring Playwright into `.github/workflows/ci.yml` needs browsers, a running backend, a served frontend, and a database in the runner, which would have doubled this phase's scope. `uv` remains unavailable in this sandbox (BACKLOG.md §4/§11) - `pytest-cov` was installed via `pip` directly into `.venv`, and `uv.lock` was **not** regenerated; needs doing in a real dev environment, same as the pre-existing `httpx`/`email-validator` gaps
+
+### Added - Phase 9A: Public Surface Protection (ADR-132)
+
+**Backfilled - no CHANGELOG entry existed for this phase until now (found during 9C).** Three commits: `3e7c9f8` (scoped Phase 9 into 9A-9D, added the Phase 9 hardening architecture doc and ADR-132), `0a347fc` (fixed `request.client.host` resolving to Nginx's own loopback address in production instead of the real client - corrupting every audit-trail `ip_address` - via uvicorn's `ProxyHeadersMiddleware`, unified behind one shared `app/core/client_ip.py::get_client_ip` helper; added per-IP rate limiting on the ten previously-unlimited public route modules, two tiers, extending `quota.py`'s existing Redis fixed-window pattern), `42b6306` (scoped CORS down to `frontend/services/api-client.ts`'s actual usage, `allow_credentials` dropped to `False`; added `SecurityHeadersMiddleware` for baseline response headers, full CSP explicitly deferred)
+
 ### Added - Phase 9B: Auth Hardening (ADR-133)
 
 `get_current_user` (`app/dependencies/auth.py`) now rejects a user whose `is_active` is `False` or whose `deleted_at` is set, reusing `InactiveAccountException` - closes the window where an admin disabling/soft-deleting a user (Phase 8C) left their already-issued access token working for up to its full remaining 15-minute lifetime. Costs nothing extra: the `User` row was already loaded on every authenticated request. Docstring and docs/37 §10 corrected to reflect the narrowed contract

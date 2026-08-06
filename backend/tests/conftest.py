@@ -18,47 +18,37 @@ test session, which:
 
 **Fix, and why it must live here specifically:** pydantic-settings'
 precedence is init args > OS environment variables > `.env` file > field
-defaults. Setting these in `os.environ` overrides `.env` without editing
-or reading that file (its secret values are never touched). But this
-only works if these `os.environ` writes happen *before* `Settings()` is
-first constructed - and pytest imports every `conftest.py` before
-collecting test modules, so module scope here is early enough, but ONLY
-because this file imports no `app.*` module above the writes below. If
-this module ever gains an `app.*` import placed before them (e.g. a
-"tidy up the imports" pass), `app.config.settings` would already be
-built from the ambient environment by the time these lines run, and this
-whole file becomes a silent no-op. Do not reorder.
-
-Values below are each field's own documented default in
-`app/config/settings.py` - not invented here - so this simply guarantees
-the test session runs with the same provider configuration CI already
-has, regardless of what a developer's local `.env` happens to contain.
-`ai_orchestrator_providers` is deliberately not overridden: unlike the
-other provider lists, it has no `"mock"` implementation
-(`app/dependencies/ai_orchestrator.py`'s `_PROVIDER_FACTORIES` maps only
-`"openai"`) - `"openai"` *is* its correct default. Blanking
-`OPENAI_API_KEY` is what actually neutralises it: `OpenAIProvider.
-generate()` raises `AIProviderConfigurationError` immediately when the
-key is empty (`openai_provider.py:72-74`), so an accidental real call
-fails loudly instead of silently reaching the live API - the same
-belt-and-braces treatment as `TWELVE_DATA_API_KEY`/`NEWS_API_KEY`/
-`ECONOMIC_API_KEY`/`TELEGRAM_BOT_TOKEN` below. Pydantic-settings expects
-list-typed fields to arrive from the environment as JSON, matching how
-`.env` itself already encodes them (e.g. `MARKET_DATA_PROVIDERS=
-["twelve_data"]`).
+defaults. `scripts/local_env.py` (the single canonical definition of
+this override set - also used by `scripts/run_dev.py`'s launchers for a
+manually-started `uvicorn`/Celery process, since this file only ever
+protected the pytest session; see BACKLOG.md §11/§16 for the two
+incidents that gap caused) sets these in `os.environ`, which overrides
+`.env` without editing or reading that file (its secret values are
+never touched). But this only works if that happens *before*
+`Settings()` is first constructed - and pytest imports every
+`conftest.py` before collecting test modules, so module scope here is
+early enough, but ONLY because this file imports no `app.*` module
+above the `apply_safe_overrides()` call below. If this module ever
+gains an `app.*` import placed before it (e.g. a "tidy up the imports"
+pass), `app.config.settings` would already be built from the ambient
+environment by the time that call runs, and this whole file becomes a
+silent no-op. Do not reorder. `scripts/local_env.py` carries the same
+constraint and the full reasoning for each overridden value (including
+why `ai_orchestrator_providers` itself is deliberately not among them) -
+read it for the detail rather than duplicating it here.
 """
 
-import os
+import sys
+from pathlib import Path
 
-os.environ["MARKET_DATA_PROVIDERS"] = '["mock"]'
-os.environ["TWELVE_DATA_API_KEY"] = ""
-os.environ["NEWS_PROVIDERS"] = '["mock"]'
-os.environ["NEWS_API_KEY"] = ""
-os.environ["ECONOMIC_CALENDAR_PROVIDERS"] = '["mock"]'
-os.environ["ECONOMIC_API_KEY"] = ""
-os.environ["TELEGRAM_PROVIDERS"] = '["mock"]'
-os.environ["TELEGRAM_BOT_TOKEN"] = ""
-os.environ["OPENAI_API_KEY"] = ""
+# `backend/scripts/` has no `__init__.py` (not a package) - added to
+# `sys.path` directly so `local_env` can be imported as a plain
+# top-level module, the same way `scripts/run_dev.py` imports it.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
+from local_env import apply_safe_overrides  # noqa: E402
+
+apply_safe_overrides()
 
 # Stdlib/third-party imports below carry no ordering constraint relative
 # to the os.environ writes above - only `app.*` imports do (see module

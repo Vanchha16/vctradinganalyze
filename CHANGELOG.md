@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed - Dev-Runtime Vendor Isolation
+
+`backend/tests/conftest.py`'s mock-provider isolation only ever covered the pytest session - a manually-started `uvicorn`, Celery worker, or Celery beat still read real `backend/.env` values, which has already caused a Twelve Data quota exhaustion and a real NewsAPI call during local development (BACKLOG.md §11/§16)
+
+`backend/scripts/local_env.py` (new) is the one canonical definition of the safe-local-config override set (every provider list forced to `["mock"]`, every real API key blanked), used by both `conftest.py` (updated to consume it instead of its own literals) and the new launchers - eliminates the drift risk of two copies
+
+`backend/scripts/run_dev.py` (new) - safe launchers for the API server (`api`), Celery worker (`worker`), and Celery beat scheduler (`beat`). Applies `local_env.py`'s overrides to a subprocess environment and hands off to the real `uvicorn`/`celery` command via `subprocess.run` - the child process does its own `app.*` imports fresh, so there's no in-process import-ordering hazard to preserve across a long-running server's own startup machinery. Prints a banner on every run showing which providers are active. Mock is the default; `--real-providers` opts in explicitly and never reads or displays `backend/.env`. The old direct commands still work unchanged - this is additive
+
+Documented in `README.md`'s "Getting Started" section (previously a "Coming soon" stub)
+
+**Found while scoping this (Item D):** `.env.example`'s `TELEGRAM_BOT_TOKEN` contained what has the structure of a real, live Telegram bot token, not a placeholder - almost certainly the token `docs/30`'s Phase 7E-D entry already describes as compromised. Replaced with a placeholder matching the file's own convention; `TELEGRAM_BOT_USERNAME` (a real, specific bot username tied to the same token) was replaced the same way. **The token itself must still be revoked by the operator via BotFather** - a placeholder in the file going forward does not invalidate a token already present in git history, and rewriting that history is explicitly out of scope for this change
+
 ### Added - Phase 7D-C: Admin Backend (ADR-130)
 
 Completes docs/58 §3.2's remaining five `/admin/*` endpoints (`GET /admin/users` and `GET /admin/logs` already shipped in Phases 8C/8F): `GET /admin/signals`, `GET /admin/system`, `GET /admin/analytics`, `POST /admin/news`, `POST /admin/maintenance`. New `AdminSystemService` (`app/services/admin_system_service.py`) mirrors `AdminUserService`'s shape; new `app/api/v1/routes/admin_system.py`, all five `require_admin`-gated. No migration, no model change

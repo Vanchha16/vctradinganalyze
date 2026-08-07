@@ -11,6 +11,10 @@ from app.models.economic_event import EconomicEvent
 from app.models.enums import EconomicEventStatus
 from app.repositories.economic_event_repository import EconomicEventRepository
 from app.services.economic_calendar.providers.base import RawEconomicEvent
+from app.services.economic_calendar.providers.exceptions import (
+    AllEconomicCalendarProvidersFailedError,
+    TransientEconomicCalendarProviderError,
+)
 from app.services.economic_calendar.providers.mock import MockEconomicCalendarProvider
 from app.services.economic_calendar_ingestion_pipeline import EconomicCalendarIngestionPipeline
 
@@ -33,6 +37,13 @@ class _StubProvider:
         events = self._sequence[min(self._call_count, len(self._sequence) - 1)]
         self._call_count += 1
         return events
+
+
+class _FailingProvider:
+    name = "failing"
+
+    def fetch_events(self, start: datetime, end: datetime) -> list[RawEconomicEvent]:
+        raise TransientEconomicCalendarProviderError("simulated outage")
 
 
 @pytest.fixture
@@ -64,12 +75,12 @@ def test_run_persists_events_from_mock_provider(session: Session) -> None:
     )
     now = datetime.now(UTC)
 
-    created, updated = pipeline.run(now - timedelta(days=7), now + timedelta(days=30))
+    result = pipeline.run(now - timedelta(days=7), now + timedelta(days=30))
 
-    assert created > 0
-    assert updated == 0  # first run, nothing pre-existing
+    assert result.created > 0
+    assert result.updated == 0  # first run, nothing pre-existing
     rows = session.execute(select(EconomicEvent)).scalars().all()
-    assert len(rows) == created
+    assert len(rows) == result.created
 
 
 def test_run_creates_scheduled_event_with_no_actual(session: Session) -> None:
@@ -78,9 +89,9 @@ def test_run_creates_scheduled_event_with_no_actual(session: Session) -> None:
         providers=[provider], event_repository=EconomicEventRepository(session)
     )
 
-    created, updated = pipeline.run(_RELEASE - timedelta(days=1), _RELEASE + timedelta(days=1))
+    result = pipeline.run(_RELEASE - timedelta(days=1), _RELEASE + timedelta(days=1))
 
-    assert (created, updated) == (1, 0)
+    assert (result.created, result.updated) == (1, 0)
     row = session.execute(select(EconomicEvent)).scalar_one()
     assert row.status == EconomicEventStatus.SCHEDULED
     assert row.actual is None
@@ -109,8 +120,8 @@ def test_run_twice_upserts_the_same_event_on_release(session: Session) -> None:
     first = pipeline.run(_RELEASE - timedelta(days=1), _RELEASE + timedelta(days=1))
     second = pipeline.run(_RELEASE - timedelta(days=1), _RELEASE + timedelta(days=1))
 
-    assert first == (1, 0)
-    assert second == (0, 1)
+    assert (first.created, first.updated) == (1, 0)
+    assert (second.created, second.updated) == (0, 1)
     rows = session.execute(select(EconomicEvent)).scalars().all()
     assert len(rows) == 1  # upserted, not duplicated
     row = rows[0]
@@ -193,22 +204,39 @@ def test_run_categorizes_and_scores_importance_on_ingestion(session: Session) ->
 
 
 def test_run_continues_when_one_provider_fails(session: Session) -> None:
-    class _FailingProvider:
-        name = "failing"
-
-        def fetch_events(self, start: datetime, end: datetime) -> list[RawEconomicEvent]:
-            from app.services.economic_calendar.providers.exceptions import (
-                TransientEconomicCalendarProviderError,
-            )
-
-            raise TransientEconomicCalendarProviderError("simulated outage")
-
     provider = _StubProvider([[_scheduled_event()]])
     pipeline = EconomicCalendarIngestionPipeline(
         providers=[_FailingProvider(), provider],
         event_repository=EconomicEventRepository(session),
     )
 
-    created, updated = pipeline.run(_RELEASE - timedelta(days=1), _RELEASE + timedelta(days=1))
+    result = pipeline.run(_RELEASE - timedelta(days=1), _RELEASE + timedelta(days=1))
 
-    assert (created, updated) == (1, 0)
+    assert (result.created, result.updated) == (1, 0)
+    outcomes_by_provider = {o.provider: o for o in result.provider_outcomes}
+    assert outcomes_by_provider["failing"].success is False
+    assert outcomes_by_provider["stub"].success is True
+
+
+# --- Phase 9G: failure distinguishability (ADR-139) ------------------------
+
+
+def test_run_raises_when_every_provider_fails(session: Session) -> None:
+    """§3/§8's regression test - a total provider failure must not look
+    like a clean, empty success."""
+    pipeline = EconomicCalendarIngestionPipeline(
+        providers=[_FailingProvider()], event_repository=EconomicEventRepository(session)
+    )
+
+    with pytest.raises(AllEconomicCalendarProvidersFailedError):
+        pipeline.run(_RELEASE - timedelta(days=1), _RELEASE + timedelta(days=1))
+
+
+def test_provider_names_and_uses_mock(session: Session) -> None:
+    pipeline = EconomicCalendarIngestionPipeline(
+        providers=[MockEconomicCalendarProvider()],
+        event_repository=EconomicEventRepository(session),
+    )
+
+    assert pipeline.provider_names == ["mock"]
+    assert pipeline.uses_mock is True

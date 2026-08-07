@@ -7567,6 +7567,166 @@ default in practice.
 
 ---
 
+# ADR-139
+
+Title
+
+Phase 9G: Ingestion Health - Distinguishing Provider Failure From
+Nothing To Ingest, and Making Mock Usage Explicit
+
+Status
+
+Accepted
+
+Context
+
+Production has zero news articles while the economic calendar is
+silently serving mock data. Both pipelines report success. The root
+cause: `NewsIngestionPipeline.run`/`EconomicCalendarIngestionPipeline.
+run` caught a provider failure, logged it at `warning`, and continued -
+returning whatever count had accumulated so far, which for a fully
+broken provider is `0`. A `0`-article run and a "nothing published
+today" run were therefore indistinguishable, both to the log stream and
+to the Celery task's return value, which reports a clean SUCCESS either
+way. Both pipelines are evidence inputs to the AI Orchestrator's signal
+context - every signal generated so far has been built on empty news
+and (for the calendar) possibly-synthetic mock events, with nothing
+surfacing that fact anywhere.
+
+The most likely concrete cause is not fixed here, by design: NewsAPI's
+free Developer plan commonly restricts requests to development/
+localhost and rejects a deployed server, which fits the symptom (a
+builder's local machine succeeded during 7D-C; production returns
+nothing) - but this is stated as the leading hypothesis, not confirmed,
+and confirming it requires an operator to run this phase's diagnostic
+(§6 below) against the real production box, which this repo cannot do
+on its own. Choosing a news vendor remains explicitly out of scope
+(ADR-050); so does activating Finnhub for the calendar (code already
+exists, `providers/economic_calendar/finnhub.py`/`finnhub_http.py`,
+Phase 7E-B - activation is configuration plus a key, not code).
+
+Decision
+
+1. **Both pipelines' `run()` now return a small result object
+   (`NewsIngestionResult`/`CalendarIngestionResult`) carrying a
+   `list[ProviderOutcome]`** (provider name, success, count, error) -
+   the three cases (provider succeeded with N, succeeded with 0,
+   failed) are now structurally distinguishable, not inferred from a
+   bare count. A provider failure now logs at **ERROR**, mirroring
+   `market_data_service.py`'s already-established `provider_call`/
+   `all_providers_failed` structured-logging shape rather than
+   inventing a new one.
+2. **If every configured provider fails, `run()` raises** -
+   `AllNewsProvidersFailedError`/`AllEconomicCalendarProvidersFailedError`,
+   both of which already existed in this codebase's exception
+   hierarchies, unused, since before this phase. Chosen over silently
+   returning a "failed" flag in the result object because both the
+   scheduled Celery task and the admin-triggered manual refresh action
+   need to *visibly* fail when this happens - a caller cannot forget to
+   check a flag it never has to see if the exception already forces
+   the issue. The scheduled task lets it propagate (Celery marks the
+   run FAILED, not a clean success with a `0` count); the admin route
+   (`AdminSystemService.refresh_news`/`refresh_calendar`) catches it
+   and re-raises as `BusinessException` (a clean `400`, not a `200`
+   with a fake zero-count body, and not an unhandled `500`). Partial
+   failure (one of several providers) is unaffected - per-provider
+   resilience is unchanged, one failing never stops the others.
+3. **Ingestion health (per-pipeline last-success timestamp and last
+   error) is stored in Redis**, not a new database table -
+   `app/services/ingestion_health.py`, following the exact
+   `record`/`get` shape `app/dependencies/rate_limit.py`/`quota.py`
+   already established for small counters, not a new pattern. No
+   migration needed. Both write paths (the Celery task and the
+   admin-triggered refresh for each pipeline) call the same `record_
+   success`/`record_failure` functions, so either path updates the same
+   health record read by `GET /admin/system`. The read side
+   (`get_health`) is fail-open by design and by test - a Redis outage
+   renders as `None` timestamp/error fields, never a `500`, the same
+   rule ADR-130 already set for that endpoint's DB/Redis liveness
+   checks.
+4. **`GET /admin/system` gains `news`/`economic_calendar` fields**
+   (`IngestionHealthResponse`: `providers`, `uses_mock`,
+   `last_success_at`, `last_error`) - extending the existing endpoint
+   (ADR-116/130), not a new one. `provider_names`/`uses_mock` are
+   computed fresh from each pipeline's live provider list at request
+   time (a new `provider_names`/`uses_mock` property on each pipeline
+   class), never cached in Redis - only the last-run outcome needs
+   persisting across requests.
+5. **No automatic fallback to mock when a real provider fails, and
+   none existed already** - verified by reading `app/dependencies/
+   news.py`/`economic_calendar.py`: each provider factory either builds
+   exactly what is configured or raises a configuration error; neither
+   module has ever had a fallback path. This phase adds explicit
+   **startup logging** instead (`ingestion_health.log_active_providers`,
+   called from both FastAPI's `lifespan` and the Celery worker's
+   `worker_ready` signal) - which provider(s) are active and whether
+   either is a mock, printed once at boot rather than discovered later
+   by an operator staring at empty production data.
+6. **Operator diagnostic script**, `backend/scripts/
+   diagnose_ingestion.py` - read-only, reports configured providers,
+   whether each required API key is *present* (boolean only, never the
+   value), the result of exactly one real fetch attempt per provider
+   (with the full error on failure), and current stored counts/newest
+   timestamp. Prints an explicit warning before contacting any
+   non-mock provider. Manual-only: never scheduled, never imported by a
+   test, following `seed_e2e_data.py`'s safety-first script
+   conventions without needing that script's `assert_safe_e2e_target`
+   equivalent (this script never writes anything).
+
+Reason
+
+The core defect was a missing distinction, not a missing feature: the
+pipelines always had the *information* to tell "no news today" apart
+from "the provider is broken" (an exception versus an empty list), it
+was simply discarded at the `except` block. Every decision above exists
+to preserve that distinction all the way to where an operator would
+actually look (`GET /admin/system`, worker logs, Celery's own run
+status) rather than re-deriving it. Reusing the Redis pattern already
+established by `rate_limit.py`/`quota.py`, and the exception hierarchy
+already present but unused, kept this phase additive rather than
+introducing a second way to do either thing.
+
+Trade-offs
+
+Pros
+
+A provider failure is now impossible to miss from three independent
+angles (ERROR log, Celery run status, `GET /admin/system`) without
+adding any new infrastructure dependency - Redis was already required.
+Per-provider resilience and the pipelines' core ingestion logic
+(dedup, upsert-by-natural-key, classification) are completely
+unchanged - this phase only changes what happens around a failure, not
+how a success is processed. The diagnostic script gives the operator a
+safe, single-call-per-provider way to test production's actual network/
+auth path without guessing.
+
+Cons
+
+Ingestion health is only as durable as Redis's own persistence policy -
+a Redis flush loses "last success"/"last error" history (not the
+underlying data, which lives in Postgres/SQLite as before). Two
+call sites per pipeline (Celery task and admin refresh) each call `record_
+success`/`record_failure` rather than one single enforced choke point -
+a future third caller of `pipeline.run()` must remember to do the same,
+or its outcome won't be reflected in `GET /admin/system`. The root
+cause of production's actual empty news pipeline is still unconfirmed -
+this phase gives the operator the tool to find out, it does not itself
+diagnose or fix the vendor-side problem.
+
+Future Review
+
+Revisit once the operator has run `diagnose_ingestion.py` against
+production and confirmed (or ruled out) the NewsAPI free-tier
+deployed-server restriction - that result determines whether ADR-050's
+vendor decision needs revisiting at all, or whether the fix is as simple
+as a paid tier/allow-listing the production IP. Revisit Finnhub
+activation for the calendar once a real `ECONOMIC_API_KEY` decision is
+made (code is ready; §6 above states this is config-only). Revisit
+whether ingestion health durability across a Redis flush ever matters
+enough to warrant a lightweight persisted fallback - not needed today.
+
+---
+
 # Review Policy
 
 Review ADRs:

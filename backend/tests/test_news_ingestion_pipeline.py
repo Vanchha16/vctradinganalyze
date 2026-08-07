@@ -16,6 +16,11 @@ from app.repositories.asset_repository import AssetRepository
 from app.repositories.news_article_repository import NewsArticleRepository
 from app.repositories.news_sentiment_repository import NewsSentimentRepository
 from app.repositories.news_source_repository import NewsSourceRepository
+from app.services.news.providers.base import NewsProvider, NewsProviderCapabilities, RawNewsArticle
+from app.services.news.providers.exceptions import (
+    AllNewsProvidersFailedError,
+    TransientNewsProviderError,
+)
 from app.services.news.providers.mock import MockNewsProvider
 from app.services.news_ingestion_pipeline import NewsIngestionPipeline
 from app.services.news_sentiment.ai_summary_generator import AISummaryGenerator
@@ -36,6 +41,22 @@ def _no_openai_key(monkeypatch: pytest.MonkeyPatch) -> None:
     # AI summary generation is exercised separately (test_news_ai_summary_generator.py);
     # here it must degrade gracefully to None so pipeline tests never hit a real API.
     monkeypatch.setattr(settings, "openai_api_key", "")
+
+
+_CAPABILITIES = NewsProviderCapabilities(supported_languages=frozenset({"en"}))
+
+
+class _FailingProvider:
+    name = "failing"
+
+    def fetch_latest(self, since: datetime) -> list[RawNewsArticle]:
+        raise TransientNewsProviderError("simulated outage")
+
+    def health_check(self) -> bool:
+        return False
+
+    def capabilities(self) -> NewsProviderCapabilities:
+        return _CAPABILITIES
 
 
 def _seed_assets(session: Session) -> None:
@@ -67,9 +88,11 @@ def _seed_assets(session: Session) -> None:
     session.commit()
 
 
-def _make_pipeline(session: Session) -> NewsIngestionPipeline:
+def _make_pipeline(
+    session: Session, providers: list[NewsProvider] | None = None
+) -> NewsIngestionPipeline:
     return NewsIngestionPipeline(
-        providers=[MockNewsProvider()],
+        providers=providers if providers is not None else [MockNewsProvider()],
         source_repository=NewsSourceRepository(session),
         article_repository=NewsArticleRepository(session),
         sentiment_repository=NewsSentimentRepository(session),
@@ -83,13 +106,16 @@ def test_run_persists_articles_and_sentiment(session: Session) -> None:
     pipeline = _make_pipeline(session)
     since = datetime(2026, 1, 1, tzinfo=UTC)
 
-    ingested = pipeline.run(since)
+    result = pipeline.run(since)
 
-    assert ingested >= 3
+    assert result.ingested >= 3
+    assert len(result.provider_outcomes) == 1
+    assert result.provider_outcomes[0].provider == "mock"
+    assert result.provider_outcomes[0].success is True
     articles = session.execute(select(NewsArticle)).scalars().all()
     sentiments = session.execute(select(NewsSentiment)).scalars().all()
-    assert len(articles) == ingested
-    assert len(sentiments) == ingested
+    assert len(articles) == result.ingested
+    assert len(sentiments) == result.ingested
     for sentiment in sentiments:
         assert sentiment.ai_summary is None  # no OpenAI key configured in this test
 
@@ -109,14 +135,14 @@ def test_run_twice_with_same_window_does_not_duplicate(session: Session) -> None
     since = datetime(2026, 1, 1, tzinfo=UTC)
 
     first_pipeline = _make_pipeline(session)
-    first_count = first_pipeline.run(since)
+    first_result = first_pipeline.run(since)
 
     second_pipeline = _make_pipeline(session)
-    second_count = second_pipeline.run(since)
+    second_result = second_pipeline.run(since)
 
-    assert second_count == 0  # MockNewsProvider is deterministic for a given `since`
+    assert second_result.ingested == 0  # MockNewsProvider is deterministic for a given `since`
     articles = session.execute(select(NewsArticle)).scalars().all()
-    assert len(articles) == first_count
+    assert len(articles) == first_result.ingested
 
 
 def test_run_detects_affected_assets(session: Session) -> None:
@@ -127,3 +153,41 @@ def test_run_detects_affected_assets(session: Session) -> None:
 
     sentiments = session.execute(select(NewsSentiment)).scalars().all()
     assert any(sentiment.affected_assets for sentiment in sentiments)
+
+
+# --- Phase 9G: failure distinguishability (ADR-139) ------------------------
+
+
+def test_run_raises_when_every_provider_fails(session: Session) -> None:
+    """§3/§8's regression test for the actual production defect - a
+    total provider failure must not look like a clean, empty success."""
+    pipeline = _make_pipeline(session, providers=[_FailingProvider()])
+
+    with pytest.raises(AllNewsProvidersFailedError):
+        pipeline.run(datetime(2026, 1, 1, tzinfo=UTC))
+
+
+def test_run_one_of_two_providers_failing_still_ingests_from_the_other(session: Session) -> None:
+    _seed_assets(session)
+    pipeline = _make_pipeline(session, providers=[_FailingProvider(), MockNewsProvider()])
+
+    result = pipeline.run(datetime(2026, 1, 1, tzinfo=UTC))
+
+    assert result.ingested > 0
+    outcomes_by_provider = {o.provider: o for o in result.provider_outcomes}
+    assert outcomes_by_provider["failing"].success is False
+    assert outcomes_by_provider["mock"].success is True
+
+
+def test_provider_names_and_uses_mock() -> None:
+    pipeline = NewsIngestionPipeline(
+        providers=[MockNewsProvider()],
+        source_repository=None,  # type: ignore[arg-type]
+        article_repository=None,  # type: ignore[arg-type]
+        sentiment_repository=None,  # type: ignore[arg-type]
+        asset_repository=None,  # type: ignore[arg-type]
+        ai_summary_generator=None,  # type: ignore[arg-type]
+    )
+
+    assert pipeline.provider_names == ["mock"]
+    assert pipeline.uses_mock is True

@@ -273,6 +273,82 @@ def test_admin_system_status_degrades_gracefully_when_redis_is_unreachable(
     assert response.json()["database"] == "ok"
 
 
+# --- Phase 9G: ingestion health (ADR-139) ----------------------------------
+
+
+def test_admin_system_status_reports_ingestion_health(client: TestClient, engine) -> None:
+    admin = _make_user(engine, email="admin@example.com", username="admin", role=UserRole.ADMIN)
+    _act_as(client, admin)
+
+    response = client.get("/api/v1/admin/system")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["news"]["providers"] == ["mock"]
+    assert body["news"]["uses_mock"] is True
+    assert body["economic_calendar"]["providers"] == ["mock"]
+    assert body["economic_calendar"]["uses_mock"] is True
+
+
+def test_admin_system_status_ingestion_health_fails_open_when_redis_lookup_errors(
+    client: TestClient, engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§4's fail-open rule for the ingestion-health lookup specifically -
+    must still return 200 with the rest of the payload intact."""
+    admin = _make_user(engine, email="admin@example.com", username="admin", role=UserRole.ADMIN)
+    _act_as(client, admin)
+
+    def _raise(*args: object, **kwargs: object) -> None:
+        raise ConnectionError("simulated redis outage")
+
+    monkeypatch.setattr("app.services.ingestion_health._redis_client.get", _raise)
+
+    response = client.get("/api/v1/admin/system")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["news"]["last_success_at"] is None
+    assert body["news"]["last_error"] is None
+    assert body["news"]["providers"] == ["mock"]  # provider info is unaffected, not Redis-sourced
+
+
+def test_refresh_news_records_success_visible_in_system_status(
+    client: TestClient, engine
+) -> None:
+    admin = _make_user(engine, email="admin@example.com", username="admin", role=UserRole.ADMIN)
+    _act_as(client, admin)
+
+    client.post("/api/v1/admin/news")
+    response = client.get("/api/v1/admin/system")
+
+    assert response.json()["news"]["last_success_at"] is not None
+    assert response.json()["news"]["last_error"] is None
+
+
+def test_refresh_news_all_providers_failing_returns_clean_error_not_a_fake_success(
+    client: TestClient, engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§8: an admin-triggered refresh that completely fails must be
+    visibly an error, not a `200` with a fake zero count."""
+    admin = _make_user(engine, email="admin@example.com", username="admin", role=UserRole.ADMIN)
+    _act_as(client, admin)
+
+    from app.services.news.providers.exceptions import TransientNewsProviderError
+
+    def _raise(self: object, since: object) -> None:
+        raise TransientNewsProviderError("simulated outage")
+
+    monkeypatch.setattr("app.services.news.providers.mock.MockNewsProvider.fetch_latest", _raise)
+
+    response = client.post("/api/v1/admin/news")
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "business_error"
+
+    status_response = client.get("/api/v1/admin/system")
+    assert status_response.json()["news"]["last_error"] is not None
+
+
 # --- GET /admin/analytics --------------------------------------------------
 
 

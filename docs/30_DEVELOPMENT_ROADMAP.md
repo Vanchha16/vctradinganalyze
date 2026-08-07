@@ -363,6 +363,20 @@ scoping, and reasoning behind each.
   (cascading history); every mutation audited (ADR-138). New Admin
   Assets page reusing existing table/filter-bar/dialog components, no
   new UI primitives.
+- **9G Ingestion Health** - **complete.** Fixed a live production
+  defect: News/Economic Calendar provider failures only ever logged a
+  `warning` and returned an empty result, indistinguishable from
+  "nothing to ingest" - production ran with zero news articles and a
+  silently-mocked calendar with nothing surfacing either. Both
+  pipelines now return a per-provider result object and raise
+  (`AllNewsProvidersFailedError`/`AllEconomicCalendarProvidersFailedError`,
+  both pre-existing but previously unraised) if every provider fails -
+  Celery reports FAILED, not a clean success. `GET /admin/system` gains
+  per-pipeline provider name(s), mock-usage flag, last success, and
+  last error (Redis-backed, fail-open, no migration). Startup logging
+  makes mock usage explicit; a new manual `diagnose_ingestion.py`
+  script lets the operator test the real production network/auth path
+  with exactly one call per provider (ADR-139).
 
 ---
 

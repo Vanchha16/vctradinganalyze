@@ -1,13 +1,43 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class IngestionHealthResponse(BaseModel):
+    """Phase 9G (ADR-139) - per-pipeline ingestion health, added to `GET
+    /admin/system` after production ran with an empty news pipeline and
+    a silently-mocked economic calendar with nothing surfacing either.
+    `last_success_at`/`last_error` are read from Redis (fail-open, never
+    the reason this endpoint 500s) - `None` means "never recorded in
+    this Redis instance" (e.g. right after a fresh deploy), not
+    necessarily "never succeeded"."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "providers": ["mock"],
+                "uses_mock": True,
+                "last_success_at": "2026-08-07T09:00:00Z",
+                "last_error": None,
+            }
+        }
+    )
+
+    providers: list[str]
+    uses_mock: bool
+    last_success_at: datetime | None
+    last_error: str | None
+
+
 class AdminSystemStatusResponse(BaseModel):
-    """`GET /admin/system` (docs/58 §3.2, ADR-116, ADR-130) - liveness of
-    DB/Redis plus today's activity counts, not telemetry. `database`/
-    `redis` are `"ok"`/`"down"`, never an exception - a dependency being
-    unreachable must render as `"down"` in a 200 response, not a 500."""
+    """`GET /admin/system` (docs/58 §3.2, ADR-116, ADR-130, ADR-139) -
+    liveness of DB/Redis plus today's activity counts, not telemetry.
+    `database`/`redis` are `"ok"`/`"down"`, never an exception - a
+    dependency being unreachable must render as `"down"` in a 200
+    response, not a 500. `news`/`economic_calendar` are similarly
+    fail-open (ADR-139) - a Redis outage renders as `None` fields, never
+    a 500."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -16,6 +46,18 @@ class AdminSystemStatusResponse(BaseModel):
                 "redis": "ok",
                 "signals_today": 4,
                 "ai_analyses_today": 9,
+                "news": {
+                    "providers": ["mock"],
+                    "uses_mock": True,
+                    "last_success_at": "2026-08-07T09:00:00Z",
+                    "last_error": None,
+                },
+                "economic_calendar": {
+                    "providers": ["mock"],
+                    "uses_mock": True,
+                    "last_success_at": "2026-08-07T09:00:00Z",
+                    "last_error": None,
+                },
             }
         }
     )
@@ -24,6 +66,8 @@ class AdminSystemStatusResponse(BaseModel):
     redis: Literal["ok", "down"]
     signals_today: int
     ai_analyses_today: int
+    news: IngestionHealthResponse
+    economic_calendar: IngestionHealthResponse
 
 
 class AdminAnalyticsResponse(BaseModel):

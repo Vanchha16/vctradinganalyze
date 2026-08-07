@@ -163,6 +163,8 @@ class NewsProvider(Protocol):
 
 `MockNewsProvider` (`app/services/news/providers/mock.py`) is the **only** implementation shipped in Phase 5A - a sha256-seeded deterministic generator (mirroring `MockMarketDataProvider`) that never fails and produces plausible articles spanning categories/sources/importance levels for engine and API testing. No real vendor (NewsAPI, Benzinga, etc.) is integrated in this phase - explicitly deferred to a follow-up sub-phase once a vendor is chosen and provisioned (ADR-050).
 
+**Update (Phase 9G, ADR-139):** `NewsIngestionPipeline.run()` no longer returns a bare `int` - it returns `NewsIngestionResult` (`ingested: int`, `provider_outcomes: list[ProviderOutcome]`), and raises `AllNewsProvidersFailedError` if every configured provider failed, rather than silently returning `0`. Production ran with an empty news pipeline for a real stretch of time because a provider failure only ever logged a `warning` and returned that same `0` - indistinguishable from "nothing published today." A provider failure now logs at `ERROR` (`news_ingestion.provider_call`, mirroring `market_data_service.py`'s structured-logging shape). `Pipeline.provider_names`/`.uses_mock` are new read-only properties, surfaced in `GET /admin/system` (docs/58 §3.2) so mock usage is never silently discovered later. `backend/scripts/diagnose_ingestion.py` is a new manual, read-only operator tool for confirming (or ruling out) the real vendor-side cause in production - see ADR-139 for the full design.
+
 ---
 
 # 9. AI Summary (ADR-051)

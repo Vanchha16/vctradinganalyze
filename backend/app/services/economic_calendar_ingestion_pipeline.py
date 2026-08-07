@@ -8,11 +8,22 @@ Fetch a bounded `[now - lookback, now + lookahead]` window -> classify
 (ADR-058) - the key divergence from News's insert-skip-on-duplicate
 pattern, since the same economic event is re-fetched repeatedly as it
 moves SCHEDULED -> RELEASED -> (rarely) REVISED.
+
+**Phase 9G (ADR-139):** `run()` used to return a bare `(created,
+updated)` tuple and log a provider failure at `warning` - the mirror-
+image problem to News: this pipeline *does* produce data, but
+`GET /calendar` could be silently serving synthetic mock events with
+nothing indicating the configured provider is a mock. `run()` now
+returns `CalendarIngestionResult` (per-provider outcomes) and raises
+`AllEconomicCalendarProvidersFailedError` if every configured provider
+failed - callers must not treat that as a clean success.
 """
 
-import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+
+import structlog
 
 from app.models.economic_event import EconomicEvent
 from app.models.enums import EconomicEventCategory, EconomicEventImportance, EconomicEventStatus
@@ -23,9 +34,20 @@ from app.services.economic_calendar import (
     surprise_calculator,
 )
 from app.services.economic_calendar.providers.base import EconomicCalendarProvider, RawEconomicEvent
-from app.services.economic_calendar.providers.exceptions import EconomicCalendarProviderError
+from app.services.economic_calendar.providers.exceptions import (
+    AllEconomicCalendarProvidersFailedError,
+    EconomicCalendarProviderError,
+)
+from app.services.ingestion_health import ProviderOutcome
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class CalendarIngestionResult:
+    created: int
+    updated: int
+    provider_outcomes: list[ProviderOutcome]
 
 
 class EconomicCalendarIngestionPipeline:
@@ -38,18 +60,48 @@ class EconomicCalendarIngestionPipeline:
         self._providers = providers
         self._event_repository = event_repository
 
-    def run(self, start: datetime, end: datetime) -> tuple[int, int]:
-        """Ingests events with `release_time` in `[start, end]`. Returns
-        `(created_count, updated_count)`."""
+    @property
+    def provider_names(self) -> list[str]:
+        return [p.name for p in self._providers]
+
+    @property
+    def uses_mock(self) -> bool:
+        return any(p.name == "mock" for p in self._providers)
+
+    def run(self, start: datetime, end: datetime) -> CalendarIngestionResult:
+        """Ingests events with `release_time` in `[start, end]`. Raises
+        `AllEconomicCalendarProvidersFailedError` if every configured
+        provider failed - a genuinely empty result (every provider
+        succeeded but returned nothing) is never conflated with that.
+        Per-provider resilience is unchanged."""
         created = 0
         updated = 0
+        provider_outcomes: list[ProviderOutcome] = []
 
         for provider in self._providers:
             try:
                 raw_events = provider.fetch_events(start, end)
             except EconomicCalendarProviderError as exc:
-                logger.warning("Economic calendar provider %s failed: %s", provider.name, exc)
+                logger.error(
+                    "calendar_ingestion.provider_call",
+                    provider=provider.name,
+                    outcome="error",
+                    error=str(exc),
+                )
+                provider_outcomes.append(
+                    ProviderOutcome(provider=provider.name, success=False, error=str(exc))
+                )
                 continue
+
+            logger.info(
+                "calendar_ingestion.provider_call",
+                provider=provider.name,
+                outcome="success",
+                event_count=len(raw_events),
+            )
+            provider_outcomes.append(
+                ProviderOutcome(provider=provider.name, success=True, count=len(raw_events))
+            )
 
             for raw_event in raw_events:
                 was_created = self._upsert(raw_event)
@@ -59,7 +111,17 @@ class EconomicCalendarIngestionPipeline:
                     updated += 1
 
         self._event_repository.commit()
-        return created, updated
+
+        if provider_outcomes and all(not o.success for o in provider_outcomes):
+            failures = "; ".join(f"{o.provider}: {o.error}" for o in provider_outcomes)
+            logger.error("calendar_ingestion.all_providers_failed", error=failures)
+            raise AllEconomicCalendarProvidersFailedError(
+                f"Every configured economic calendar provider failed: {failures}"
+            )
+
+        return CalendarIngestionResult(
+            created=created, updated=updated, provider_outcomes=provider_outcomes
+        )
 
     def _upsert(self, raw_event: RawEconomicEvent) -> bool:
         """Returns True if a new row was created, False if an existing

@@ -165,6 +165,8 @@ class EconomicCalendarProvider(Protocol):
 
 Exception hierarchy (`app/services/economic_calendar/providers/exceptions.py`) mirrors News's exactly: `EconomicCalendarProviderError` base, `TransientEconomicCalendarProviderError` / `PermanentEconomicCalendarProviderError` / `EconomicCalendarProviderConfigurationError` / `AllEconomicCalendarProvidersFailedError`.
 
+**Update (Phase 9G, ADR-139):** `AllEconomicCalendarProvidersFailedError` above existed in this hierarchy since Phase 5B but was never raised anywhere until this phase - `EconomicCalendarIngestionPipeline.run()` now raises it if every configured provider fails, and returns `CalendarIngestionResult` (`created`, `updated`, `provider_outcomes: list[ProviderOutcome]`) instead of a bare `(created, updated)` tuple otherwise. This closes the mirror-image problem to News's defect: the calendar *does* produce data even when misconfigured (mock is never-failing by design), so the risk here was `GET /calendar` silently serving synthetic events with nothing indicating the configured provider is a mock - now surfaced via `Pipeline.provider_names`/`.uses_mock` in `GET /admin/system` (docs/58 §3.2). Finnhub activation (`providers/finnhub.py`/`finnhub_http.py`, Phase 7E-B) remains configuration-only, unchanged by this phase - see ADR-139 for exactly what the operator needs to set.
+
 ---
 
 # 9. Not Timeframe-Scoped

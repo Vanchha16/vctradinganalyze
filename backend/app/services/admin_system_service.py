@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.exceptions import BusinessException
 from app.models.audit_log import AuditLog
 from app.models.enums import SignalStatus
 from app.models.signal import Signal
@@ -15,11 +16,20 @@ from app.repositories.ai_analysis_repository import AIAnalysisRepository
 from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.signal_repository import SignalRepository
 from app.repositories.user_session_repository import UserSessionRepository
-from app.schemas.admin_system import AdminAnalyticsResponse, AdminSystemStatusResponse
+from app.schemas.admin_system import (
+    AdminAnalyticsResponse,
+    AdminSystemStatusResponse,
+    IngestionHealthResponse,
+)
+from app.services.economic_calendar.providers.exceptions import (
+    AllEconomicCalendarProvidersFailedError,
+)
 from app.services.economic_calendar_ingestion_pipeline import (
     EconomicCalendarIngestionPipeline,
     default_window,
 )
+from app.services.ingestion_health import get_health, record_failure, record_success
+from app.services.news.providers.exceptions import AllNewsProvidersFailedError
 from app.services.news_ingestion_pipeline import NewsIngestionPipeline, default_since
 
 
@@ -99,11 +109,35 @@ class AdminSystemService:
             redis_status = "down"
 
         since_midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        news_health = get_health(
+            "news",
+            providers=self._news_pipeline.provider_names,
+            uses_mock=self._news_pipeline.uses_mock,
+        )
+        calendar_health = get_health(
+            "economic_calendar",
+            providers=self._calendar_pipeline.provider_names,
+            uses_mock=self._calendar_pipeline.uses_mock,
+        )
+
         return AdminSystemStatusResponse(
             database=database_status,
             redis=redis_status,
             signals_today=self._signal_repository.count_since(since_midnight),
             ai_analyses_today=self._ai_analysis_repository.count_since(since_midnight),
+            news=IngestionHealthResponse(
+                providers=news_health.providers,
+                uses_mock=news_health.uses_mock,
+                last_success_at=news_health.last_success_at,
+                last_error=news_health.last_error,
+            ),
+            economic_calendar=IngestionHealthResponse(
+                providers=calendar_health.providers,
+                uses_mock=calendar_health.uses_mock,
+                last_success_at=calendar_health.last_success_at,
+                last_error=calendar_health.last_error,
+            ),
         )
 
     def get_analytics(self) -> AdminAnalyticsResponse:
@@ -130,39 +164,58 @@ class AdminSystemService:
         exact same `NewsIngestionPipeline` the `news_sentiment.ingest`
         Celery task uses (docs/58 §3.2), just admin-invoked. Runs inline
         (blocking) per docs/58's approved spec - see ADR-130 for the
-        synchronous-ingestion tradeoff this accepts."""
+        synchronous-ingestion tradeoff this accepts.
+
+        Phase 9G (ADR-139): if every configured provider failed, this
+        raises `BusinessException` rather than returning a fake "0
+        articles" success - an admin-triggered refresh that completely
+        failed must be visibly an error, the same rule the scheduled
+        Celery task now follows."""
         since = default_since(settings.news_lookback_hours)
-        articles_ingested = self._news_pipeline.run(since)
+        try:
+            result = self._news_pipeline.run(since)
+        except AllNewsProvidersFailedError as exc:
+            record_failure("news", str(exc))
+            raise BusinessException(str(exc)) from exc
+        record_success("news")
 
         self._audit(
             actor.id,
             action="admin_news_refreshed",
             resource="news_articles",
             ip_address=ip_address,
-            context={"articles_ingested": articles_ingested},
+            context={"articles_ingested": result.ingested},
         )
         self._commit()
-        return articles_ingested
+        return result.ingested
 
     def refresh_calendar(self, actor: User, *, ip_address: str | None = None) -> tuple[int, int]:
         """Shared implementation for
         `POST /admin/maintenance {"action": "refresh_calendar"}` - calls
         the exact same `EconomicCalendarIngestionPipeline` the
-        `economic_calendar.ingest` Celery task uses."""
+        `economic_calendar.ingest` Celery task uses.
+
+        Phase 9G (ADR-139): same all-providers-failed handling as
+        `refresh_news` above."""
         start, end = default_window(
             settings.economic_calendar_lookback_days, settings.economic_calendar_lookahead_days
         )
-        created, updated = self._calendar_pipeline.run(start, end)
+        try:
+            result = self._calendar_pipeline.run(start, end)
+        except AllEconomicCalendarProvidersFailedError as exc:
+            record_failure("economic_calendar", str(exc))
+            raise BusinessException(str(exc)) from exc
+        record_success("economic_calendar")
 
         self._audit(
             actor.id,
             action="admin_calendar_refreshed",
             resource="economic_events",
             ip_address=ip_address,
-            context={"events_created": created, "events_updated": updated},
+            context={"events_created": result.created, "events_updated": result.updated},
         )
         self._commit()
-        return created, updated
+        return result.created, result.updated
 
     # --- Internal helpers --------------------------------------------------
 

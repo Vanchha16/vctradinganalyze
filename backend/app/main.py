@@ -9,11 +9,15 @@ from app.config import settings
 from app.core.logging import configure_logging
 from app.exceptions import register_exception_handlers
 from app.middleware import CorrelationIdMiddleware, MetricsMiddleware, SecurityHeadersMiddleware
+from app.services.ingestion_health import log_active_providers
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     configure_logging(settings.log_level)
+    # Phase 9G (ADR-139) - mock provider usage must never be silently
+    # discovered later; log it once at startup.
+    log_active_providers()
     yield
 
 

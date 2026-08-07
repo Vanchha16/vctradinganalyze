@@ -65,6 +65,14 @@ class Settings(BaseSettings):
 
     signal_ttl_hours: int = 24
 
+    # Phase 9E (ADR-137) - separate TTL for an already-`TRIGGERED` (live)
+    # signal, distinct from `signal_ttl_hours` (pending-order TTL). A live
+    # trade left open indefinitely would never close and would permanently
+    # block ADR-125's dedup gate for that asset. Hand-picked starting point
+    # (7 days) - not empirically calibrated, same caveat as every other
+    # threshold constant in this project.
+    signal_triggered_ttl_hours: int = 168
+
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""
     telegram_base_url: str = "https://api.telegram.org"

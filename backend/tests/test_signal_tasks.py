@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.config import settings
 from app.database.base import Base
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
@@ -109,6 +110,36 @@ def test_has_open_signal_false_for_closed_signal(
 ) -> None:
     with session_factory() as session:
         asset = _seed_signal(session, status=SignalStatus.SUCCESSFUL)
+        assert _has_open_signal(SignalRepository(session), asset.id, datetime.now(UTC)) is False
+
+
+def test_has_open_signal_true_for_triggered_signal(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """ADR-137: a TRIGGERED signal is a live trade, more open than a
+    pending ACTIVE one - it must also block regeneration."""
+    with session_factory() as session:
+        asset = _seed_signal(session, status=SignalStatus.TRIGGERED)
+        signal = session.query(Signal).filter(Signal.asset_id == asset.id).one()
+        signal.triggered_at = datetime.now(UTC)
+        session.commit()
+        assert _has_open_signal(SignalRepository(session), asset.id, datetime.now(UTC)) is True
+
+
+def test_has_open_signal_false_once_triggered_ttl_elapsed(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Once a TRIGGERED signal is effectively CLOSED by
+    `signal_triggered_ttl_hours` (ADR-137 §3.4), it must stop blocking
+    regeneration for that asset."""
+    stale_triggered_at = datetime.now(UTC) - timedelta(
+        hours=settings.signal_triggered_ttl_hours + 1
+    )
+    with session_factory() as session:
+        asset = _seed_signal(session, status=SignalStatus.TRIGGERED)
+        signal = session.query(Signal).filter(Signal.asset_id == asset.id).one()
+        signal.triggered_at = stale_triggered_at
+        session.commit()
         assert _has_open_signal(SignalRepository(session), asset.id, datetime.now(UTC)) is False
 
 

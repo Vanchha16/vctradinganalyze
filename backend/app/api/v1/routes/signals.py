@@ -38,7 +38,7 @@ _BookmarkRepo = Annotated[SignalBookmarkRepository, Depends(get_signal_bookmark_
 
 def _signal_to_response(signal: Signal, symbol: str) -> SignalResponse:
     effective_status = status_resolver.effective_status(
-        signal.status, signal.created_at, datetime.now(UTC)
+        signal.status, signal.created_at, datetime.now(UTC), triggered_at=signal.triggered_at
     )
     return SignalResponse(
         id=signal.id,

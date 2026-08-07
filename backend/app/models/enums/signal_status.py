@@ -2,12 +2,13 @@ from enum import StrEnum
 
 
 class SignalStatus(StrEnum):
-    """docs/11_SIGNAL_ENGINE.md §18, docs/51 §4 (ADR-088). Phase 6B only
-    ever writes ACTIVE and only ever computes EXPIRED (read-time only,
-    via `app.services.signal.status_resolver`, never persisted). The
-    remaining five states are reserved for a future phase that builds
-    live price-monitoring / trigger detection / outcome tracking - not
-    reachable through any Phase 6B code path.
+    """docs/11_SIGNAL_ENGINE.md §18, docs/51 §4 (ADR-088, extended by
+    ADR-137). Phase 6B only ever wrote ACTIVE and only ever computed
+    EXPIRED (read-time only). Phase 9E's monitoring task
+    (`workers/signal_monitoring_tasks.py`) now also writes TRIGGERED,
+    SUCCESSFUL, and STOPPED_OUT, and computes CLOSED read-time-only
+    (same treatment as EXPIRED, via `status_resolver.effective_status`).
+    DRAFT and CANCELLED remain unreachable through any current code path.
     """
 
     DRAFT = "draft"

@@ -9,7 +9,7 @@ from decimal import Decimal
 from app.models.enums import SignalStatus, SignalType, Timeframe
 from app.models.price_candle import PriceCandle
 from app.models.signal import Signal
-from app.services.signal_monitoring_service import evaluate_signal_outcome
+from app.services.signal_monitoring_service import entry_touched, evaluate_signal_outcome
 
 _TIMESTAMP = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
 
@@ -126,3 +126,26 @@ def test_sell_both_levels_touched_stop_loss_takes_precedence() -> None:
 
     assert outcome is not None
     assert outcome.status == SignalStatus.STOPPED_OUT
+
+
+def test_entry_touched_true_when_candle_range_covers_entry() -> None:
+    signal = _make_signal(signal_type=SignalType.BUY)
+    candle = _make_candle(high="102", low="99")
+
+    assert entry_touched(signal, candle) is True
+
+
+def test_entry_touched_false_when_candle_range_never_reaches_entry() -> None:
+    """The production-defect reproduction shape: entry (100) is above the
+    entire candle range - price never traded there."""
+    signal = _make_signal(signal_type=SignalType.BUY)
+    candle = _make_candle(high="99", low="94")
+
+    assert entry_touched(signal, candle) is False
+
+
+def test_entry_touched_true_at_exact_boundary() -> None:
+    signal = _make_signal(signal_type=SignalType.BUY)
+    candle = _make_candle(high="100", low="98")
+
+    assert entry_touched(signal, candle) is True

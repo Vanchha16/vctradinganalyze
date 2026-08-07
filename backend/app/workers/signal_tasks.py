@@ -40,20 +40,40 @@ _SIGNAL_GENERATION_INTERVAL_SECONDS = 3600.0
 def _has_open_signal(
     signal_repository: SignalRepository, asset_id: uuid.UUID, now: datetime
 ) -> bool:
-    """True if this asset already has a BUY/SELL call on `_TIMEFRAME` that
-    hasn't expired yet (ADR-088's `effective_status`, same check
-    `signal_monitoring_tasks.py` uses) - the hourly job's confirmation
-    gate: don't re-signal an asset that already has an open, unresolved
-    call outstanding."""
-    stored = signal_repository.find_paginated(
+    """True if this asset already has a BUY/SELL call on `_TIMEFRAME`
+    that hasn't expired/closed yet (ADR-088/ADR-137's `effective_status`,
+    same check `signal_monitoring_tasks.py` uses) - the hourly job's
+    confirmation gate: don't re-signal an asset that already has an
+    open, unresolved call outstanding.
+
+    ADR-137: a `TRIGGERED` signal is a *live trade*, more open than a
+    pending `ACTIVE` one - it must also block regeneration, or the new
+    state would silently reopen ADR-125's dedup gate the moment a
+    pending order fills."""
+    active = signal_repository.find_paginated(
         asset_id=asset_id,
         timeframe=_TIMEFRAME,
         status=SignalStatus.ACTIVE,
         limit=1,
     )
-    return any(
+    if any(
         effective_status(signal.status, signal.created_at, now) == SignalStatus.ACTIVE
-        for signal in stored
+        for signal in active
+    ):
+        return True
+
+    triggered = signal_repository.find_paginated(
+        asset_id=asset_id,
+        timeframe=_TIMEFRAME,
+        status=SignalStatus.TRIGGERED,
+        limit=1,
+    )
+    return any(
+        effective_status(
+            signal.status, signal.created_at, now, triggered_at=signal.triggered_at
+        )
+        == SignalStatus.TRIGGERED
+        for signal in triggered
     )
 
 

@@ -72,7 +72,9 @@ async def list_admin_signals(
                 take_profit=row.take_profit,
                 risk_reward=row.risk_reward,
                 confidence=row.confidence,
-                status=status_resolver.effective_status(row.status, row.created_at, now),
+                status=status_resolver.effective_status(
+                    row.status, row.created_at, now, triggered_at=row.triggered_at
+                ),
                 triggered_at=row.triggered_at,
                 closed_at=row.closed_at,
                 profit_loss=row.profit_loss,

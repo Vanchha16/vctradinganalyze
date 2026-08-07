@@ -170,10 +170,14 @@ per-asset decimal precision (`message_sections._format_price`) - 5dp for
 forex, 3dp for JPY-quoted pairs, 2dp for metal/crypto/index (unchanged) -
 instead of a single hardcoded 2dp for every asset, which made forex SL/TP
 levels indistinguishable from entry. Display only; the stored `Decimal`
-is untouched. A `TRIGGERED` transition (new in this phase, docs/51 §4)
-deliberately sends **no** Telegram message of its own - only the existing
-entry and outcome messages fire, to avoid roughly doubling delivery
-volume for limited subscriber benefit.
+is untouched.
+
+**Update (2026-08-07, reverses the above):** a `TRIGGERED` transition
+now sends its own message (`compose_signal_triggered_message`,
+`telegram.send_signal_triggered_task`) - ADR-137 originally decided
+against this to limit message volume, but subscribers could not tell
+"called" apart from "actually live" without it. Same-candle
+trigger-and-resolve still sends only the outcome message, never both.
 
 ---
 

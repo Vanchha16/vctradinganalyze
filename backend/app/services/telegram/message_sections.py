@@ -172,9 +172,44 @@ def compose_signal_outcome_message(signal: Signal, asset: Asset, *, now: datetim
     return "\n\n".join(sections)
 
 
+def render_triggered_header(asset: Asset) -> str:
+    symbol = escape_markdown_v2(_display_symbol(asset))
+    return f"{_SEPARATOR}\n🔔 ENTRY CONFIRMED • {symbol}\n{_SEPARATOR}"
+
+
+def render_triggered_body(signal: Signal, asset: Asset) -> str:
+    lines = [
+        _field("⏰ Timeframe", signal.timeframe.value.upper()),
+        "",
+        _field("🎯 Entry", _format_price(signal.entry_price, asset)),
+        "",
+        _field("🛑 Stop Loss", _format_price(signal.stop_loss, asset)),
+        "",
+        _field("💰 Take Profit", _format_price(signal.take_profit, asset)),
+    ]
+    return "\n".join(lines)
+
+
+def compose_signal_triggered_message(signal: Signal, asset: Asset, *, now: datetime) -> str:
+    """Sent the moment price first reaches `entry_price` (ACTIVE ->
+    TRIGGERED, ADR-137) - i.e. the trade has actually gone live. Reverses
+    ADR-137 §3.5's original "no message on bare TRIGGERED" decision, per
+    explicit operator request (2026-08-07): the entry-created message
+    alone left subscribers unable to tell "called" apart from "live"
+    without watching the app. Same layout style as the other two signal
+    messages."""
+    sections = [
+        render_triggered_header(asset),
+        render_triggered_body(signal, asset),
+        render_timestamp(now),
+    ]
+    return "\n\n".join(sections)
+
+
 __all__ = [
     "compose_signal_message",
     "compose_signal_outcome_message",
+    "compose_signal_triggered_message",
     "escape_markdown_v2",
     "render_header",
     "render_outcome_header",
@@ -182,4 +217,6 @@ __all__ = [
     "render_risk_management",
     "render_timestamp",
     "render_trade_setup",
+    "render_triggered_body",
+    "render_triggered_header",
 ]

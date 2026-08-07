@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added - Telegram: Entry-Confirmed Notification on TRIGGERED (reverses part of ADR-137)
+
+A new Telegram message now fires the moment a signal transitions ACTIVE → TRIGGERED (price reaches the entry level), not just at signal creation and final outcome. ADR-137 originally decided against this to limit message volume, but subscribers had no way to tell "a call was made" apart from "the trade is actually live" without watching the app - reversed per explicit operator request. `compose_signal_triggered_message` (new, `message_sections.py`), `TelegramService.send_triggered`, `telegram.send_signal_triggered_task` / `enqueue_signal_triggered_delivery` follow the exact same shape as the existing entry/outcome delivery hooks. The same-candle trigger-and-resolve case is unaffected - it still sends only the outcome message, never both
+
 ### Fixed - Cleanup: News Ingestion Cadence/Lookback Defaults, Mock URL Collision, Diagnostic Hardening
 
 Two independent settings guaranteed zero news articles forever on NewsAPI's free Developer plan, confirming the leading hypothesis from Phase 9G's diagnostic: `news_ingestion_interval_seconds` (300s → 288 runs/day) exceeded the plan's 100-requests/day cap ~8 hours into every day, and `news_lookback_hours` (24h) queried exactly the window the plan's ~24h publication delay had not yet made available. Defaults changed to `1800`s (48 runs/day) and `72`h respectively - both remain per-environment `.env` overrides, and production must update or remove any existing override for this fix to take effect there. `dedup_detector` re-verified safe to re-run at the wider window. News has no provider-quota enforcement (`RateLimitedProvider` is market-data-only) - recorded as an open gap in `BACKLOG.md` §16, not built here

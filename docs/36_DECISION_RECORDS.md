@@ -7352,6 +7352,22 @@ Decision
    message would roughly double volume for the entry event alone with
    limited benefit. The outcome message (already existing) still closes
    the loop on `SUCCESSFUL`/`STOPPED_OUT`.
+
+   **Reversed (2026-08-07, explicit operator request).** Subscribers
+   could not tell "a call was made" apart from "the trade is actually
+   live" without watching the app - the entry message alone reads
+   identically whether price ever reached the level or not. A bare
+   `TRIGGERED` transition now sends its own message
+   (`compose_signal_triggered_message`,
+   `telegram.send_signal_triggered_task`), following the same
+   per-provider-outcome delivery pattern as the entry/outcome messages.
+   The same-candle-resolved case (§3.3 above) is unaffected - it still
+   sends only the outcome message, never both, since that message
+   alone already tells the full "triggered then closed" story. This
+   does increase message volume for signals that trigger without
+   resolving in the same tick, which is the explicit trade-off accepted
+   here in exchange for subscribers actually knowing when a call has
+   gone live.
 6. **Price precision is now derived per-asset, display-only**: FOREX 5
    decimal places, except JPY-quoted pairs at 3 (standard FX convention,
    read off `Asset.quote_currency`); METAL/CRYPTO/INDEX unchanged at 2.

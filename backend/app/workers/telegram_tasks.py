@@ -108,6 +108,31 @@ def send_signal_outcome_telegram_task(signal_id: str) -> None:
         session.close()
 
 
+@celery_app.task(name="telegram.send_signal_triggered", ignore_result=True)  # type: ignore[untyped-decorator]
+def send_signal_triggered_telegram_task(signal_id: str) -> None:
+    """Entry-confirmed follow-up delivery hook (2026-08-07), called by
+    `signal_monitoring_tasks.monitor_active_signals_task` once it flips a
+    signal ACTIVE -> TRIGGERED on its own (not same-candle-resolved,
+    which `send_signal_outcome_telegram_task` alone covers)."""
+    session = SessionLocal()
+    try:
+        signal = SignalRepository(session).get_by_id(uuid.UUID(signal_id))
+        if signal is None:
+            return
+
+        asset = AssetRepository(session).get_by_id(signal.asset_id)
+        if asset is None:
+            return
+
+        telegram_service = TelegramService(
+            account_repository=TelegramAccountRepository(session),
+            provider=get_telegram_provider(),
+        )
+        telegram_service.send_triggered(signal, asset)
+    finally:
+        session.close()
+
+
 def enqueue_signal_outcome_delivery(signal_id: str) -> None:
     """Best-effort enqueue of `send_signal_outcome_telegram_task` - same
     "log and move on" reasoning as `enqueue_signal_delivery`: the signal's
@@ -118,6 +143,19 @@ def enqueue_signal_outcome_delivery(signal_id: str) -> None:
     except Exception:
         logger.warning(
             "telegram_signal_outcome_delivery_enqueue_failed", signal_id=signal_id, exc_info=True
+        )
+
+
+def enqueue_signal_triggered_delivery(signal_id: str) -> None:
+    """Best-effort enqueue of `send_signal_triggered_telegram_task` - same
+    "log and move on" reasoning as `enqueue_signal_outcome_delivery`: the
+    signal's status has already been persisted as TRIGGERED by the time
+    this runs, a broker outage here must never roll that back."""
+    try:
+        send_signal_triggered_telegram_task.delay(signal_id)
+    except Exception:
+        logger.warning(
+            "telegram_signal_triggered_delivery_enqueue_failed", signal_id=signal_id, exc_info=True
         )
 
 

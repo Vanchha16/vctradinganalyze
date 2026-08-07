@@ -13,6 +13,7 @@ from app.models.signal import Signal
 from app.services.telegram.message_sections import (
     compose_signal_message,
     compose_signal_outcome_message,
+    compose_signal_triggered_message,
     escape_markdown_v2,
     render_header,
     render_risk_management,
@@ -278,3 +279,22 @@ def test_compose_signal_outcome_message_stop_loss_hit() -> None:
     assert "🛑 Stop Loss : 64112\\.13" in text
     assert "📉 Result : \\-1\\.0R" in text
     assert "💵 P&L : \\-287\\.63" in text
+
+
+def test_compose_signal_triggered_message_matches_expected_layout() -> None:
+    """(2026-08-07) Entry-confirmed follow-up sent the moment a signal
+    transitions ACTIVE -> TRIGGERED - reverses ADR-137 §3.5's original
+    "no message" decision per explicit operator request."""
+    asset = _make_asset()
+    analysis = _make_analysis(asset_id=asset.id)
+    signal = _make_signal(analysis_id=analysis.id, asset_id=asset.id)
+
+    text = compose_signal_triggered_message(signal, asset, now=_NOW)
+
+    assert "🔔" in text
+    assert "ENTRY CONFIRMED" in text
+    assert "BTC/USD" in text
+    assert "🎯 Entry : 63824\\.50" in text
+    assert "🛑 Stop Loss : 64112\\.13" in text
+    assert "💰 Take Profit : 63249\\.24" in text
+    assert text.rstrip().endswith("09:00 UTC")

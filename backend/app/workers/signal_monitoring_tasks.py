@@ -35,7 +35,13 @@ def _monitor_pending_signals(
     phase fixes) until price actually reaches `entry_price`. On that
     same candle, also check SL/TP immediately (§3.3's same-candle
     ambiguity: a gap/spike that both triggers and breaches the stop is
-    triggered-then-stopped-out, never left dangling as TRIGGERED)."""
+    triggered-then-stopped-out, never left dangling as TRIGGERED).
+
+    A bare TRIGGERED transition (2026-08-07, reverses ADR-137 §3.5's
+    original "no message" decision per explicit operator request) sends
+    its own Telegram message - `enqueue_signal_triggered_delivery`. A
+    same-candle trigger-and-resolve sends only the outcome message, not
+    both - the outcome message alone already tells the full story."""
     signals = signal_repository.find_paginated(
         status=SignalStatus.ACTIVE, limit=_ACTIVE_SIGNAL_LIMIT
     )
@@ -50,9 +56,6 @@ def _monitor_pending_signals(
         signal.status = SignalStatus.TRIGGERED
         signal.triggered_at = now
 
-        # No Telegram message is sent for a bare TRIGGERED transition
-        # (spec §3.5) - the entry notification already told the
-        # subscriber the level; only the outcome message closes the loop.
         outcome = evaluate_signal_outcome(signal, candle)
         if outcome is not None:
             signal.status = outcome.status
@@ -60,14 +63,18 @@ def _monitor_pending_signals(
             signal.profit_loss = outcome.profit_loss
         session.commit()
 
+        # Deferred import: avoids a module-level import cycle, mirrors
+        # `signal_tasks.py`'s existing best-effort enqueue pattern
+        # (docs/57 §5) - a broker outage must not stop the rest of
+        # this run or block the next signal's evaluation.
         if outcome is not None:
-            # Deferred import: avoids a module-level import cycle, mirrors
-            # `signal_tasks.py`'s existing best-effort enqueue pattern
-            # (docs/57 §5) - a broker outage must not stop the rest of
-            # this run or block the next signal's evaluation.
             from app.workers.telegram_tasks import enqueue_signal_outcome_delivery
 
             enqueue_signal_outcome_delivery(str(signal.id))
+        else:
+            from app.workers.telegram_tasks import enqueue_signal_triggered_delivery
+
+            enqueue_signal_triggered_delivery(str(signal.id))
 
 
 def _monitor_triggered_signals(

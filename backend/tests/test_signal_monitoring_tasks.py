@@ -111,6 +111,14 @@ def _patch_enqueue(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return enqueued
 
 
+def _patch_triggered_enqueue(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    enqueued: list[str] = []
+    monkeypatch.setattr(
+        "app.workers.telegram_tasks.enqueue_signal_triggered_delivery", enqueued.append
+    )
+    return enqueued
+
+
 def test_active_signal_beyond_sl_but_never_touched_entry_stays_active(
     session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -142,7 +150,11 @@ def test_active_signal_beyond_sl_but_never_touched_entry_stays_active(
 def test_price_touching_entry_triggers_signal(
     session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """(2026-08-07) A bare TRIGGERED transition now sends its own
+    Telegram message - reverses ADR-137 §3.5's original "no message"
+    decision per explicit operator request."""
     enqueued = _patch_enqueue(monkeypatch)
+    triggered_enqueued = _patch_triggered_enqueue(monkeypatch)
 
     with session_factory() as session:
         asset, signal = _seed_signal(session, entry="100", stop_loss="95", take_profit="115")
@@ -158,6 +170,7 @@ def test_price_touching_entry_triggers_signal(
         assert updated.triggered_at is not None
         assert updated.closed_at is None
     assert enqueued == []
+    assert triggered_enqueued == [signal_id]
 
 
 def test_triggered_signal_closes_on_take_profit_hit(
@@ -221,6 +234,7 @@ def test_same_candle_touching_entry_and_stop_loss_triggers_then_stops_out(
     entry and stop loss must not be left dangling as TRIGGERED - Stop
     Loss takes precedence, consistent with the existing convention."""
     enqueued = _patch_enqueue(monkeypatch)
+    triggered_enqueued = _patch_triggered_enqueue(monkeypatch)
 
     with session_factory() as session:
         asset, signal = _seed_signal(session, entry="100", stop_loss="95", take_profit="115")
@@ -236,6 +250,8 @@ def test_same_candle_touching_entry_and_stop_loss_triggers_then_stops_out(
         assert updated.triggered_at is not None
         assert updated.closed_at is not None
     assert enqueued == [signal_id]
+    # Same-candle trigger-and-resolve sends only the outcome message.
+    assert triggered_enqueued == []
 
 
 def test_active_signal_skips_ttl_expired_signal(
@@ -311,6 +327,7 @@ def test_sell_signal_price_touching_entry_triggers_signal(
     session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     enqueued = _patch_enqueue(monkeypatch)
+    triggered_enqueued = _patch_triggered_enqueue(monkeypatch)
 
     with session_factory() as session:
         asset, signal = _seed_signal(
@@ -327,6 +344,7 @@ def test_sell_signal_price_touching_entry_triggers_signal(
         assert updated.status == SignalStatus.TRIGGERED
         assert updated.triggered_at is not None
     assert enqueued == []
+    assert triggered_enqueued == [signal_id]
 
 
 def test_sell_signal_triggered_closes_on_take_profit_hit(

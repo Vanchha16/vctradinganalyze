@@ -10,6 +10,7 @@ from app.repositories.telegram_account_repository import TelegramAccountReposito
 from app.services.telegram.message_sections import (
     compose_signal_message,
     compose_signal_outcome_message,
+    compose_signal_triggered_message,
     escape_markdown_v2,
 )
 from app.services.telegram.providers.base import TelegramProvider
@@ -99,6 +100,19 @@ class TelegramService:
         transitioned to `SUCCESSFUL`/`STOPPED_OUT` by
         `signal_monitoring_tasks.monitor_active_signals_task`."""
         text = compose_signal_outcome_message(signal, asset, now=now or datetime.now(UTC))
+        for account in self.linked_accounts():
+            if account.telegram_chat_id is None:
+                continue
+            self._provider.send_message(account.telegram_chat_id, text)
+
+    def send_triggered(self, signal: Signal, asset: Asset, *, now: datetime | None = None) -> None:
+        """Broadcasts an entry-confirmed follow-up the moment a `signal`
+        transitions ACTIVE -> TRIGGERED (2026-08-07, reverses ADR-137
+        §3.5's original "no message on bare TRIGGERED" decision per
+        explicit operator request). Never called for a signal that
+        triggers and resolves within the same candle - `send_outcome`
+        alone covers that case."""
+        text = compose_signal_triggered_message(signal, asset, now=now or datetime.now(UTC))
         for account in self.linked_accounts():
             if account.telegram_chat_id is None:
                 continue

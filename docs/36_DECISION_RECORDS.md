@@ -7743,6 +7743,156 @@ enough to warrant a lightweight persisted fallback - not needed today.
 
 ---
 
+# ADR-140
+
+Title
+
+Phase 9H: Floor the Market Data Collection Interval - the Beat Schedule
+Was Silently Exhausting the Daily Quota Every Day
+
+Status
+
+Accepted
+
+Context
+
+Production market data went dark roughly four hours into every day: the
+newest M1 candle was observed at 03:04 UTC against a 06:12 UTC server
+clock. `workers/market_data_tasks.py`'s `BEAT_SCHEDULE_SECONDS` set the
+Celery Beat interval for each timeframe to that timeframe's own
+duration, so M1 collected every 60 seconds - 1,440 runs/day, one
+provider request per active asset per run. Twelve Data's free tier caps
+at 800 requests/day; `RateLimitedProvider` enforces that cap correctly
+(ADR-025, fixed the same day this phase started) with a UTC-midnight
+reset, so collection resumed at 00:00, exhausted the quota within
+roughly four hours, and went dark for the remaining ~20 hours. Because
+`signal_monitoring_tasks.py` reads the latest **M1** candle
+(`_PRICE_TIMEFRAME`) for both entry confirmation and TP/SL detection,
+this silently disabled ADR-137's entry-confirmation fix and all outcome
+tracking for most of every day - no valid outcomes could accumulate, so
+no calibration data existed either.
+
+This is the same class of mistake as the news-ingestion cadence bug
+fixed the same day (`5ca5985`): a schedule set by cadence intuition
+("collect M1 every minute, that's what M1 means") rather than checked
+against the provider's documented daily cap. Twice now.
+
+Decision
+
+1. **The Beat interval per timeframe is now `max(timeframe_duration,
+   floor)`**, not the raw timeframe duration - a new setting,
+   `market_data_min_collection_interval_seconds`, default **300**
+   (5 minutes). Implemented as `build_beat_schedule_seconds(floor) ->
+   dict[Timeframe, float]`, a real function rather than a bare module-
+   level dict comprehension, so the floor's effect is directly testable
+   without reimporting the module for a different setting value.
+   `BEAT_SCHEDULE_SECONDS` (the module-level constant Celery Beat is
+   actually built from) calls it once with the configured default at
+   import time.
+2. **This is lossless, not merely lower-frequency**: `TwelveDataProvider`
+   requests `outputsize=5000` per call (thousands of candles, not just
+   the newest), and `PriceCandleRepository.upsert` keys on
+   `(asset_id, timeframe, timestamp)` (ADR-024) - so a less-frequent
+   fetch backfills everything since the previous one, with overlap
+   absorbed by the upsert. Verified this holds for both registered
+   providers: `MockMarketDataProvider.get_candles` loops from `start` to
+   `end` (a batch), and `TwelveDataProvider` likewise. The only real
+   cost is **latency** - the newest candle can be up to one interval
+   old rather than up to 60 seconds old. Monitoring detection latency
+   moves from <=60s to <=5min; immaterial for H1+ signals, and this is
+   the entire cause of the outage being fixed, so it is not preserved.
+3. **At the floored default, one active asset uses ~751.18 requests/day
+   against the 800/day cap** (`projected_daily_requests_per_asset()`,
+   summed across all nine `Timeframe` values: M1/M5 floored to 300s =
+   288 runs/day each, M15 = 96, M30 = 48, H1 = 24, H4 = 6, D1 = 1, W1 ~=
+   0.143, MN ~= 0.033). **Two active assets do not fit** (~=1,502.35/day).
+   This is a **one-active-symbol configuration** on the current Twelve
+   Data tier - stated plainly here because it is an operating
+   constraint, not an implementation detail: the operator must keep at
+   most one symbol active via Admin -> Assets until the plan or provider
+   changes (see the market-data provider migration spec for the
+   in-progress replacement work, separately gated on its own licensing
+   question).
+4. **Startup quota-projection logging, not a budget-aware scheduler.**
+   `market_data_tasks.log_quota_projection()` computes the projected
+   daily request count (per-asset projection x current active-asset
+   count) and logs it once per provider that declares a
+   `market_data_rate_limits_per_day` entry - at `WARNING` if the
+   projection exceeds that provider's cap, `INFO` otherwise. Wired via a
+   second `@worker_ready.connect` handler in `celery_app.py`, alongside
+   Phase 9G's existing ingestion-provider-logging handler, same
+   lifecycle point, same reasoning: this class of error must be visible
+   at boot, not discovered hours into a live outage. A genuinely
+   budget-aware scheduler (throttling collection dynamically against
+   remaining quota) was explicitly out of scope - a materially larger
+   design question, not needed to fix this outage.
+
+Reason
+
+The collection interval being "the timeframe's own duration" was never a
+deliberate rate-limiting decision - it was the default that fell out of
+"poll each timeframe as often as a new candle can form," which is correct
+reasoning for candle freshness and wrong reasoning for a rate-limited
+external dependency. The floor makes the two considerations independent:
+freshness is still timeframe-driven, but never overrides the provider's
+real budget. Recomputing the report-back arithmetic against the actual
+`TIMEFRAME_DURATIONS` (nine entries: M1, M5, M15, M30, H1, H4, D1, W1,
+MN) rather than the six the originating build spec's own illustrative
+table enumerated changed the concrete numbers (~=751.18/asset/day at the
+floor, not the spec's illustrative ~=703) but not the conclusion - one
+active symbol fits with headroom, two do not.
+
+Alternatives Considered
+
+Option A: A budget-aware scheduler that dynamically adjusts collection
+frequency against remaining daily quota - rejected for this phase as
+materially larger in scope than fixing a silent outage requires; revisit
+if the fixed floor ever proves insufficient once a higher-capacity
+provider is in place.
+
+Option B (chosen): A fixed, configurable floor applied uniformly across
+timeframes, plus visible startup arithmetic so the next capacity change
+(new provider, more symbols) is checked deliberately rather than
+rediscovered via another outage.
+
+Option C: Leave M1 at 60s but reduce Beat's polled asset set instead
+(e.g. a subset flag) - rejected; conflates "which symbols are tracked at
+all" with "how often we poll," two independent operator decisions that
+should stay independent (asset activation already exists via Admin ->
+Assets, per Phase 9F).
+
+Trade-offs
+
+Pros
+
+Fixes a live outage with a small, easily reasoned-about change - one
+`max()`, one setting, no new dependency, no migration. The startup
+projection makes the exact failure mode of this bug (and the earlier
+news-ingestion one) structurally visible going forward rather than
+requiring an operator to notice stale data hours after the fact.
+
+Cons
+
+The floor is a hand-picked starting point (300s), not empirically
+calibrated - same caveat every threshold decision in this project
+carries. The one-active-symbol operating constraint is a real
+limitation of the current Twelve Data free tier, not something this
+phase resolves - it makes the constraint visible and enforced by
+arithmetic rather than fixing the underlying capacity problem, which is
+the market-data provider migration's job, not this one's.
+
+Future Review
+
+Revisit the 300s floor once real usage patterns exist. Revisit the
+one-active-symbol constraint once a higher-capacity provider is live
+(separately gated, currently blocked on a licensing question - see the
+market-data provider migration spec). Consider surfacing the same
+projection on `GET /admin/system` alongside Phase 9G's ingestion health
+if an operator-facing view becomes valuable beyond the startup log -
+explicitly deferred this phase to keep the change minimal.
+
+---
+
 # Review Policy
 
 Review ADRs:

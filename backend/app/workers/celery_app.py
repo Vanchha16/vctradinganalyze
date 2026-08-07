@@ -24,6 +24,18 @@ def _log_active_ingestion_providers(*_: object, **__: object) -> None:
     log_active_providers()
 
 
+@worker_ready.connect  # type: ignore[untyped-decorator]  # celery ships no decorator stubs
+def _log_market_data_quota_projection(*_: object, **__: object) -> None:
+    """Phase 9H (ADR-140) - a schedule that cannot fit its provider's
+    documented daily cap has now caused a silent outage twice (here and in
+    news ingestion, `5ca5985`); log the projected daily request count once
+    at worker startup so this class of mistake is visible immediately
+    rather than discovered hours into a production outage."""
+    from app.workers.market_data_tasks import log_quota_projection
+
+    log_quota_projection()
+
+
 # Imported after `celery_app` is defined above (the task modules import it
 # back) - registers each domain's task(s) and Beat schedule.
 from app.workers import (  # noqa: E402

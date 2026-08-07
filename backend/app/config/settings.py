@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     market_data_rate_limits_per_minute: dict[str, float] = {"mock": 6000.0, "twelve_data": 8.0}
     market_data_default_rate_limit_per_day: float | None = None
     market_data_rate_limits_per_day: dict[str, float] = {"twelve_data": 800.0}
+    # Phase 9H (ADR-140): the Beat interval used to just be each timeframe's
+    # own duration, so M1 collected every 60s - 1,440 runs/day/asset alone,
+    # blowing through Twelve Data's 800/day cap in ~4 hours and going dark
+    # for the rest of the day (production incident, 2026-08-07). This floor
+    # is applied as `max(timeframe_duration, floor)` when building the Beat
+    # schedule - lossless (each fetch backfills via `outputsize=5000` +
+    # upsert, docs/40 §2), the only cost is added latency on how fresh the
+    # newest candle can be.
+    market_data_min_collection_interval_seconds: float = 300.0
 
     twelve_data_api_key: str = ""
     twelve_data_base_url: str = "https://api.twelvedata.com"

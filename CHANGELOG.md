@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed - Phase 9H: Market Data Collection Cadence Was Exhausting the Daily Quota Every Day (ADR-140)
+
+**A live production defect is fixed**: market data went dark roughly four hours into every day. The Celery Beat interval per timeframe was set to that timeframe's own duration, so M1 collected every 60 seconds - 1,440 requests/day/asset alone, blowing through Twelve Data's 800/day cap within ~4 hours and going dark for the remaining ~20. Because `signal_monitoring_tasks.py` reads the latest M1 candle for both entry confirmation and TP/SL detection, this silently disabled ADR-137's entry-confirmation fix and all outcome tracking for most of every day
+
+Fixed with a configurable minimum collection interval (`market_data_min_collection_interval_seconds`, default 300s) applied as `max(timeframe_duration, floor)` when building the Beat schedule (`build_beat_schedule_seconds`) - lossless, since `TwelveDataProvider` fetches `outputsize=5000` per call and the repository upserts on `(asset_id, timeframe, timestamp)`; the only cost is added latency (≤5min instead of ≤60s). At this floor, one active asset uses ~751.18 requests/day against the 800/day cap - **two active assets do not fit**, a real one-symbol operating constraint until a higher-capacity provider is in place. A startup-time projection log (`market_data_tasks.log_quota_projection`, wired via `celery_app.py`'s `worker_ready` signal) now warns whenever the projected daily request count exceeds a provider's configured cap, so this class of mistake - which has now occurred twice (here and in news ingestion, see below) - is visible at boot rather than discovered hours into an outage
+
 ### Fixed - Market Data: Daily Quota Enforcement Never Actually Worked (ADR-025)
 
 **A live production defect is fixed**: market data (price candles for every asset, every timeframe) silently went stale for 4+ hours in production, discovered when a user noticed the app's price chart didn't match TradingView's live price. Root cause: `RateLimitedProvider`'s daily-quota counter (`self._daily_used`) was a plain in-memory instance attribute, but `get_market_data_providers()` builds a brand-new `RateLimitedProvider` on every single Celery task run - so the counter reset to `0` every time and could never reach its own configured 800/day cap before being discarded. Real usage climbed unbounded against Twelve Data's own server-side counter until Twelve Data cut the account off mid-day ("1373 API credits were used, with the current limit being 800")

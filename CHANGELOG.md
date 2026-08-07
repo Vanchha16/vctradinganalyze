@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed - Cleanup: News Ingestion Cadence/Lookback Defaults, Mock URL Collision, Diagnostic Hardening
+
+Two independent settings guaranteed zero news articles forever on NewsAPI's free Developer plan, confirming the leading hypothesis from Phase 9G's diagnostic: `news_ingestion_interval_seconds` (300s → 288 runs/day) exceeded the plan's 100-requests/day cap ~8 hours into every day, and `news_lookback_hours` (24h) queried exactly the window the plan's ~24h publication delay had not yet made available. Defaults changed to `1800`s (48 runs/day) and `72`h respectively - both remain per-environment `.env` overrides, and production must update or remove any existing override for this fix to take effect there. `dedup_detector` re-verified safe to re-run at the wider window. News has no provider-quota enforcement (`RateLimitedProvider` is market-data-only) - recorded as an open gap in `BACKLOG.md` §16, not built here
+
+Fixed the `MockNewsProvider` URL collision found in Phase 9G: generated URLs contained nothing derived from the request window, so two different `since` values could produce an identical URL (10-template pool, same `rng.sample()` index), reaching the DB and failing with a `UNIQUE constraint` violation on repeated `POST /admin/news` calls. Fixed by folding the existing `_seed_for(since)` value into the URL - deterministic per `since` (re-run idempotency preserved) but unique across windows. `MockEconomicCalendarProvider` checked and confirmed to not share this shape (no `url` field, no `rng.sample()` selection, upsert not insert-skip write path) - not touched
+
+Hardened `backend/scripts/diagnose_ingestion.py`: contacting any non-mock provider now requires an explicit `--allow-real-calls` flag; without it, the script refuses and reports everything available offline instead. The prior warning-only version is exactly how Phase 9G's accidental NewsAPI + Finnhub calls happened
+
 ### Fixed - Phase 9G: Ingestion Health - Silent News/Calendar Provider Failures (ADR-139)
 
 **A live production defect is fixed**: production had zero news articles while the economic calendar silently served mock data, and both pipelines reported a clean success. `NewsIngestionPipeline`/`EconomicCalendarIngestionPipeline` caught a provider failure, logged it at `warning`, and returned whatever count had accumulated - `0` for a fully broken provider, indistinguishable from "nothing to ingest today." Both News and Economic Calendar feed the AI Orchestrator's signal context, so every signal generated so far was built on empty news and (potentially) synthetic calendar events with nothing surfacing either fact

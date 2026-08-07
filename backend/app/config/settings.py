@@ -38,8 +38,23 @@ class Settings(BaseSettings):
     twelve_data_timeout_seconds: float = 10.0
 
     news_providers: list[str] = ["mock"]
-    news_ingestion_interval_seconds: int = 300
-    news_lookback_hours: int = 24
+    # Cleanup (2026-08-07): was 300s (288 runs/day) - NewsAPI's free
+    # Developer plan caps at 100 requests/day, so the old default
+    # exhausted it in ~8 hours, every day, before counting health
+    # checks or admin-triggered refreshes. 1800s = 48 runs/day, well
+    # inside the cap with headroom. No provider-side quota enforcement
+    # exists for news (unlike market data's `RateLimitedProvider`,
+    # ADR-025) - a misconfigured interval still silently burns vendor
+    # budget with nothing stopping it (BACKLOG.md §16).
+    news_ingestion_interval_seconds: int = 1800
+    # Cleanup (2026-08-07): was 24h - NewsAPI's free Developer plan
+    # delays article availability by roughly 24h, so a 24h lookback
+    # queried exactly the window the free tier had not published yet,
+    # guaranteeing zero results on every run. 72h covers that
+    # delay with margin. Safe to widen: `dedup_detector` skips articles
+    # already seen (URL/title match), so re-scanning a larger overlap
+    # is still idempotent, not a double-count risk.
+    news_lookback_hours: int = 72
 
     news_api_key: str = ""
     news_api_base_url: str = "https://newsapi.org"

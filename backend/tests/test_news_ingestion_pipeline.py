@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -143,6 +143,27 @@ def test_run_twice_with_same_window_does_not_duplicate(session: Session) -> None
     assert second_result.ingested == 0  # MockNewsProvider is deterministic for a given `since`
     articles = session.execute(select(NewsArticle)).scalars().all()
     assert len(articles) == first_result.ingested
+
+
+def test_run_three_times_with_slightly_different_since_does_not_raise(session: Session) -> None:
+    """Cleanup (2026-08-07) regression test: repeated `POST /admin/news`
+    calls a few seconds apart each compute `since` as `now -
+    lookback_hours`, so back-to-back runs see slightly different,
+    heavily overlapping windows - exactly what surfaced the
+    `UNIQUE constraint failed: news_articles.url` bug in 9G. Must not
+    raise, and must not create more distinct articles than a single run
+    would (the same real articles keep getting re-seen and skipped)."""
+    _seed_assets(session)
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+
+    results = [
+        _make_pipeline(session).run(base + timedelta(seconds=offset))
+        for offset in (0, 5, 11)
+    ]
+
+    articles = session.execute(select(NewsArticle)).scalars().all()
+    assert len(articles) == len({a.url for a in articles})  # no duplicate URLs persisted
+    assert len(articles) >= results[0].ingested
 
 
 def test_run_detects_affected_assets(session: Session) -> None:

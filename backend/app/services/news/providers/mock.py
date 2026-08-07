@@ -93,9 +93,23 @@ class MockNewsProvider:
     name = "mock"
 
     def fetch_latest(self, since: datetime) -> list[RawNewsArticle]:
-        rng = random.Random(_seed_for(since))
+        seed = _seed_for(since)
+        rng = random.Random(seed)
         count = rng.randint(3, len(_TEMPLATE_ARTICLES))
         chosen = rng.sample(_TEMPLATE_ARTICLES, k=count)
+
+        # Cleanup (2026-08-07): the URL used to contain nothing derived
+        # from `since` - with a 10-template pool, the same template
+        # landing at the same `index` across two different windows
+        # produced an identical URL, which `dedup_detector` (window-
+        # scoped) never catches, so the insert reached the DB and failed
+        # with a UNIQUE constraint violation (found in 9G, repeated
+        # `POST /admin/news` calls). `window_token` is derived from the
+        # same seed `_seed_for(since)` already uses - deterministic for
+        # a given `since` (identical URLs within a window, preserving
+        # re-run idempotency) and different across windows (unique
+        # URLs), never random/clock-based.
+        window_token = f"{seed:016x}"[:12]
 
         articles: list[RawNewsArticle] = []
         for index, template in enumerate(chosen):
@@ -103,7 +117,7 @@ class MockNewsProvider:
             published_at = since + offset
             source_name = template["source_name"]
             slug = template["title"].lower().replace(" ", "-").replace(",", "")[:60]
-            url = f"{_TEMPLATE_SOURCE_URLS[source_name]}/article/{slug}-{index}"
+            url = f"{_TEMPLATE_SOURCE_URLS[source_name]}/article/{slug}-{window_token}-{index}"
 
             articles.append(
                 RawNewsArticle(

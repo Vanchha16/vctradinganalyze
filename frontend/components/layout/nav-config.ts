@@ -2,6 +2,7 @@ import {
   BarChart3,
   BookMarked,
   BrainCircuit,
+  Calculator,
   CalendarClock,
   Coins,
   FileClock,
@@ -10,6 +11,7 @@ import {
   LineChart,
   MessagesSquare,
   Newspaper,
+  PieChart,
   Server,
   Settings as SettingsIcon,
   ShieldCheck,
@@ -66,6 +68,13 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "News", href: "/news", icon: Newspaper },
       { label: "Economic Calendar", href: "/economic-calendar", icon: CalendarClock },
       { label: "API Explorer", href: "/dashboard/api-explorer", icon: Terminal, preserveQuery: true },
+    ],
+  },
+  {
+    group: "Tools",
+    items: [
+      { label: "Profit Split", href: "/tools/profit-split", icon: PieChart },
+      { label: "Position Size", href: "/tools/position-size", icon: Calculator },
     ],
   },
   {

@@ -68,6 +68,18 @@ export function formatPercent(value: number | null | undefined, fractionDigits =
   return `${value.toFixed(fractionDigits)}%`;
 }
 
+/** USD currency amounts (calculator tools) - distinct from `formatPrice`,
+ * which is for asset quote prices, not dollar amounts. */
+export function formatCurrency(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 export function formatEnumLabel(value: string | null | undefined): string {
   if (!value) return "—";
   return value.replace(/_/g, " ");

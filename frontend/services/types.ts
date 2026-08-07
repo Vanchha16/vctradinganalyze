@@ -173,6 +173,30 @@ export interface AssetListResponse {
   total: number;
 }
 
+// ---- Admin Assets (docs/04 §Admin, Phase 9F, ADR-138) ----
+
+export interface AdminAssetCreateRequest {
+  symbol: string;
+  name: string;
+  market_type: MarketType;
+  exchange?: string;
+  base_currency?: string;
+  quote_currency?: string;
+}
+
+/** `symbol` is present (unlike `AdminUserUpdateRequest`'s allow-list
+ * exclusions) only so an attempt to send it reaches the backend and is
+ * rejected with a clear error - the form never actually offers an
+ * editable symbol field (ADR-138). */
+export interface AdminAssetUpdateRequest {
+  symbol?: string;
+  name?: string;
+  market_type?: MarketType;
+  exchange?: string;
+  base_currency?: string;
+  quote_currency?: string;
+}
+
 // ---- Technical Analysis ----
 
 export type TrendDirection = "bullish" | "bearish" | "sideways";

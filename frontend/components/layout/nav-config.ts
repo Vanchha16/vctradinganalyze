@@ -3,6 +3,7 @@ import {
   BookMarked,
   BrainCircuit,
   CalendarClock,
+  Coins,
   FileClock,
   Gauge,
   LayoutDashboard,
@@ -80,6 +81,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Admin Dashboard", href: "/admin", icon: ShieldCheck },
       { label: "Users", href: "/admin/users", icon: Users },
+      { label: "Symbols", href: "/admin/assets", icon: Coins },
       { label: "Audit Logs", href: "/admin/audit-logs", icon: FileClock },
       { label: "System Health", href: "/admin/system-health", icon: Server },
       { label: "API Usage", href: "/admin/api-usage", icon: Terminal },

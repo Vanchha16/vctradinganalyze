@@ -1,6 +1,8 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/services/api-client";
 import type {
   AdminAnalyticsResponse,
+  AdminAssetCreateRequest,
+  AdminAssetUpdateRequest,
   AdminAuditLogListResponse,
   AdminPasswordResetResponse,
   AdminSystemStatusResponse,
@@ -12,6 +14,8 @@ import type {
   AdminUserRoleUpdateRequest,
   AdminUserStatusUpdateRequest,
   AdminUserUpdateRequest,
+  Asset,
+  AssetListResponse,
   MaintenanceAction,
   MaintenanceActionResponse,
   NewsRefreshResponse,
@@ -145,4 +149,38 @@ export function runAdminMaintenance(
   signal?: AbortSignal,
 ): Promise<MaintenanceActionResponse> {
   return apiPost<MaintenanceActionResponse>("/admin/maintenance", { action }, undefined, signal);
+}
+
+export interface ListAdminAssetsParams {
+  search?: string;
+  market_type?: string;
+  is_active?: string;
+  page?: number;
+  limit?: number;
+}
+
+export function listAdminAssets(params: ListAdminAssetsParams): Promise<AssetListResponse> {
+  return apiGet<AssetListResponse>("/admin/assets", {
+    search: params.search,
+    market_type: params.market_type,
+    is_active: params.is_active,
+    page: params.page ? String(params.page) : undefined,
+    limit: params.limit ? String(params.limit) : undefined,
+  });
+}
+
+export function createAdminAsset(payload: AdminAssetCreateRequest): Promise<Asset> {
+  return apiPost<Asset>("/admin/assets", payload);
+}
+
+export function updateAdminAsset(id: string, payload: AdminAssetUpdateRequest): Promise<Asset> {
+  return apiPatch<Asset>(`/admin/assets/${id}`, payload);
+}
+
+export function activateAdminAsset(id: string): Promise<Asset> {
+  return apiPost<Asset>(`/admin/assets/${id}/activate`);
+}
+
+export function deactivateAdminAsset(id: string): Promise<Asset> {
+  return apiPost<Asset>(`/admin/assets/${id}/deactivate`);
 }

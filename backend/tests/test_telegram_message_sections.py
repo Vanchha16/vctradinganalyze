@@ -91,12 +91,12 @@ def test_render_header_shows_direction_and_base_quote_symbol() -> None:
     assert "BTC/USD" in text
 
 
-def test_render_trade_setup_always_shows_exactly_two_decimal_places() -> None:
+def test_render_trade_setup_shows_two_decimal_places_for_crypto() -> None:
     asset = _make_asset()
     analysis = _make_analysis(asset_id=asset.id)
     signal = _make_signal(analysis_id=analysis.id, asset_id=asset.id)
 
-    text = render_trade_setup(signal)
+    text = render_trade_setup(signal, asset)
 
     # Long floating-point noise (63824.500001 etc.) must round to 2dp,
     # not truncate/strip - matches the user's explicit spec.
@@ -111,6 +111,67 @@ def test_render_trade_setup_always_shows_exactly_two_decimal_places() -> None:
     assert "💰 Take Profit" in text
     # Label and value are on the same line, separated by " : ".
     assert "⏰ Timeframe : H1" in text
+    assert "🎯 Entry : 63824\\.50" in text
+
+
+def _make_forex_asset(*, symbol: str, quote_currency: str) -> Asset:
+    return Asset(
+        id=uuid.uuid4(),
+        symbol=symbol,
+        name=symbol,
+        market_type=MarketType.FOREX,
+        base_currency=symbol[:3],
+        quote_currency=quote_currency,
+    )
+
+
+def _make_metal_asset() -> Asset:
+    return Asset(
+        id=uuid.uuid4(),
+        symbol="XAUUSD",
+        name="Gold",
+        market_type=MarketType.METAL,
+        base_currency="XAU",
+        quote_currency="USD",
+    )
+
+
+def test_render_trade_setup_shows_five_decimal_places_for_forex() -> None:
+    asset = _make_forex_asset(symbol="EURUSD", quote_currency="USD")
+    analysis = _make_analysis(asset_id=asset.id)
+    signal = _make_signal(analysis_id=analysis.id, asset_id=asset.id)
+    signal.entry_price = Decimal("1.15241000")
+    signal.stop_loss = Decimal("1.15241000")
+    signal.take_profit = Decimal("1.14800000")
+
+    text = render_trade_setup(signal, asset)
+
+    assert "🎯 Entry : 1\\.15241" in text
+    assert "🛑 Stop Loss : 1\\.15241" in text
+    assert "💰 Take Profit : 1\\.14800" in text
+    # The stored Decimal itself must never be mutated by formatting.
+    assert signal.entry_price == Decimal("1.15241000")
+
+
+def test_render_trade_setup_shows_three_decimal_places_for_jpy_forex_pair() -> None:
+    asset = _make_forex_asset(symbol="USDJPY", quote_currency="JPY")
+    analysis = _make_analysis(asset_id=asset.id)
+    signal = _make_signal(analysis_id=analysis.id, asset_id=asset.id)
+    signal.entry_price = Decimal("151.234500")
+
+    text = render_trade_setup(signal, asset)
+
+    assert "🎯 Entry : 151\\.235" in text
+    assert signal.entry_price == Decimal("151.234500")
+
+
+def test_render_trade_setup_shows_two_decimal_places_for_metal() -> None:
+    asset = _make_metal_asset()
+    analysis = _make_analysis(asset_id=asset.id)
+    signal = _make_signal(analysis_id=analysis.id, asset_id=asset.id)
+
+    text = render_trade_setup(signal, asset)
+
     assert "🎯 Entry : 63824\\.50" in text
 
 

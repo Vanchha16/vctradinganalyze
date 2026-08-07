@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
+from app.config import settings
 from app.database.session import SessionLocal
 from app.dependencies.ai_orchestrator import (
     get_ai_analysis_repository,
@@ -34,7 +35,6 @@ from app.workers.celery_app import celery_app
 #: asset per run, on H1 only - not every timeframe - to keep OpenAI/
 #: market-data usage predictable at this cadence.
 _TIMEFRAME = Timeframe.H1
-_SIGNAL_GENERATION_INTERVAL_SECONDS = 3600.0
 
 
 def _has_open_signal(
@@ -166,6 +166,6 @@ def register_signal_schedule() -> dict[str, dict[str, object]]:
     return {
         "generate-signals-watchlist": {
             "task": "signals.generate_for_watchlist",
-            "schedule": _SIGNAL_GENERATION_INTERVAL_SECONDS,
+            "schedule": settings.signal_generation_interval_seconds,
         }
     }

@@ -343,6 +343,16 @@ scoping, and reasoning behind each.
   telemetry limitation (ADR-116). Celery worker/queue metrics and
   surfacing this in the Admin UI remain open (BACKLOG.md §3) -
   Performance/Optimization can now be scheduled against a real number.
+- **9E Signal Entry Confirmation** - **complete.** Fixed a live
+  production defect: signals closed as losses without price ever
+  reaching `entry_price`. `TRIGGERED` (ADR-088's reserved state) is now
+  wired up with a touch-based trigger rule; SL/TP only evaluated once
+  `TRIGGERED`; a separate `signal_triggered_ttl_hours` closes a live
+  trade that never resolves; `_has_open_signal`'s dedup gate now also
+  treats `TRIGGERED` as open (ADR-125/137). Also: per-market Telegram
+  price precision (5dp forex, 3dp JPY pairs, was a hardcoded 2dp for
+  every asset), and the hourly generation interval moved from a module
+  constant to a `.env`-tunable setting.
 
 ---
 

@@ -14,7 +14,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
-from app.models.enums import SignalStatus, SignalType
+from app.models.enums import MarketType, SignalStatus, SignalType
 from app.models.signal import Signal
 
 _SEPARATOR = "━━━━━━━━━━━━━━━━━━"
@@ -25,18 +25,35 @@ _SEPARATOR = "━━━━━━━━━━━━━━━━━━"
 # must be escaped before sending.
 _MARKDOWN_V2_SPECIAL_CHARS = r"_*[]()~`>#+-=|{}.!"
 
-_PRICE_QUANTIZE = Decimal("0.01")
+#: ADR-137: display-only decimal places per asset, standard FX
+#: convention (5dp forex, 3dp JPY-quoted pairs) - a forex signal whose
+#: stop loss equals its entry at 2dp reads as broken (docs/03's stored
+#: `Numeric(20, 8)` carries far more precision than that). Metal/Crypto/
+#: Index keep the prior 2dp behaviour, which was already correct for them.
+_JPY_QUOTE_CURRENCY = "JPY"
+_FOREX_DECIMAL_PLACES = 5
+_FOREX_JPY_DECIMAL_PLACES = 3
+_DEFAULT_DECIMAL_PLACES = 2
 
 
 def escape_markdown_v2(text: str) -> str:
     return re.sub(f"([{re.escape(_MARKDOWN_V2_SPECIAL_CHARS)}])", r"\\\1", text)
 
 
-def _format_price(value: Decimal) -> str:
-    """Rounds to exactly 2 decimal places for display - the underlying
-    stored `Decimal` value is untouched, this only affects what's
-    rendered into the message text."""
-    return str(Decimal(value).quantize(_PRICE_QUANTIZE, rounding=ROUND_HALF_UP))
+def _decimal_places(asset: Asset) -> int:
+    if asset.market_type != MarketType.FOREX:
+        return _DEFAULT_DECIMAL_PLACES
+    if asset.quote_currency == _JPY_QUOTE_CURRENCY:
+        return _FOREX_JPY_DECIMAL_PLACES
+    return _FOREX_DECIMAL_PLACES
+
+
+def _format_price(value: Decimal, asset: Asset) -> str:
+    """Rounds to the asset's display precision (ADR-137) - the
+    underlying stored `Decimal` value is untouched, this only affects
+    what's rendered into the message text."""
+    quantize = Decimal(1).scaleb(-_decimal_places(asset))
+    return str(Decimal(value).quantize(quantize, rounding=ROUND_HALF_UP))
 
 
 def _display_symbol(asset: Asset) -> str:
@@ -60,15 +77,15 @@ def _field(label: str, value: str) -> str:
     return f"{label} : {escape_markdown_v2(value)}"
 
 
-def render_trade_setup(signal: Signal) -> str:
+def render_trade_setup(signal: Signal, asset: Asset) -> str:
     lines = [
         _field("⏰ Timeframe", signal.timeframe.value.upper()),
         "",
-        _field("🎯 Entry", _format_price(signal.entry_price)),
+        _field("🎯 Entry", _format_price(signal.entry_price, asset)),
         "",
-        _field("🛑 Stop Loss", _format_price(signal.stop_loss)),
+        _field("🛑 Stop Loss", _format_price(signal.stop_loss, asset)),
         "",
-        _field("💰 Take Profit", _format_price(signal.take_profit)),
+        _field("💰 Take Profit", _format_price(signal.take_profit, asset)),
         "",
         _field("⚖️ Risk Reward", f"1 : {signal.risk_reward:.1f}"),
         "",
@@ -107,7 +124,7 @@ def compose_signal_message(
     sections (docs/57 §6)."""
     sections = [
         render_header(signal, asset),
-        render_trade_setup(signal),
+        render_trade_setup(signal, asset),
         render_risk_management(signal, analysis),
         render_timestamp(now),
     ]
@@ -122,7 +139,7 @@ def render_outcome_header(signal: Signal, asset: Asset) -> str:
     return f"{_SEPARATOR}\n{emoji} {label} • {symbol}\n{_SEPARATOR}"
 
 
-def render_outcome_result(signal: Signal) -> str:
+def render_outcome_result(signal: Signal, asset: Asset) -> str:
     hit_tp = signal.status == SignalStatus.SUCCESSFUL
     closed_level_label = "💰 Take Profit" if hit_tp else "🛑 Stop Loss"
     closed_price = signal.take_profit if hit_tp else signal.stop_loss
@@ -131,9 +148,9 @@ def render_outcome_result(signal: Signal) -> str:
     lines = [
         _field("⏰ Timeframe", signal.timeframe.value.upper()),
         "",
-        _field("🎯 Entry", _format_price(signal.entry_price)),
+        _field("🎯 Entry", _format_price(signal.entry_price, asset)),
         "",
-        _field(closed_level_label, _format_price(closed_price)),
+        _field(closed_level_label, _format_price(closed_price, asset)),
         "",
         _field("📈 Result" if hit_tp else "📉 Result", result_r),
         "",
@@ -149,7 +166,7 @@ def compose_signal_outcome_message(signal: Signal, asset: Asset, *, now: datetim
     reusing the same section-composition pattern."""
     sections = [
         render_outcome_header(signal, asset),
-        render_outcome_result(signal),
+        render_outcome_result(signal, asset),
         render_timestamp(now),
     ]
     return "\n\n".join(sections)

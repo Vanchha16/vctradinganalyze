@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     # threshold constant in this project.
     signal_triggered_ttl_hours: int = 168
 
+    # Phase 9E (ADR-137) - hourly signal-generation cadence, moved out of a
+    # module constant (`workers/signal_tasks.py`) so the operator can retune
+    # it via `.env` + restart without a code change/deploy. Default
+    # unchanged from the prior hardcoded value.
+    signal_generation_interval_seconds: float = 3600.0
+
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""
     telegram_base_url: str = "https://api.telegram.org"

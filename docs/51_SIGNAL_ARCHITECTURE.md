@@ -72,11 +72,15 @@ Phase 6B implements exactly two states:
 
 The remaining six states are reserved enum values (so a future phase can start writing them without a migration) but are not reachable through any code path in 6B. Building live price-monitoring, trigger-detection, and outcome tracking (Successful/Stopped Out, `profit_loss`) is a real follow-up requiring its own design pass - not built speculatively here.
 
+**Update (Phase 9E, ADR-137):** this follow-up is now built. `TRIGGERED`, `SUCCESSFUL`, and `STOPPED_OUT` are written by `app/workers/signal_monitoring_tasks.py`; `CLOSED` (a `TRIGGERED` signal that never resolved before `signal_triggered_ttl_hours`) is computed read-time-only, the same treatment as `EXPIRED`. The trigger rule fixes a live production defect where SL/TP were evaluated the instant a signal existed, without ever confirming price reached `entry_price` first - see ADR-137 for the full incident and design. `DRAFT`/`CANCELLED` remain unreachable through any current code path.
+
 ---
 
 # 5. New Deterministic Module
 
-**`app/services/signal/status_resolver.py`** - `effective_status(stored_status: SignalStatus, created_at: datetime, now: datetime) -> SignalStatus`: returns `EXPIRED` if `stored_status is ACTIVE` and `now - created_at >= timedelta(hours=settings.signal_ttl_hours)`, otherwise returns `stored_status` unchanged. Pure function, no side effects, unit tested independently (mirrors `economic_calendar/risk_window.py`'s shape exactly).
+**`app/services/signal/status_resolver.py`** - `effective_status(stored_status: SignalStatus, created_at: datetime, now: datetime, *, triggered_at: datetime | None = None) -> SignalStatus`: returns `EXPIRED` if `stored_status is ACTIVE` and `now - created_at >= timedelta(hours=settings.signal_ttl_hours)`; returns `CLOSED` if `stored_status is TRIGGERED`, `triggered_at` is given, and `now - triggered_at >= timedelta(hours=settings.signal_triggered_ttl_hours)` (ADR-137); otherwise returns `stored_status` unchanged. Pure function, no side effects, unit tested independently (mirrors `economic_calendar/risk_window.py`'s shape exactly).
+
+**`app/services/signal_monitoring_service.py`** (Phase 9E, ADR-137) - `entry_touched(signal, candle) -> bool`: the touch-based trigger rule, `candle.low <= entry_price <= candle.high`. `evaluate_signal_outcome(signal, candle) -> SignalOutcome | None`: SL/TP touch-detection, valid only once a signal is `TRIGGERED` - callers gate this.
 
 ---
 
@@ -147,3 +151,5 @@ Verified by inspection, consistent with every prior phase - coverage tooling is 
 # 10. Out of Scope for Phase 6B
 
 Autonomous trading or broker execution (explicit user constraint); live price-monitoring / auto status transitions (Triggered/Closed/Successful/Stopped Out, `profit_loss` population); TP1/TP2/TP3 multi-target splitting (ADR-087, no formula specified anywhere); Cancelled status (no admin/user action endpoint specified); Celery Beat scheduled/proactive signal generation (ADR-089's rejected alternative); Telegram/Dashboard notification (Phase 7, downstream services don't exist); WebSocket `/ws/signals` (still tracked in BACKLOG.md §3); a genuine independent evidence-weighting pipeline per docs/11's original vision (ADR-085, superseded by Phase 6A).
+
+**Update (Phase 9E, ADR-137):** live price-monitoring / auto status transitions are now built (§4 above) - no longer out of scope. Cancelled status still has no admin/user *action endpoint* - `backend/scripts/cancel_stale_active_signals.py` is a one-off operator script for the 9E deploy migration, not a general-purpose endpoint. TP1/TP2/TP3 splitting, Telegram/Dashboard notification beyond the existing entry/outcome messages, `/ws/signals`, and the independent evidence-weighting pipeline remain out of scope, unchanged.

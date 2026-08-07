@@ -7276,6 +7276,161 @@ scrape access.
 
 ---
 
+# ADR-137
+
+Title
+
+Phase 9E: Signal Entry Confirmation (`TRIGGERED`), Per-Market Price
+Precision, and Generation Cadence as a Setting
+
+Status
+
+Accepted
+
+Context
+
+A live production defect: `signal_monitoring_service.evaluate_signal_outcome`
+evaluated Stop Loss/Take Profit the instant a `Signal` row existed,
+never checking that price had actually reached `entry_price` first.
+Signals are created at a structural level (order block/support) that is
+frequently not the current market price - if the live candle's range
+was already beyond the stop loss, the signal closed as a loss without
+the trade ever being entered. A real 2026-08-07 XAU/USD example: entry
+4275.00, SL 4243.62, live candle range 4231.37-4252.50 (never within 22
+points of entry) - stopped out one minute after generation, reported
+P&L exactly matching the SL distance. Every production outcome so far
+was -1.0R for this reason; the analysis engines had never once been
+evaluated against a real result. ADR-088 anticipated exactly this gap
+with a `TRIGGERED` state and `Signal.triggered_at` column, both left
+unused by the Phase 6B monitoring task that shipped in `9b57a68`.
+
+Separately: `message_sections.py` hardcoded 2-decimal display rounding
+for every asset. Stored prices carry full `Numeric(20, 8)` precision,
+but a forex pair (e.g. EURUSD close `1.15241000`) rendered as `"1.15"`,
+making a signal whose SL sits fractions of a pip from entry look
+identical to entry (`P&L -0.00`).
+
+Decision
+
+1. **A `TRIGGERED` state sits between `ACTIVE` (pending order) and a
+   terminal outcome.** SL/TP are now evaluated only for `TRIGGERED`
+   signals; `ACTIVE` signals are only ever checked for whether price has
+   reached `entry_price`. The trigger rule is **touch-based** -
+   `candle.low <= entry_price <= candle.high` - inferred, since no
+   document specifies a trigger rule (BACKLOG.md §21 already flagged this
+   gap). Chosen because it mirrors how a real limit order fills and is
+   symmetric with the pre-existing touch-based SL/TP check.
+2. **Same-candle ambiguity (entry and SL both touched by one candle):
+   treated as triggered-then-stopped-out**, not left dangling as
+   `TRIGGERED`. Consistent with the pre-existing "Stop Loss takes
+   precedence" convention in `evaluate_signal_outcome` - never
+   overstate a win.
+3. **A separate `signal_triggered_ttl_hours` setting (default 168h/7
+   days) governs how long a `TRIGGERED` signal can stay open before it is
+   considered closed with no result.** Reusing `signal_ttl_hours` (the
+   pending-order TTL, default 24h) was rejected - a live trade and a
+   still-pending order are different things with different natural
+   lifetimes, and collapsing them would either expire live trades too
+   aggressively or leave pending orders open too long. A signal past this
+   TTL resolves to `CLOSED` **read-time-only**, via
+   `status_resolver.effective_status` - exactly the same treatment
+   ADR-088 already established for pending-`ACTIVE`-past-`signal_ttl_hours`
+   → `EXPIRED`: a function of continuously-advancing wall-clock time,
+   correct only at the instant computed, so never persisted.
+   `profit_loss` is left `null` in this case (not recorded against a
+   last-known price) - there is no real close event to attribute a P&L
+   to, and inventing one from an arbitrary "last candle" would overstate
+   precision that doesn't exist.
+4. **`_has_open_signal` (the hourly generation job's dedup gate, ADR-125)
+   now also treats `TRIGGERED` as open**, not just `ACTIVE` - a live
+   trade is strictly more "open" than a pending order. Missing this would
+   have been a new bug introduced by this very state: the moment a
+   pending signal filled, the dedup gate would have silently reopened and
+   let the hourly job spam a second call for the same asset mid-trade.
+5. **No Telegram message is sent on a bare `TRIGGERED` transition.** The
+   entry notification already told the subscriber the level; a second
+   message would roughly double volume for the entry event alone with
+   limited benefit. The outcome message (already existing) still closes
+   the loop on `SUCCESSFUL`/`STOPPED_OUT`.
+6. **Price precision is now derived per-asset, display-only**: FOREX 5
+   decimal places, except JPY-quoted pairs at 3 (standard FX convention,
+   read off `Asset.quote_currency`); METAL/CRYPTO/INDEX unchanged at 2.
+   The stored `Decimal` is never touched - only `_format_price`'s
+   quantization target changes. Frontend (`lib/format.ts`'s `formatPrice`)
+   was checked and found to already use a 2-5 fraction-digit range via
+   `toLocaleString`, not a hardcoded 2dp - no frontend fix was needed.
+7. **`_SIGNAL_GENERATION_INTERVAL_SECONDS` moved from a `workers/
+   signal_tasks.py` module constant into `settings.
+   signal_generation_interval_seconds`** (default unchanged, 3600s) so
+   the operator can retune cadence via `.env` + restart without a
+   code change/deploy, per the operator's request once entry confirmation
+   is expected to sharply reduce false-instant-stop-out volume on its
+   own. The interval itself is not changed in this phase.
+8. **A new idempotent operator script,
+   `backend/scripts/cancel_stale_active_signals.py`**, marks every
+   pre-deploy `ACTIVE` signal `CANCELLED` (an enum value that already
+   existed, unused). Dry-run by default, requires `--confirm` to write.
+   Necessary because pre-deploy `ACTIVE` rows were never entry-confirmed
+   under the old semantics and would otherwise be treated as pending
+   orders at levels the market may have long since passed.
+
+Reason
+
+The core defect was that a signal's presence in the database was
+conflated with a trade actually being live. `TRIGGERED` (already
+designed for in ADR-088, never wired up) is the correct fix: it makes
+"has price reached the level we called" a first-class, explicit state
+instead of an implicit assumption. Every downstream decision in this
+ADR (the same-candle rule, the separate TTL, the dedup-gate fix, the
+no-extra-message choice) exists because introducing a real intermediate
+state has real knock-on effects on every place that previously only
+ever saw `ACTIVE`/terminal - deliberately working through each one here
+rather than discovering them later as further production incidents.
+
+Trade-offs
+
+Pros
+
+Fixes a defect that was producing 100% guaranteed-loss signals in
+production - every signal generated on stale entry logic would test the
+analysis engines against real results for the first time. The touch-
+based trigger and same-candle SL-precedence rules are inferences, not
+inventions - both are explicitly named as such here and in code
+comments, satisfying "never invent architecture silently." The read-
+time-only `CLOSED`-by-TTL treatment reuses an already-established,
+already-tested pattern (ADR-088) rather than adding a new persistence
+mechanism.
+
+Cons
+
+`signal_triggered_ttl_hours` (168h) and the touch-based trigger rule are
+both hand-picked, not empirically calibrated - same caveat as every
+other threshold constant in this project (ADR-028/030/035/036/037/042/
+046/055/059/060/064/075, `signal_ttl_hours` itself). A `CLOSED`-by-TTL
+signal has no persisted P&L or `closed_at`, so it is indistinguishable
+in stored data from "still being polled" without recomputing
+`effective_status` - acceptable since every existing read path already
+goes through that function, but worth remembering if a new direct-query
+consumer is ever added. No tolerance band on the touch rule means a
+signal that trades exactly to the pip and reverses still counts as
+triggered - deliberate (symmetric with the existing SL/TP touch check),
+but a source of possible near-miss disagreement with a human trader's
+looser mental model of "did this fill."
+
+Future Review
+
+Revisit `signal_triggered_ttl_hours` once a week of real post-fix
+production data exists (tracked in BACKLOG.md §21) - both its own value
+and whether "notify only on state change" is warranted if delivery
+volume is still high after this fix's expected drop. Revisit the
+touch-based trigger rule if real fill behavior (once a broker/exchange
+integration exists, if ever) suggests a tolerance band is needed.
+Revisit whether `TRIGGERED` should get its own Telegram message if user
+feedback indicates the entry notification alone is insufficient signal
+that a trade has gone live.
+
+---
+
 # Review Policy
 
 Review ADRs:

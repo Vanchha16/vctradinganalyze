@@ -165,6 +165,16 @@ row - no new formatting/scoring logic, matching this project's "AI never
 computes the deterministic parts, deterministic code never fabricates the
 narrative parts" boundary (ADR-078/079).
 
+**Update (Phase 9E, ADR-137):** entry/stop/target prices now render at a
+per-asset decimal precision (`message_sections._format_price`) - 5dp for
+forex, 3dp for JPY-quoted pairs, 2dp for metal/crypto/index (unchanged) -
+instead of a single hardcoded 2dp for every asset, which made forex SL/TP
+levels indistinguishable from entry. Display only; the stored `Decimal`
+is untouched. A `TRIGGERED` transition (new in this phase, docs/51 §4)
+deliberately sends **no** Telegram message of its own - only the existing
+entry and outcome messages fire, to avoid roughly doubling delivery
+volume for limited subscriber benefit.
+
 ---
 
 # 7. New Endpoints

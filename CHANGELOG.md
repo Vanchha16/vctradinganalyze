@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed - Market Data: Daily Quota Enforcement Never Actually Worked (ADR-025)
+
+**A live production defect is fixed**: market data (price candles for every asset, every timeframe) silently went stale for 4+ hours in production, discovered when a user noticed the app's price chart didn't match TradingView's live price. Root cause: `RateLimitedProvider`'s daily-quota counter (`self._daily_used`) was a plain in-memory instance attribute, but `get_market_data_providers()` builds a brand-new `RateLimitedProvider` on every single Celery task run - so the counter reset to `0` every time and could never reach its own configured 800/day cap before being discarded. Real usage climbed unbounded against Twelve Data's own server-side counter until Twelve Data cut the account off mid-day ("1373 API credits were used, with the current limit being 800")
+
+Fixed by moving the daily counter into Redis (`app/utils/redis_fixed_window.increment_and_check`, the same shared helper `rate_limit.py`/`quota.py` already use), keyed by `(provider name, UTC date)` - it now survives both task-to-task calls and worker restarts. The per-minute token bucket remains in-memory/per-instance for now (still smooths bursts within one task run) - a Redis-backed version needs an atomic read-refill-decrement, its own follow-up, stated explicitly as a known remaining limitation rather than silently left
+
 ### Added - Telegram: Entry-Confirmed Notification on TRIGGERED (reverses part of ADR-137)
 
 A new Telegram message now fires the moment a signal transitions ACTIVE → TRIGGERED (price reaches the entry level), not just at signal creation and final outcome. ADR-137 originally decided against this to limit message volume, but subscribers had no way to tell "a call was made" apart from "the trade is actually live" without watching the app - reversed per explicit operator request. `compose_signal_triggered_message` (new, `message_sections.py`), `TelegramService.send_triggered`, `telegram.send_signal_triggered_task` / `enqueue_signal_triggered_delivery` follow the exact same shape as the existing entry/outcome delivery hooks. The same-candle trigger-and-resolve case is unaffected - it still sends only the outcome message, never both

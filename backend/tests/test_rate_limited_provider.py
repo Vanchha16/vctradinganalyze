@@ -4,6 +4,7 @@ import pytest
 
 from app.models.enums import MarketType, Timeframe
 from app.services.market_data.exceptions import DailyQuotaExceededError
+from app.services.market_data.providers import rate_limited
 from app.services.market_data.providers.base import ProviderCapabilities, RawCandle
 from app.services.market_data.providers.rate_limited import RateLimitedProvider
 
@@ -51,6 +52,30 @@ class _FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+
+class _FakeRedis:
+    """In-memory stand-in for the daily-quota counter (2026-08-07) - no
+    real Redis dependency, and no shared state leaking across tests the
+    way a real `_redis_client` singleton keyed by "today's real UTC date"
+    would."""
+
+    def __init__(self) -> None:
+        self._store: dict[str, int] = {}
+
+    def incr(self, key: str) -> int:
+        self._store[key] = self._store.get(key, 0) + 1
+        return self._store[key]
+
+    def expire(self, key: str, seconds: int) -> None:
+        pass  # TTL cleanup isn't exercised by these tests
+
+
+@pytest.fixture(autouse=True)
+def _fake_redis(monkeypatch: pytest.MonkeyPatch) -> _FakeRedis:
+    fake = _FakeRedis()
+    monkeypatch.setattr(rate_limited, "_redis_client", fake)
+    return fake
 
 
 def test_rate_limited_provider_allows_calls_up_to_capacity_without_sleeping() -> None:
@@ -175,9 +200,60 @@ def test_rate_limited_provider_preserves_behavior_except_quota_enforcement() -> 
 
     # Now exhaust the daily quota - behavior diverges *only* by raising,
     # not by altering what the underlying provider would have returned.
+    # A distinct provider name avoids sharing `generously_wrapped`'s quota
+    # bucket above - the daily counter is now keyed by provider name
+    # (2026-08-07), deliberately shared across separate instances of the
+    # *same* provider, but two different providers must stay independent.
+    class _TightlyCountingProvider(_CountingProvider):
+        name = "counting-tight"
+
     tightly_wrapped = RateLimitedProvider(
-        _CountingProvider(), requests_per_minute=1000, requests_per_day=1
+        _TightlyCountingProvider(), requests_per_minute=1000, requests_per_day=1
     )
     tightly_wrapped.get_candles("EURUSD", Timeframe.M1, start, start)  # consumes the only slot
     with pytest.raises(DailyQuotaExceededError):
         tightly_wrapped.get_candles("EURUSD", Timeframe.M1, start, start)
+
+
+# --- Cleanup (2026-08-07): quota survives across separate instances -------
+
+
+def test_daily_quota_persists_across_separate_provider_instances() -> None:
+    """The actual bug this fixes: `get_market_data_providers()` builds a
+    brand-new `RateLimitedProvider` on every Celery task run - the daily
+    counter must survive that, or it can never reach its own cap."""
+    fake_now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    first_instance = RateLimitedProvider(
+        _CountingProvider(), requests_per_minute=1000, requests_per_day=2, now=lambda: fake_now
+    )
+    first_instance.get_candles("EURUSD", Timeframe.M1, fake_now, fake_now)
+    first_instance.get_candles("EURUSD", Timeframe.M1, fake_now, fake_now)
+
+    # A fresh instance (same provider name, same day) must inherit the
+    # already-exhausted quota, not start over at zero.
+    second_instance = RateLimitedProvider(
+        _CountingProvider(), requests_per_minute=1000, requests_per_day=2, now=lambda: fake_now
+    )
+    with pytest.raises(DailyQuotaExceededError):
+        second_instance.get_candles("EURUSD", Timeframe.M1, fake_now, fake_now)
+
+
+def test_daily_quota_is_scoped_per_provider_name() -> None:
+    """Two different providers must not share one counter."""
+    fake_now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    class _OtherProvider(_CountingProvider):
+        name = "other"
+
+    exhausted = RateLimitedProvider(
+        _CountingProvider(), requests_per_minute=1000, requests_per_day=1, now=lambda: fake_now
+    )
+    exhausted.get_candles("EURUSD", Timeframe.M1, fake_now, fake_now)
+    with pytest.raises(DailyQuotaExceededError):
+        exhausted.get_candles("EURUSD", Timeframe.M1, fake_now, fake_now)
+
+    other = RateLimitedProvider(
+        _OtherProvider(), requests_per_minute=1000, requests_per_day=1, now=lambda: fake_now
+    )
+    other.get_candles("EURUSD", Timeframe.M1, fake_now, fake_now)  # own, unexhausted quota

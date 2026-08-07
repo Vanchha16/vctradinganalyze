@@ -353,6 +353,16 @@ scoping, and reasoning behind each.
   price precision (5dp forex, 3dp JPY pairs, was a hardcoded 2dp for
   every asset), and the hourly generation interval moved from a module
   constant to a `.env`-tunable setting.
+- **9F Admin Symbol Management** - **complete.** Admin CRUD (minus hard
+  delete) for `Asset`, the single control point for three production
+  pipelines (market data collection, hourly AI signal generation, news
+  matching) - deactivating a symbol stops all three immediately, no
+  deploy needed, making this the operational cost/blast-radius lever
+  for the whole automated system. Symbol immutable after creation
+  (natural key for all price/indicator/SMC history); no hard delete
+  (cascading history); every mutation audited (ADR-138). New Admin
+  Assets page reusing existing table/filter-bar/dialog components, no
+  new UI primitives.
 
 ---
 

@@ -7431,6 +7431,142 @@ that a trade has gone live.
 
 ---
 
+# ADR-138
+
+Title
+
+Phase 9F: Admin Symbol (Asset) Management - Immutable Symbol, No Hard
+Delete, Deactivation as the Removal Path
+
+Status
+
+Accepted
+
+Context
+
+`Asset.is_active` already gates three production pipelines end to end:
+`workers/market_data_tasks.py` (provider requests - Twelve Data's free
+tier is 800/day, and the current schedule requests roughly 1,855 per
+asset per day, so asset count is the primary quota lever),
+`workers/signal_tasks.py` (hourly AI signal generation - real OpenAI
+spend per asset per hour), and `services/news_ingestion_pipeline.py`
+(news asset matching). Until this phase, the only way to add or retire a
+symbol was direct database access - no admin endpoint or UI existed,
+despite `Asset.is_active`, `AssetRepository.get_by_id`/`get_by_symbol`/
+`list_active`/`list_filtered`/`count_filtered`/`create`, and `Asset.
+symbol`'s `unique=True` constraint already being in place since Phase
+4A. What was missing was only write endpoints and a UI - no migration
+was needed.
+
+Decision
+
+1. **Symbol is immutable after creation.** `Asset.symbol` is the natural
+   key every `price_candle`, `indicator_result`, and `smc_event` row is
+   tied to via `asset_id`, and provider symbol mapping keys off it
+   (docs/41). Renaming it would silently orphan the meaning of all
+   existing history. `AdminAssetUpdateRequest` accepts an optional
+   `symbol` field specifically so an attempt to change it reaches
+   `AdminAssetService.update_asset` and is rejected with a clear 422
+   error (`ValidationException`), rather than being silently dropped by
+   an allow-list schema the way `AdminUserUpdateRequest` excludes
+   `role`/`is_active`/`password`.
+2. **No hard delete.** `Asset` has cascading relationships to `candles`,
+   `indicator_results`, and `smc_events` (`cascade="all, delete-orphan"`).
+   Deleting an asset would destroy the price history every past analysis
+   was built on. Deactivation (`is_active=False`) is the supported
+   "remove it" action - `AdminAssetService` exposes no delete method at
+   all, mirroring `AdminUserService`'s soft-delete precedent but going
+   one step further (no delete path whatsoever, not even soft) since
+   there is no equivalent "the row itself should stop existing" need an
+   asset ever has.
+3. **`is_active` is the single control point for three pipelines,
+   making this the operational cost/blast-radius lever for the whole
+   automated system.** Deactivating an asset stops market data
+   collection, AI signal generation, and news matching for it
+   immediately, with no code change and no deploy. Once this ships,
+   deactivating all but one symbol is the supported way to run a
+   low-cost single-symbol test, proportionally reducing Twelve Data
+   quota consumption and OpenAI spend.
+4. **Existing `ACTIVE`/`TRIGGERED` signals are left to resolve
+   naturally on deactivation** (§3.4 of the build spec) - not silently
+   cancelled. A live call should not vanish because someone tidied the
+   symbol list; `signal_monitoring_tasks.py` (ADR-137) keeps evaluating
+   it exactly as it would for any other open signal, unaffected by the
+   asset's `is_active` flag (only the *generation* path,
+   `workers/signal_tasks.py`, checks it).
+5. **Every mutation is audited**, following `AdminUserService._audit`'s
+   exact pattern - `admin_asset_created`/`admin_asset_updated`/
+   `admin_asset_activated`/`admin_asset_deactivated` rows, `resource=
+   "asset"`, surfaced immediately on the existing Phase 8F Audit Logs
+   page with no changes needed there.
+6. **Routes and pagination convention copied verbatim from `GET
+   /admin/users`** (param names, response envelope) - `GET/POST
+   /admin/assets`, `PATCH /admin/assets/{id}`, `POST /admin/assets/{id}/
+   activate`, `POST /admin/assets/{id}/deactivate`. Activate/deactivate
+   are separate `POST` actions rather than a single `PATCH .../status`
+   (Users' shape) so each is a one-line, self-describing action in an
+   audit/API log without a request body to inspect. `AssetRepository.
+   list_filtered`/`count_filtered` gained a `search` parameter
+   (symbol/name `ILIKE`, same shape as `UserRepository.
+   list_paginated`'s) rather than a second, parallel filtering
+   implementation - additive, every existing caller (the public `GET
+   /assets`) is unaffected.
+7. **Every admin asset contract in this ADR is inferred** - `docs/04`
+   had no admin asset endpoints of any kind before this phase; `docs/04`
+   is updated alongside this ADR per the project's "update docs before/
+   alongside implementation" practice.
+
+Reason
+
+The three-pipeline blast radius (§1 above) makes this feature a cost
+control, not just an admin convenience - correctness here is
+production-critical in the same way ADR-127/132/133's rate limits and
+lockouts are. Reusing `AdminUserService`'s exact shape (constructor-
+injected repositories, one method per use case, private `_audit`/
+`_commit` helpers) rather than inventing a new admin-service pattern
+keeps the two admin domains reviewable the same way; reusing `list_
+filtered`/`count_filtered` rather than a parallel query path keeps the
+public `GET /assets` and admin `GET /admin/assets` endpoints guaranteed
+to agree on what "active" and "matching a filter" mean.
+
+Trade-offs
+
+Pros
+
+Deactivation is instant, reversible, and requires no deploy - the
+cheapest possible operational lever for both cost control (stop OpenAI/
+Twelve Data spend on a symbol) and incident response (stop a
+misbehaving symbol's pipeline immediately). No hard delete removes an
+entire class of "did that also happen to cascade-delete price history
+anyone depended on" incident. Reusing the exact `AdminUserService`/
+`admin_users.py` shape means this feature required no new architectural
+pattern, only new instances of an already-reviewed one.
+
+Cons
+
+An admin who genuinely wants a symbol gone (not just paused) has no way
+to get there through this API - only direct database access, same gap
+`AdminUserService`'s soft-delete-only design already accepts for users.
+`AdminAssetUpdateRequest` intentionally deviates from `AdminUserUpdateRequest`'s
+allow-list-only pattern by accepting `symbol` just to reject it - a
+reader comparing the two schemas side by side needs this ADR's reasoning
+to understand why, rather than the shape being self-evident. Leaving
+open signals unresolved after deactivation means a deactivated asset can
+still generate Telegram outcome messages for calls made before
+deactivation - correct per §3.4's reasoning, but worth remembering if a
+future admin expects deactivation to mean "totally silent, immediately."
+
+Future Review
+
+Revisit whether a genuine hard-delete path is ever needed (e.g. a
+symbol created by mistake, seconds after creation, with no history yet)
+- deliberately not built speculatively here. Revisit whether deactivation
+should offer an *optional* "also cancel open signals" action once real
+operator usage shows the natural-resolution default is the wrong
+default in practice.
+
+---
+
 # Review Policy
 
 Review ADRs:

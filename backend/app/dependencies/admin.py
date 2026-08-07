@@ -16,6 +16,7 @@ from app.repositories.news_source_repository import NewsSourceRepository
 from app.repositories.signal_repository import SignalRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.user_session_repository import UserSessionRepository
+from app.services.admin_asset_service import AdminAssetService
 from app.services.admin_audit_log_service import AdminAuditLogService
 from app.services.admin_system_service import AdminSystemService
 from app.services.admin_user_service import AdminUserService
@@ -32,6 +33,12 @@ def get_admin_user_service(db: Annotated[Session, Depends(get_db)]) -> AdminUser
         user_session_repository=UserSessionRepository(db),
         audit_log_repository=AuditLogRepository(db),
         user_service=UserService(user_repository),
+    )
+
+
+def get_admin_asset_service(db: Annotated[Session, Depends(get_db)]) -> AdminAssetService:
+    return AdminAssetService(
+        asset_repository=AssetRepository(db), audit_log_repository=AuditLogRepository(db)
     )
 
 

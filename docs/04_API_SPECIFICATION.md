@@ -964,6 +964,42 @@ GET /subscription/history
 
 GET /admin/users
 
+GET /admin/assets
+
+Query params: `search` (matches `symbol` or `name`, `ILIKE`), `market_type`,
+`is_active`, `page`, `limit` - same pagination convention as `GET
+/admin/users`. Response: `{"items","page","limit","total"}`, items are the
+same `AssetResponse` shape `GET /assets` already returns. Contract is
+inferred (ADR-138, Phase 9F) - `docs/04` had no admin asset endpoints before
+this phase.
+
+POST /admin/assets
+
+Body: `{"symbol", "name", "market_type", "exchange"?, "base_currency"?,
+"quote_currency"?}`. `symbol` is uppercased server-side. `409 conflict` if
+the symbol already exists. Created assets are `is_active=true`. Audited as
+`admin_asset_created`.
+
+PATCH /admin/assets/{id}
+
+Body (all optional): `{"symbol"?, "name"?, "market_type"?, "exchange"?,
+"base_currency"?, "quote_currency"?}`. **`symbol` cannot actually be
+changed** - if provided and different from the stored value, returns `422
+validation_error` ("Symbol cannot be changed after creation."), per ADR-138.
+Audited as `admin_asset_updated` only when a field actually changed.
+
+POST /admin/assets/{id}/activate
+
+POST /admin/assets/{id}/deactivate
+
+No request body. Toggles `Asset.is_active`, which gates market data
+collection (`workers/market_data_tasks.py`), hourly AI signal generation
+(`workers/signal_tasks.py`), and news asset matching
+(`services/news_ingestion_pipeline.py`) for that symbol. Existing
+`ACTIVE`/`TRIGGERED` signals for the asset are left to resolve naturally on
+deactivation, never cancelled (ADR-138 §3.4). Audited as
+`admin_asset_activated`/`admin_asset_deactivated`.
+
 GET /admin/signals
 
 Query params: `symbol`, `status`, `page`, `limit` - identical to `GET

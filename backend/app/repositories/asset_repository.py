@@ -1,6 +1,7 @@
 import uuid
 from collections.abc import Sequence
-from typing import Any
+
+from sqlalchemy import Select, or_
 
 from app.models.asset import Asset
 from app.models.enums import MarketType
@@ -26,30 +27,46 @@ class AssetRepository(BaseRepository[Asset]):
     def list_filtered(
         self,
         *,
+        search: str | None = None,
         market_type: MarketType | None = None,
         is_active: bool | None = None,
         offset: int = 0,
         limit: int = 20,
     ) -> Sequence[Asset]:
-        query = self._filter_by(self._query(), **self._build_filters(market_type, is_active))
+        """`search` (Phase 9F, `AdminAssetService`) is additive - every
+        existing caller omits it and gets the prior unfiltered behavior,
+        same convention `SignalRepository.find_paginated`'s `timeframe`
+        addition already established."""
+        query = self._apply_filters(self._query(), search, market_type, is_active)
         return (
             self.session.execute(self._paginate(query, offset=offset, limit=limit)).scalars().all()
         )
 
     def count_filtered(
-        self, *, market_type: MarketType | None = None, is_active: bool | None = None
+        self,
+        *,
+        search: str | None = None,
+        market_type: MarketType | None = None,
+        is_active: bool | None = None,
     ) -> int:
-        query = self._filter_by(self._query(), **self._build_filters(market_type, is_active))
+        query = self._apply_filters(self._query(), search, market_type, is_active)
         return self._count(query)
 
     @staticmethod
-    def _build_filters(market_type: MarketType | None, is_active: bool | None) -> dict[str, Any]:
-        filters: dict[str, Any] = {}
+    def _apply_filters(
+        query: Select[tuple[Asset]],
+        search: str | None,
+        market_type: MarketType | None,
+        is_active: bool | None,
+    ) -> Select[tuple[Asset]]:
+        if search:
+            pattern = f"%{search}%"
+            query = query.where(or_(Asset.symbol.ilike(pattern), Asset.name.ilike(pattern)))
         if market_type is not None:
-            filters["market_type"] = market_type
+            query = query.where(Asset.market_type == market_type)
         if is_active is not None:
-            filters["is_active"] = is_active
-        return filters
+            query = query.where(Asset.is_active == is_active)
+        return query
 
     def create(self, asset: Asset) -> Asset:
         self.session.add(asset)

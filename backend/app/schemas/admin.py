@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import UserRole
+from app.models.enums import MarketType, UserRole
 
 _EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
@@ -118,3 +118,42 @@ class AdminPasswordResetResponse(BaseModel):
     temporary_password: str = Field(
         description="Shown exactly once - never persisted in plaintext, never logged."
     )
+
+
+# ---- Admin Assets (Phase 9F, ADR-138) ----------------------------------
+
+
+class AdminAssetCreateRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "symbol": "EURUSD",
+                "name": "Euro / US Dollar",
+                "market_type": "forex",
+                "exchange": None,
+                "base_currency": "EUR",
+                "quote_currency": "USD",
+            }
+        }
+    )
+
+    symbol: str = Field(min_length=1, max_length=20, examples=["EURUSD"])
+    name: str = Field(min_length=1, max_length=255, examples=["Euro / US Dollar"])
+    market_type: MarketType
+    exchange: str | None = Field(default=None, max_length=100)
+    base_currency: str | None = Field(default=None, max_length=10)
+    quote_currency: str | None = Field(default=None, max_length=10)
+
+
+class AdminAssetUpdateRequest(BaseModel):
+    """`symbol` is accepted here (unlike `AdminUserUpdateRequest`'s
+    allow-list exclusions) specifically so an attempt to change it
+    reaches `AdminAssetService.update_asset` and is rejected with a clear
+    error, rather than silently ignored (ADR-138)."""
+
+    symbol: str | None = Field(default=None, min_length=1, max_length=20)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    market_type: MarketType | None = None
+    exchange: str | None = None
+    base_currency: str | None = None
+    quote_currency: str | None = None

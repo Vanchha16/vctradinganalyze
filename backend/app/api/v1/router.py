@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.v1.routes import (
+    admin_assets,
     admin_logs,
     admin_system,
     admin_users,
@@ -53,6 +54,7 @@ api_router.include_router(health.router, tags=["health"])
 api_router.include_router(metrics.router, tags=["metrics"])
 api_router.include_router(auth.router)
 api_router.include_router(admin_users.router)
+api_router.include_router(admin_assets.router)
 api_router.include_router(admin_logs.router)
 api_router.include_router(admin_system.router)
 api_router.include_router(market_data.router, dependencies=[_data_rate_limit])

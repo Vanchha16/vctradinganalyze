@@ -118,11 +118,24 @@ export interface AdminAuditLogListResponse {
 
 // ---- Admin System/Analytics/Maintenance (docs/04 §Admin, docs/58 §3.2, Phase 7D-C, ADR-130) ----
 
+// Phase 9G (ADR-139) - per-pipeline ingestion health, added to `GET
+// /admin/system`. `last_success_at`/`last_error` are Redis-backed and
+// fail-open server-side - `null` means "never recorded," not
+// necessarily "never succeeded."
+export interface IngestionHealthResponse {
+  providers: string[];
+  uses_mock: boolean;
+  last_success_at: string | null;
+  last_error: string | null;
+}
+
 export interface AdminSystemStatusResponse {
   database: "ok" | "down";
   redis: "ok" | "down";
   signals_today: number;
   ai_analyses_today: number;
+  news: IngestionHealthResponse;
+  economic_calendar: IngestionHealthResponse;
 }
 
 export interface AdminAnalyticsResponse {

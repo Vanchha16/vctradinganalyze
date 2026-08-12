@@ -5,6 +5,8 @@ import {
   ColorType,
   createChart,
   createSeriesMarkers,
+  HistogramSeries,
+  LineSeries,
   LineStyle,
   type IChartApi,
   type ISeriesApi,
@@ -15,10 +17,11 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { useTheme } from "next-themes";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { computeMACD, computeRSI } from "@/lib/technical-indicators";
 import type { LatestCandleResponse, Timeframe } from "@/services/types";
 
 const TIMEFRAMES: Timeframe[] = ["m1", "m5", "m15", "m30", "h1", "h4", "d1", "w1", "mn"];
@@ -90,6 +93,7 @@ export function PriceChart({
   timeframe,
   onTimeframeChange,
   isLoading,
+  showIndicators = false,
 }: {
   candles: LatestCandleResponse[];
   overlays?: PriceLineOverlay[];
@@ -98,14 +102,49 @@ export function PriceChart({
   timeframe: Timeframe;
   onTimeframeChange: (timeframe: Timeframe) => void;
   isLoading?: boolean;
+  //: Adds RSI(14)/MACD(12,26,9) sub-panes below the candlestick pane,
+  //: computed client-side from `candles` (no backend indicator-series
+  //: endpoint exists - `IndicatorResultResponse` only exposes the latest
+  //: snapshot value, not a time series). Defaults off so the other three
+  //: `PriceChart` call sites keep their current fixed height/layout.
+  showIndicators?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const rsiSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdLineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdSignalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdHistSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const candlesRef = useRef<LatestCandleResponse[]>(candles);
   candlesRef.current = candles;
   const { resolvedTheme } = useTheme();
+
+  const indicatorSeries = useMemo(() => {
+    if (!showIndicators || candles.length === 0) return null;
+    const times = candles.map((candle) => (new Date(candle.timestamp).getTime() / 1000) as UTCTimestamp);
+    const closes = candles.map((candle) => Number(candle.close));
+    const rsi = computeRSI(closes);
+    const macd = computeMACD(closes);
+    return {
+      rsi: times.map((time, i) => ({ time, value: rsi[i] })).filter((point) => point.value !== null),
+      macdLine: times.map((time, i) => ({ time, value: macd.macd[i] })).filter((point) => point.value !== null),
+      signal: times.map((time, i) => ({ time, value: macd.signal[i] })).filter((point) => point.value !== null),
+      histogram: times
+        .map((time, i) => ({
+          time,
+          value: macd.histogram[i],
+          color: (macd.histogram[i] ?? 0) >= 0 ? "#22C55E" : "#EF4444",
+        }))
+        .filter((point) => point.value !== null),
+    } as {
+      rsi: { time: UTCTimestamp; value: number }[];
+      macdLine: { time: UTCTimestamp; value: number }[];
+      signal: { time: UTCTimestamp; value: number }[];
+      histogram: { time: UTCTimestamp; value: number; color: string }[];
+    };
+  }, [candles, showIndicators]);
 
   // Create the chart once per mount. `autoSize: true` internally wires a
   // ResizeObserver whose callback can still fire (and paint into an
@@ -170,6 +209,28 @@ export function PriceChart({
     seriesRef.current = series;
     markersPluginRef.current = createSeriesMarkers(series, []);
 
+    if (showIndicators) {
+      // Pane 0 is the candlestick pane created above; pane 1/2 are
+      // created implicitly the first time a series targets that index
+      // (lightweight-charts v5 multi-pane API).
+      const rsiSeries = chart.addSeries(LineSeries, { color: "#A78BFA", lineWidth: 1, title: "RSI 14" }, 1);
+      rsiSeries.createPriceLine({ price: 70, color: "rgba(148, 163, 184, 0.5)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: "" });
+      rsiSeries.createPriceLine({ price: 30, color: "rgba(148, 163, 184, 0.5)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: "" });
+      rsiSeriesRef.current = rsiSeries;
+
+      const macdHistSeries = chart.addSeries(HistogramSeries, { title: "MACD Hist" }, 2);
+      macdHistSeriesRef.current = macdHistSeries;
+      const macdLineSeries = chart.addSeries(LineSeries, { color: "#3B82F6", lineWidth: 1, title: "MACD" }, 2);
+      macdLineSeriesRef.current = macdLineSeries;
+      const macdSignalSeries = chart.addSeries(LineSeries, { color: "#F59E0B", lineWidth: 1, title: "Signal" }, 2);
+      macdSignalSeriesRef.current = macdSignalSeries;
+
+      const panes = chart.panes();
+      panes[0]?.setHeight(220);
+      panes[1]?.setHeight(90);
+      panes[2]?.setHeight(90);
+    }
+
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
@@ -183,7 +244,15 @@ export function PriceChart({
       chartRef.current = null;
       seriesRef.current = null;
       markersPluginRef.current = null;
+      rsiSeriesRef.current = null;
+      macdLineSeriesRef.current = null;
+      macdSignalSeriesRef.current = null;
+      macdHistSeriesRef.current = null;
     };
+    // `showIndicators` is treated as fixed per call site (mirrors this
+    // effect's existing mount-once pattern) - toggling it at runtime
+    // would require tearing down and recreating the chart, not supported.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Theme-sync the text color (docs/54 §3's "Theme Sync" requirement).
@@ -211,6 +280,15 @@ export function PriceChart({
     );
     chartRef.current.timeScale().fitContent();
   }, [candles]);
+
+  // Push RSI/MACD data into the indicator panes whenever it changes.
+  useEffect(() => {
+    if (!indicatorSeries) return;
+    rsiSeriesRef.current?.setData(indicatorSeries.rsi);
+    macdHistSeriesRef.current?.setData(indicatorSeries.histogram);
+    macdLineSeriesRef.current?.setData(indicatorSeries.macdLine);
+    macdSignalSeriesRef.current?.setData(indicatorSeries.signal);
+  }, [indicatorSeries]);
 
   // Redraw overlay price lines whenever they change.
   useEffect(() => {
@@ -313,7 +391,9 @@ export function PriceChart({
           </Select>
         </div>
       </div>
-      <div className="relative h-[360px] w-full rounded-md border border-border bg-muted/5 p-2">
+      <div
+        className={`relative w-full rounded-md border border-border bg-muted/5 p-2 ${showIndicators ? "h-[420px]" : "h-[360px]"}`}
+      >
         {isLoading && candles.length === 0 ? <Skeleton className="absolute inset-0" /> : null}
         <div ref={containerRef} className="h-full w-full" />
       </div>

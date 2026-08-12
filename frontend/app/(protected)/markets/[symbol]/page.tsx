@@ -106,6 +106,7 @@ export default function MarketDetailPage() {
                   timeframe={timeframe}
                   onTimeframeChange={setTimeframe}
                   isLoading={candlesQuery.isLoading}
+                  showIndicators
                 />
               )}
             </div>

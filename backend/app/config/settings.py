@@ -159,6 +159,32 @@ class Settings(BaseSettings):
     # a substitute.
     metrics_auth_token: str = ""
 
+    # Phase 11 (EA Bot, .claude/specs/phase-11-ea-bot-exness-mt5-execution.md
+    # §0.6/§0.9) - hard kill switch for real order placement. Default
+    # `False` in every environment including production; only the operator
+    # may flip this to `True`, after personally reviewing §12's dry-run
+    # output, in a fresh action - never as part of a deploy/build step.
+    execution_enabled: bool = False
+    # Deliberately singular, unlike `market_data_providers` (a failover
+    # chain is safe for read-only data; for order placement a second
+    # provider firing after a partial failure could double-place a real
+    # order, so exactly one execution provider is ever active).
+    execution_provider: str = "mock"
+    execution_rate_limit_per_minute: float = 60.0
+
+    # MetaApi.cloud bridge credentials (§0.7 - handled like every other
+    # vendor secret: .env-sourced, never logged, never committed - but
+    # this one controls a real-money account, treat with extra care).
+    metaapi_token: str = ""
+    metaapi_account_id: str = ""
+    metaapi_request_timeout_seconds: float = 30.0
+
+    # Decided values (spec §4, operator, 2026-08-12/13). `execution_symbol`
+    # is the confirmed real Exness symbol (§2/§7) - not `XAUUSD`.
+    execution_symbol: str = "XAUUSDc"
+    execution_risk_percent: float = 3.0
+    execution_max_open_positions: int = 1
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

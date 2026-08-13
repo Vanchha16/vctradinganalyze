@@ -14,12 +14,19 @@ from app.config import settings
 from app.database.base import Base
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
+from app.models.broker_order import BrokerOrder
 from app.models.enums import MarketType, Recommendation, SignalStatus, SignalType, Timeframe
 from app.models.price_candle import PriceCandle
 from app.models.signal import Signal
 from app.workers import signal_monitoring_tasks
 
-_TABLES = [Asset.__table__, AIAnalysis.__table__, Signal.__table__, PriceCandle.__table__]
+_TABLES = [
+    Asset.__table__,
+    AIAnalysis.__table__,
+    Signal.__table__,
+    PriceCandle.__table__,
+    BrokerOrder.__table__,
+]
 
 
 @pytest.fixture

@@ -16,6 +16,7 @@ from app.models.signal import Signal
 from app.repositories.signal_repository import SignalRepository
 from app.services.ai_orchestrator.types import AIAnalysisResult
 from app.services.ai_orchestrator_engine import AIOrchestratorEngine
+from app.services.execution.order_execution_service import OrderExecutionService
 from app.services.risk_management import risk_reward_validator
 
 
@@ -42,9 +43,17 @@ class SignalEngine:
         self,
         ai_orchestrator_engine: AIOrchestratorEngine,
         signal_repository: SignalRepository,
+        execution_service: OrderExecutionService | None = None,
     ) -> None:
         self._ai_orchestrator_engine = ai_orchestrator_engine
         self._signal_repository = signal_repository
+        #: Optional (EA Bot spec §1's "additive, not a rewrite" rule) -
+        #: every existing caller that omits it gets the prior behavior
+        #: unchanged. When present, every actionable signal this engine
+        #: persists is also handed to `OrderExecutionService.process_signal`
+        #: (§3G) - itself a no-op beyond a structured dry-run log unless
+        #: `settings.execution_enabled` is `True` (§0.6/§0.9).
+        self._execution_service = execution_service
 
     def generate(self, asset: Asset, timeframe: Timeframe) -> SignalGenerationResult:
         result = self._ai_orchestrator_engine.generate(asset, timeframe)
@@ -59,6 +68,8 @@ class SignalEngine:
             )
 
         signal = self._persist(asset, result)
+        if self._execution_service is not None:
+            self._execution_service.process_signal(signal, asset)
         return SignalGenerationResult(
             analysis_id=result.id,
             symbol=result.symbol,

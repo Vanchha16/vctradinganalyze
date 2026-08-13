@@ -14,7 +14,7 @@ from app.dependencies.admin import get_admin_system_service
 from app.dependencies.market_data import get_asset_repository
 from app.dependencies.rbac import require_admin
 from app.exceptions import ResourceNotFoundException
-from app.models.enums import SignalStatus
+from app.models.enums import OrderStatus, SignalStatus
 from app.models.user import User
 from app.repositories.asset_repository import AssetRepository
 from app.schemas.admin_system import (
@@ -25,6 +25,7 @@ from app.schemas.admin_system import (
     MaintenanceActionResponse,
     NewsRefreshResponse,
 )
+from app.schemas.broker_order import BrokerOrderListResponse, BrokerOrderResponse
 from app.schemas.signal import SignalListResponse, SignalResponse
 from app.services.admin_system_service import AdminSystemService
 from app.services.signal import status_resolver
@@ -82,6 +83,21 @@ async def list_admin_signals(
             )
         )
     return SignalListResponse(items=response_items, page=page, limit=limit, total=total)
+
+
+@router.get("/orders", response_model=BrokerOrderListResponse)
+async def list_admin_broker_orders(
+    actor: Annotated[User, Depends(require_admin)],
+    service: _Service,
+    status: Annotated[OrderStatus | None, Query()] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> BrokerOrderListResponse:
+    """EA Bot spec §3F - every real order this bot has ever placed,
+    view-only (no manual close/modify from the dashboard this phase)."""
+    items, total = service.list_broker_orders(status=status, page=page, limit=limit)
+    response_items = [BrokerOrderResponse.model_validate(row) for row in items]
+    return BrokerOrderListResponse(items=response_items, page=page, limit=limit, total=total)
 
 
 @router.get("/system", response_model=AdminSystemStatusResponse)

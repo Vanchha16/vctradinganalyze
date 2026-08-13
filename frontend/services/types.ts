@@ -600,6 +600,35 @@ export interface BookmarkResponse {
   created_at: string;
 }
 
+// ---- Broker Orders (EA Bot spec §3B/§3F) ----
+
+export type OrderStatus = "pending" | "filled" | "cancelled" | "rejected" | "closed";
+
+export interface BrokerOrderResponse {
+  id: string;
+  signal_id: string;
+  symbol: string;
+  broker_order_id: string | null;
+  broker_position_id: string | null;
+  volume: string;
+  requested_price: string;
+  filled_price: string | null;
+  stop_loss: string;
+  take_profit: string;
+  status: OrderStatus;
+  rejection_reason: string | null;
+  filled_at: string | null;
+  closed_at: string | null;
+  created_at: string;
+}
+
+export interface BrokerOrderListResponse {
+  items: BrokerOrderResponse[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
 // ---- News (docs/04 §News) ----
 
 export type NewsCategory =

@@ -55,6 +55,14 @@ SAFE_LOCAL_OVERRIDES: dict[str, str] = {
     "TELEGRAM_PROVIDERS": '["mock"]',
     "TELEGRAM_BOT_TOKEN": "",
     "OPENAI_API_KEY": "",
+    # EA Bot (Phase 11) - same reasoning as every other vendor above.
+    # `execution_provider`'s own default is already "mock", but this
+    # forces it even if `backend/.env` sets `EXECUTION_PROVIDER=metaapi`
+    # for production - a manually-started local process must never be
+    # capable of touching the real Exness account, full stop.
+    "EXECUTION_PROVIDER": "mock",
+    "METAAPI_TOKEN": "",
+    "METAAPI_ACCOUNT_ID": "",
     # Phase 9D (ADR-136) - a fixed, obviously-fake dev token so
     # GET /metrics is usable locally via run_dev.py without an operator
     # having to set backend/.env's METRICS_AUTH_TOKEN first. Not a vendor

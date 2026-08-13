@@ -1,6 +1,7 @@
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
 from app.models.audit_log import AuditLog
+from app.models.broker_order import BrokerOrder
 from app.models.conversation import Conversation
 from app.models.economic_event import EconomicEvent
 from app.models.enums import (
@@ -14,6 +15,7 @@ from app.models.enums import (
     NewsImportance,
     NewsSentimentLabel,
     NewsSourceTier,
+    OrderStatus,
     Recommendation,
     SignalStatus,
     SignalType,
@@ -44,6 +46,7 @@ __all__ = [
     "AIAnalysis",
     "Asset",
     "AuditLog",
+    "BrokerOrder",
     "Conversation",
     "ConversationStatus",
     "EconomicEvent",
@@ -62,6 +65,7 @@ __all__ = [
     "NewsSource",
     "NewsSourceTier",
     "OAuthAccount",
+    "OrderStatus",
     "PriceCandle",
     "Recommendation",
     "SMCEvent",

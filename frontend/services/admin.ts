@@ -16,9 +16,11 @@ import type {
   AdminUserUpdateRequest,
   Asset,
   AssetListResponse,
+  BrokerOrderListResponse,
   MaintenanceAction,
   MaintenanceActionResponse,
   NewsRefreshResponse,
+  OrderStatus,
   SignalListResponse,
   SignalStatus,
 } from "@/services/types";
@@ -120,6 +122,25 @@ export interface ListAdminSignalsParams {
 export function listAdminSignals(params: ListAdminSignalsParams): Promise<SignalListResponse> {
   return apiGet<SignalListResponse>("/admin/signals", {
     symbol: params.symbol,
+    status: params.status,
+    page: params.page ? String(params.page) : undefined,
+    limit: params.limit ? String(params.limit) : undefined,
+  });
+}
+
+export interface ListAdminOrdersParams {
+  status?: OrderStatus;
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * EA Bot spec §3F - every real broker order the bot has ever placed,
+ * view-only. Empty by default: `EXECUTION_ENABLED=false` means the
+ * pipeline only ever logs a dry-run, never creates a `BrokerOrder` row.
+ */
+export function listAdminOrders(params: ListAdminOrdersParams): Promise<BrokerOrderListResponse> {
+  return apiGet<BrokerOrderListResponse>("/admin/orders", {
     status: params.status,
     page: params.page ? String(params.page) : undefined,
     limit: params.limit ? String(params.limit) : undefined,

@@ -11,6 +11,7 @@ from app.dependencies.ai_orchestrator import (
 )
 from app.dependencies.analysis_confidence import get_analysis_confidence_engine
 from app.dependencies.economic_calendar import get_economic_calendar_engine
+from app.dependencies.execution import get_broker_order_repository, get_order_execution_service
 from app.dependencies.market_regime import get_market_regime_engine
 from app.dependencies.news import get_news_sentiment_engine
 from app.dependencies.risk_management import get_risk_management_engine
@@ -126,7 +127,10 @@ def generate_signals_task() -> None:
             get_ai_analysis_repository(session),
         )
         signal_repository = SignalRepository(session)
-        signal_engine = get_signal_engine(ai_orchestrator_engine, signal_repository)
+        execution_service = get_order_execution_service(get_broker_order_repository(session))
+        signal_engine = get_signal_engine(
+            ai_orchestrator_engine, signal_repository, execution_service
+        )
 
         # `SignalEngine.generate()` already commits internally (via
         # `SignalRepository.commit()`, same as `AIOrchestratorEngine`) -

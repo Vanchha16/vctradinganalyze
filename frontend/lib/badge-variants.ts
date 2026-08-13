@@ -88,3 +88,9 @@ export function userRoleVariant(value: string): Variant {
 export function systemStatusVariant(value: "ok" | "down"): Variant {
   return value === "ok" ? "success" : "destructive";
 }
+
+export function orderStatusVariant(value: string): Variant {
+  if (value === "filled" || value === "closed") return "success";
+  if (value === "rejected" || value === "cancelled") return "destructive";
+  return "outline"; // pending
+}

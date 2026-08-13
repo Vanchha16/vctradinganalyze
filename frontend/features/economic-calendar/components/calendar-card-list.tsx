@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { AnalyzeXauusdButton, shouldShowAnalyzeXauusd } from "@/features/economic-calendar/components/analyze-xauusd-button";
 import { importanceVariant } from "@/lib/badge-variants";
 import { formatDateTime, formatEnumLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -53,6 +54,7 @@ export function CalendarCardList({ events }: { events: EconomicEventResponse[] }
                 </div>
               </dl>
               {bias ? <Badge variant="outline">{bias}</Badge> : null}
+              {shouldShowAnalyzeXauusd(event.importance) ? <AnalyzeXauusdButton /> : null}
             </CardContent>
           </Card>
         );

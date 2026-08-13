@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { AnalyzeXauusdButton, shouldShowAnalyzeXauusd } from "@/features/economic-calendar/components/analyze-xauusd-button";
 import { importanceVariant } from "@/lib/badge-variants";
 import { formatDateTime, formatEnumLabel } from "@/lib/format";
 import type { EconomicEventResponse } from "@/services/types";
@@ -23,6 +24,7 @@ export function CalendarTable({ events }: { events: EconomicEventResponse[] }) {
           <TableHead>Previous</TableHead>
           <TableHead>Actual</TableHead>
           <TableHead>Bias</TableHead>
+          <TableHead />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -43,6 +45,7 @@ export function CalendarTable({ events }: { events: EconomicEventResponse[] }) {
               <TableCell className="tabular-nums">{event.previous ?? "—"}</TableCell>
               <TableCell className="tabular-nums">{event.actual ?? "—"}</TableCell>
               <TableCell>{bias ? <Badge variant="outline">{bias}</Badge> : "—"}</TableCell>
+              <TableCell>{shouldShowAnalyzeXauusd(event.importance) ? <AnalyzeXauusdButton /> : null}</TableCell>
             </TableRow>
           );
         })}

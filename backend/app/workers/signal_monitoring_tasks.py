@@ -3,10 +3,14 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from app.database.session import SessionLocal
+from app.dependencies.execution import get_execution_provider
 from app.models.enums import SignalStatus, Timeframe
 from app.models.signal import Signal
+from app.repositories.broker_order_repository import BrokerOrderRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
+from app.services.execution.providers.base import OrderExecutionProvider
+from app.services.execution.reconciliation_service import reconcile_signal
 from app.services.signal.status_resolver import effective_status
 from app.services.signal_monitoring_service import entry_touched, evaluate_signal_outcome
 from app.workers.celery_app import celery_app
@@ -27,8 +31,10 @@ _ACTIVE_SIGNAL_LIMIT = 1000
 def _monitor_pending_signals(
     signal_repository: SignalRepository,
     candle_repository: PriceCandleRepository,
+    broker_order_repository: BrokerOrderRepository,
     session: Session,
     now: datetime,
+    execution_provider: OrderExecutionProvider | None,
 ) -> None:
     """ADR-137: an ACTIVE signal is a pending order, not a live trade -
     it is never evaluated against SL/TP (the production defect this
@@ -41,12 +47,25 @@ def _monitor_pending_signals(
     original "no message" decision per explicit operator request) sends
     its own Telegram message - `enqueue_signal_triggered_delivery`. A
     same-candle trigger-and-resolve sends only the outcome message, not
-    both - the outcome message alone already tells the full story."""
+    both - the outcome message alone already tells the full story.
+
+    EA Bot spec §6: a signal with a `BrokerOrder` row is reconciled
+    against the bridge's real position state (`reconcile_signal`)
+    instead of this candle-simulated touch logic - existence of that
+    row is the entire fork condition, checked first."""
     signals = signal_repository.find_paginated(
         status=SignalStatus.ACTIVE, limit=_ACTIVE_SIGNAL_LIMIT
     )
     for signal in signals:
         if effective_status(signal.status, signal.created_at, now) != SignalStatus.ACTIVE:
+            continue
+
+        broker_order = broker_order_repository.get_by_signal_id(signal.id)
+        if broker_order is not None and execution_provider is not None:
+            candle = candle_repository.get_latest(signal.asset_id, _PRICE_TIMEFRAME)
+            reconcile_signal(
+                signal, broker_order, candle, execution_provider, broker_order_repository, now
+            )
             continue
 
         candle = candle_repository.get_latest(signal.asset_id, _PRICE_TIMEFRAME)
@@ -80,14 +99,21 @@ def _monitor_pending_signals(
 def _monitor_triggered_signals(
     signal_repository: SignalRepository,
     candle_repository: PriceCandleRepository,
+    broker_order_repository: BrokerOrderRepository,
     session: Session,
     now: datetime,
+    execution_provider: OrderExecutionProvider | None,
 ) -> None:
     """ADR-137: SL/TP are only ever evaluated for a `TRIGGERED` (live)
     signal. A signal past `signal_triggered_ttl_hours` since
     `triggered_at` is already effectively CLOSED read-time-only
     (`status_resolver.effective_status`, same treatment as EXPIRED) -
-    nothing to persist, just skip it."""
+    nothing to persist, just skip it.
+
+    EA Bot spec §6: same reconciliation fork as
+    `_monitor_pending_signals` - a `BrokerOrder`-backed signal's close
+    detection is driven by the bridge's real position state, not this
+    candle-simulated SL/TP check."""
     signals: list[Signal] = list(
         signal_repository.find_paginated(status=SignalStatus.TRIGGERED, limit=_ACTIVE_SIGNAL_LIMIT)
     )
@@ -96,6 +122,14 @@ def _monitor_triggered_signals(
             signal.status, signal.created_at, now, triggered_at=signal.triggered_at
         )
         if current != SignalStatus.TRIGGERED:
+            continue
+
+        broker_order = broker_order_repository.get_by_signal_id(signal.id)
+        if broker_order is not None and execution_provider is not None:
+            candle = candle_repository.get_latest(signal.asset_id, _PRICE_TIMEFRAME)
+            reconcile_signal(
+                signal, broker_order, candle, execution_provider, broker_order_repository, now
+            )
             continue
 
         candle = candle_repository.get_latest(signal.asset_id, _PRICE_TIMEFRAME)
@@ -128,10 +162,33 @@ def monitor_active_signals_task() -> None:
     try:
         signal_repository = SignalRepository(session)
         candle_repository = PriceCandleRepository(session)
+        broker_order_repository = BrokerOrderRepository(session)
         now = datetime.now(UTC)
 
-        _monitor_pending_signals(signal_repository, candle_repository, session, now)
-        _monitor_triggered_signals(signal_repository, candle_repository, session, now)
+        # Only build a real bridge connection if at least one
+        # `BrokerOrder` exists at all (EA Bot spec §6) - avoids an
+        # unnecessary MetaApi connection attempt on every 60s tick in
+        # every environment that has never executed a real order.
+        execution_provider = (
+            get_execution_provider() if broker_order_repository.count_filtered() > 0 else None
+        )
+
+        _monitor_pending_signals(
+            signal_repository,
+            candle_repository,
+            broker_order_repository,
+            session,
+            now,
+            execution_provider,
+        )
+        _monitor_triggered_signals(
+            signal_repository,
+            candle_repository,
+            broker_order_repository,
+            session,
+            now,
+            execution_provider,
+        )
     finally:
         session.close()
 

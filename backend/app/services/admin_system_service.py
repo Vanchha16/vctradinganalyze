@@ -9,11 +9,13 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.exceptions import BusinessException
 from app.models.audit_log import AuditLog
-from app.models.enums import SignalStatus
+from app.models.broker_order import BrokerOrder
+from app.models.enums import OrderStatus, SignalStatus
 from app.models.signal import Signal
 from app.models.user import User
 from app.repositories.ai_analysis_repository import AIAnalysisRepository
 from app.repositories.audit_log_repository import AuditLogRepository
+from app.repositories.broker_order_repository import BrokerOrderRepository
 from app.repositories.signal_repository import SignalRepository
 from app.repositories.user_session_repository import UserSessionRepository
 from app.schemas.admin_system import (
@@ -56,6 +58,7 @@ class AdminSystemService:
         audit_log_repository: AuditLogRepository,
         news_pipeline: NewsIngestionPipeline,
         calendar_pipeline: EconomicCalendarIngestionPipeline,
+        broker_order_repository: BrokerOrderRepository | None = None,
     ) -> None:
         self._db = db
         self._signal_repository = signal_repository
@@ -64,6 +67,9 @@ class AdminSystemService:
         self._audit_log_repository = audit_log_repository
         self._news_pipeline = news_pipeline
         self._calendar_pipeline = calendar_pipeline
+        #: Optional (EA Bot spec §3F, additive per §1) - `None` only in
+        #: tests that construct this service without it.
+        self._broker_order_repository = broker_order_repository
 
     # --- Reads ---------------------------------------------------------
 
@@ -89,6 +95,26 @@ class AdminSystemService:
             )
         )
         total = self._signal_repository.count_filtered(asset_id=asset_id, status=status)
+        return items, total
+
+    def list_broker_orders(
+        self,
+        *,
+        status: OrderStatus | None = None,
+        page: int = 1,
+        limit: int = 20,
+    ) -> tuple[list[BrokerOrder], int]:
+        """`GET /admin/orders` (EA Bot spec §3F) - every order this bot
+        has ever placed, view-only. `_broker_order_repository` is only
+        `None` in tests that construct this service without EA Bot
+        wiring; every real request path (`get_admin_system_service`)
+        always provides it."""
+        assert self._broker_order_repository is not None
+        offset = (page - 1) * limit
+        items = list(
+            self._broker_order_repository.find_paginated(status=status, offset=offset, limit=limit)
+        )
+        total = self._broker_order_repository.count_filtered(status=status)
         return items, total
 
     def get_system_status(self) -> AdminSystemStatusResponse:

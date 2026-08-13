@@ -9,6 +9,7 @@ from app.dependencies.news import get_news_providers
 from app.repositories.ai_analysis_repository import AIAnalysisRepository
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.audit_log_repository import AuditLogRepository
+from app.repositories.broker_order_repository import BrokerOrderRepository
 from app.repositories.economic_event_repository import EconomicEventRepository
 from app.repositories.news_article_repository import NewsArticleRepository
 from app.repositories.news_sentiment_repository import NewsSentimentRepository
@@ -74,4 +75,5 @@ def get_admin_system_service(db: Annotated[Session, Depends(get_db)]) -> AdminSy
         audit_log_repository=AuditLogRepository(db),
         news_pipeline=news_pipeline,
         calendar_pipeline=calendar_pipeline,
+        broker_order_repository=BrokerOrderRepository(db),
     )

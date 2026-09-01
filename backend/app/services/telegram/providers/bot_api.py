@@ -1,4 +1,4 @@
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import httpx
 
@@ -47,12 +47,45 @@ class BotApiProvider:
             base_url=base_url, bot_token=bot_token, timeout=timeout, transport=transport
         )
 
-    def send_message(self, chat_id: str, text: str) -> None:
+    def send_message(
+        self, chat_id: str, text: str, *, reply_markup: dict[str, Any] | None = None
+    ) -> None:
+        payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2"}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+
         try:
-            status_code, body = self._http.post(
-                "/sendMessage",
-                {"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2"},
+            status_code, body = self._http.post("/sendMessage", payload)
+        except TelegramTransportError as exc:
+            raise TransientTelegramProviderError(f"telegram: {exc}") from exc
+
+        if status_code == 200 and body.get("ok"):
+            return
+        self._raise_for_error(status_code, body)
+
+    def send_photo(self, chat_id: str, photo: bytes, *, caption: str | None = None) -> None:
+        data = {"chat_id": chat_id}
+        if caption is not None:
+            data["caption"] = caption
+
+        try:
+            status_code, body = self._http.post_multipart(
+                "/sendPhoto", data, {"photo": ("chart.png", photo, "image/png")}
             )
+        except TelegramTransportError as exc:
+            raise TransientTelegramProviderError(f"telegram: {exc}") from exc
+
+        if status_code == 200 and body.get("ok"):
+            return
+        self._raise_for_error(status_code, body)
+
+    def answer_callback_query(self, callback_query_id: str, *, text: str | None = None) -> None:
+        payload: dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text is not None:
+            payload["text"] = text
+
+        try:
+            status_code, body = self._http.post("/answerCallbackQuery", payload)
         except TelegramTransportError as exc:
             raise TransientTelegramProviderError(f"telegram: {exc}") from exc
 
@@ -81,6 +114,26 @@ class BotApiProvider:
 
         updates: list[RawTelegramUpdate] = []
         for row in results:
+            callback_query = row.get("callback_query")
+            if isinstance(callback_query, dict):
+                message = callback_query.get("message")
+                chat = message.get("chat", {}) if isinstance(message, dict) else {}
+                if not chat.get("id"):
+                    # A callback on an inline-mode message (no `chat`) -
+                    # nothing this bot's poll loop can reply to; skip it
+                    # rather than crash on a missing chat id.
+                    continue
+                updates.append(
+                    RawTelegramUpdate(
+                        update_id=int(row["update_id"]),
+                        chat_id=str(chat.get("id", "")),
+                        text=None,
+                        callback_query_id=str(callback_query.get("id", "")),
+                        callback_data=callback_query.get("data"),
+                    )
+                )
+                continue
+
             message = row.get("message")
             if not isinstance(message, dict):
                 continue

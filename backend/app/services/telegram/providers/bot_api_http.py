@@ -44,6 +44,19 @@ class TelegramBotHttpClient:
             raise TelegramTransportError(str(exc)) from exc
         return self._decode(response)
 
+    def post_multipart(
+        self, path: str, data: dict[str, str], files: dict[str, tuple[str, bytes, str]]
+    ) -> tuple[int, dict[str, Any]]:
+        """For `sendPhoto` - `files=` makes httpx encode the request as
+        `multipart/form-data` instead of `post()`'s plain JSON body,
+        which the Bot API requires for an uploaded (not URL/file-id)
+        photo."""
+        try:
+            response = self._client.post(path, data=data, files=files)
+        except httpx.HTTPError as exc:
+            raise TelegramTransportError(str(exc)) from exc
+        return self._decode(response)
+
     def _decode(self, response: httpx.Response) -> tuple[int, dict[str, Any]]:
         try:
             body = response.json()

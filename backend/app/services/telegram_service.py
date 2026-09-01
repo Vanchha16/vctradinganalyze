@@ -75,6 +75,14 @@ class TelegramService:
     def get_account(self, user_id: uuid.UUID) -> TelegramAccount | None:
         return self._account_repository.get_by_user_id(user_id)
 
+    def is_linked_chat(self, chat_id: str) -> bool:
+        """Gates the Summary Report/Show Chart buttons (§13) to chats
+        that completed `/start <code>` - same trust boundary as who
+        receives broadcast signals (`linked_accounts`), applied to
+        inbound requests instead of outbound delivery."""
+        account = self._account_repository.get_by_chat_id(chat_id)
+        return account is not None and account.linked_at is not None
+
     def unlink(self, user_id: uuid.UUID) -> None:
         account = self._account_repository.get_by_user_id(user_id)
         if account is not None:

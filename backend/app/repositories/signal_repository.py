@@ -1,6 +1,7 @@
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import func, select
 
@@ -63,6 +64,27 @@ class SignalRepository(BaseRepository[Signal]):
         /admin/system`)."""
         query = select(func.count()).select_from(Signal).where(Signal.created_at >= since)
         return self.session.execute(query).scalar_one()
+
+    def count_by_status_since(self, since: datetime) -> dict[SignalStatus, int]:
+        """Per-status breakdown for the Telegram bot's Summary Report
+        button (§13) - one query per reporting window (today/last 7
+        days), same grouping style as `count_by_signal_type`."""
+        query = (
+            select(Signal.status, func.count())
+            .where(Signal.created_at >= since)
+            .group_by(Signal.status)
+        )
+        return {status: count for status, count in self.session.execute(query)}
+
+    def sum_profit_loss_since(self, since: datetime) -> Decimal:
+        """Total realized P&L since `since`, for the same Summary Report
+        use case above. `profit_loss` is only ever set once a signal
+        closes (SUCCESSFUL/STOPPED_OUT) - still-open signals contribute
+        nothing, not a NULL that would poison the sum."""
+        query = select(func.coalesce(func.sum(Signal.profit_loss), 0)).where(
+            Signal.created_at >= since
+        )
+        return Decimal(str(self.session.execute(query).scalar_one()))
 
     def count_by_signal_type(self) -> dict[SignalType, int]:
         """"Recommendation distribution" (docs/58 §3.2, `GET

@@ -21,7 +21,12 @@ from app.models.price_candle import PriceCandle
 from app.models.signal import Signal
 from app.models.system_setting import SystemSetting
 from app.models.telegram_account import TelegramAccount
-from app.services.telegram.keyboards import CALLBACK_SHOW_CHART, CALLBACK_SUMMARY_REPORT
+from app.services.telegram.keyboards import (
+    CALLBACK_SHOW_CHART,
+    CALLBACK_SUMMARY_REPORT,
+    SHOW_CHART_LABEL,
+    SUMMARY_REPORT_LABEL,
+)
 from app.services.telegram.providers.base import RawTelegramUpdate
 from app.services.telegram.providers.mock import MockTelegramProvider
 from app.workers import telegram_tasks
@@ -76,7 +81,7 @@ def _seed_linked_account(session_factory: sessionmaker[Session]) -> str:
     return chat_id
 
 
-def test_menu_command_sends_main_menu_keyboard(
+def test_menu_command_sends_persistent_menu_keyboard(
     session_factory: sessionmaker[Session], provider: MockTelegramProvider
 ) -> None:
     _run(
@@ -87,12 +92,71 @@ def test_menu_command_sends_main_menu_keyboard(
     assert len(provider.sent_messages) == 1
     _, _, reply_markup = provider.sent_messages[0]
     assert reply_markup is not None
-    callback_values = {
-        button["callback_data"]
-        for row in reply_markup["inline_keyboard"]
-        for button in row
-    }
-    assert callback_values == {CALLBACK_SUMMARY_REPORT, CALLBACK_SHOW_CHART}
+    assert reply_markup["is_persistent"] is True
+    labels = {button["text"] for row in reply_markup["keyboard"] for button in row}
+    assert labels == {SUMMARY_REPORT_LABEL, SHOW_CHART_LABEL}
+
+
+def test_summary_report_label_from_unlinked_chat_is_rejected(
+    session_factory: sessionmaker[Session], provider: MockTelegramProvider
+) -> None:
+    _run(
+        [RawTelegramUpdate(update_id=1, chat_id="not-linked", text=SUMMARY_REPORT_LABEL)],
+        provider,
+    )
+
+    assert len(provider.sent_messages) == 1
+    assert "Link your account" in provider.sent_messages[0][1].replace("\\", "")
+
+
+def test_summary_report_label_from_linked_chat_sends_report(
+    session_factory: sessionmaker[Session], provider: MockTelegramProvider
+) -> None:
+    chat_id = _seed_linked_account(session_factory)
+
+    _run(
+        [RawTelegramUpdate(update_id=1, chat_id=chat_id, text=SUMMARY_REPORT_LABEL)],
+        provider,
+    )
+
+    assert len(provider.sent_messages) == 1
+    assert "SUMMARY REPORT" in provider.sent_messages[0][1]
+
+
+def test_show_chart_label_then_symbol_reply_sends_photo(
+    session_factory: sessionmaker[Session], provider: MockTelegramProvider
+) -> None:
+    chat_id = _seed_linked_account(session_factory)
+    with session_factory() as session:
+        asset = Asset(symbol="EURUSD", name="EURUSD", market_type=MarketType.FOREX)
+        session.add(asset)
+        session.flush()
+        now = datetime.now(UTC)
+        session.add(
+            PriceCandle(
+                asset_id=asset.id,
+                timeframe=Timeframe.M1,
+                timestamp=now,
+                open=Decimal("100"),
+                high=Decimal("101"),
+                low=Decimal("99"),
+                close=Decimal("100"),
+            )
+        )
+        session.commit()
+
+    _run(
+        [RawTelegramUpdate(update_id=1, chat_id=chat_id, text=SHOW_CHART_LABEL)],
+        provider,
+    )
+    assert "Send me a symbol" in provider.sent_messages[-1][1].replace("\\", "")
+
+    _run(
+        [RawTelegramUpdate(update_id=2, chat_id=chat_id, text="eurusd")],
+        provider,
+    )
+
+    assert len(provider.sent_photos) == 1
 
 
 def test_summary_report_callback_from_unlinked_chat_is_rejected(

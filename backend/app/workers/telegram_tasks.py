@@ -24,7 +24,9 @@ from app.services.telegram.conversation_state import (
 from app.services.telegram.keyboards import (
     CALLBACK_SHOW_CHART,
     CALLBACK_SUMMARY_REPORT,
-    build_main_menu_keyboard,
+    SHOW_CHART_LABEL,
+    SUMMARY_REPORT_LABEL,
+    build_persistent_menu_keyboard,
 )
 from app.services.telegram.providers.base import RawTelegramUpdate, TelegramProvider
 from app.services.telegram.report_builder import build_summary_report_text
@@ -99,21 +101,56 @@ def _handle_update(
         if account is not None:
             provider.send_message(
                 update.chat_id,
-                escape_markdown_v2("What would you like to do?"),
-                reply_markup=build_main_menu_keyboard(),
+                escape_markdown_v2("Menu ready - use the buttons below."),
+                reply_markup=build_persistent_menu_keyboard(),
             )
         return
 
     if update.text and update.text.strip() in _MENU_COMMANDS:
         provider.send_message(
             update.chat_id,
-            escape_markdown_v2("What would you like to do?"),
-            reply_markup=build_main_menu_keyboard(),
+            escape_markdown_v2("Menu ready - use the buttons below."),
+            reply_markup=build_persistent_menu_keyboard(),
         )
+        return
+
+    if update.text and update.text.strip() == SUMMARY_REPORT_LABEL:
+        if _require_linked_or_reply(update.chat_id, provider, telegram_service):
+            _send_summary_report(update.chat_id, provider, session)
+        return
+
+    if update.text and update.text.strip() == SHOW_CHART_LABEL:
+        if _require_linked_or_reply(update.chat_id, provider, telegram_service):
+            _prompt_for_chart_symbol(update.chat_id, provider)
         return
 
     if update.text and not update.text.startswith("/"):
         _handle_possible_symbol_reply(update, session, provider)
+
+
+def _require_linked_or_reply(
+    chat_id: str, provider: TelegramProvider, telegram_service: TelegramService
+) -> bool:
+    """Gates Summary Report/Show Chart to chats that completed
+    `/start <code>` - shared by both the inline-keyboard callback path
+    and the persistent-reply-keyboard text path below, so the two
+    trigger mechanisms can't drift into different access rules."""
+    if telegram_service.is_linked_chat(chat_id):
+        return True
+    provider.send_message(chat_id, escape_markdown_v2(_UNLINKED_ACCOUNT_MESSAGE))
+    return False
+
+
+def _send_summary_report(chat_id: str, provider: TelegramProvider, session: Session) -> None:
+    text = build_summary_report_text(
+        SignalRepository(session), AssetRepository(session), PriceCandleRepository(session)
+    )
+    provider.send_message(chat_id, text)
+
+
+def _prompt_for_chart_symbol(chat_id: str, provider: TelegramProvider) -> None:
+    mark_awaiting_chart_symbol(chat_id)
+    provider.send_message(chat_id, escape_markdown_v2("Send me a symbol, e.g. EURUSD"))
 
 
 def _handle_callback_query(
@@ -122,28 +159,26 @@ def _handle_callback_query(
     telegram_service: TelegramService,
     session: Session,
 ) -> None:
+    """Handles a tap on the inline keyboard (`build_main_menu_keyboard`) -
+    kept alongside the persistent reply keyboard above since a user may
+    still have an old inline-keyboard message in their chat history to
+    tap. Delegates to the same helpers the reply-keyboard text path uses,
+    so both mechanisms stay behaviorally identical."""
     assert update.callback_query_id is not None
     try:
         provider.answer_callback_query(update.callback_query_id)
     except Exception:
         logger.warning("telegram.answer_callback_query_failed", exc_info=True)
 
-    if not telegram_service.is_linked_chat(update.chat_id):
-        provider.send_message(update.chat_id, escape_markdown_v2(_UNLINKED_ACCOUNT_MESSAGE))
+    if not _require_linked_or_reply(update.chat_id, provider, telegram_service):
         return
 
     if update.callback_data == CALLBACK_SUMMARY_REPORT:
-        text = build_summary_report_text(
-            SignalRepository(session), AssetRepository(session), PriceCandleRepository(session)
-        )
-        provider.send_message(update.chat_id, text)
+        _send_summary_report(update.chat_id, provider, session)
         return
 
     if update.callback_data == CALLBACK_SHOW_CHART:
-        mark_awaiting_chart_symbol(update.chat_id)
-        provider.send_message(
-            update.chat_id, escape_markdown_v2("Send me a symbol, e.g. EURUSD")
-        )
+        _prompt_for_chart_symbol(update.chat_id, provider)
 
 
 def _handle_possible_symbol_reply(

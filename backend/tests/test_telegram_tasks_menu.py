@@ -26,6 +26,7 @@ from app.services.telegram.keyboards import (
     CALLBACK_SUMMARY_REPORT,
     SHOW_CHART_LABEL,
     SUMMARY_REPORT_LABEL,
+    build_persistent_menu_keyboard,
 )
 from app.services.telegram.providers.base import RawTelegramUpdate
 from app.services.telegram.providers.mock import MockTelegramProvider
@@ -149,7 +150,11 @@ def test_show_chart_label_then_symbol_reply_sends_photo(
         [RawTelegramUpdate(update_id=1, chat_id=chat_id, text=SHOW_CHART_LABEL)],
         provider,
     )
-    assert "Send me a symbol" in provider.sent_messages[-1][1].replace("\\", "")
+    prompt_chat_id, prompt_text, prompt_markup = provider.sent_messages[-1]
+    assert "Choose a symbol" in prompt_text.replace("\\", "")
+    assert prompt_markup is not None
+    picker_labels = {button["text"] for row in prompt_markup["keyboard"] for button in row}
+    assert picker_labels == {"EURUSD"}
 
     _run(
         [RawTelegramUpdate(update_id=2, chat_id=chat_id, text="eurusd")],
@@ -157,6 +162,23 @@ def test_show_chart_label_then_symbol_reply_sends_photo(
     )
 
     assert len(provider.sent_photos) == 1
+    _, _, _, restored_menu = provider.sent_photos[0]
+    assert restored_menu == build_persistent_menu_keyboard()
+
+
+def test_show_chart_prompts_free_text_when_no_active_assets(
+    session_factory: sessionmaker[Session], provider: MockTelegramProvider
+) -> None:
+    chat_id = _seed_linked_account(session_factory)
+
+    _run(
+        [RawTelegramUpdate(update_id=1, chat_id=chat_id, text=SHOW_CHART_LABEL)],
+        provider,
+    )
+
+    _, prompt_text, prompt_markup = provider.sent_messages[-1]
+    assert "Send me a symbol" in prompt_text.replace("\\", "")
+    assert prompt_markup is None
 
 
 def test_summary_report_callback_from_unlinked_chat_is_rejected(
@@ -249,7 +271,7 @@ def test_show_chart_callback_then_symbol_reply_sends_photo(
         ],
         provider,
     )
-    assert "Send me a symbol" in provider.sent_messages[-1][1].replace("\\", "")
+    assert "Choose a symbol" in provider.sent_messages[-1][1].replace("\\", "")
 
     _run(
         [RawTelegramUpdate(update_id=2, chat_id=chat_id, text="eurusd")],
@@ -257,10 +279,11 @@ def test_show_chart_callback_then_symbol_reply_sends_photo(
     )
 
     assert len(provider.sent_photos) == 1
-    photo_chat_id, photo_bytes, caption = provider.sent_photos[0]
+    photo_chat_id, photo_bytes, caption, restored_menu = provider.sent_photos[0]
     assert photo_chat_id == chat_id
     assert photo_bytes.startswith(b"\x89PNG")
     assert caption is not None and "EURUSD" in caption
+    assert restored_menu == build_persistent_menu_keyboard()
 
 
 def test_symbol_reply_without_prior_show_chart_tap_is_ignored(

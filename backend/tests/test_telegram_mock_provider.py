@@ -18,12 +18,21 @@ def test_send_message_records_none_reply_markup_by_default() -> None:
     assert provider.sent_messages == [("123", "hello", None)]
 
 
-def test_send_photo_records_chat_photo_and_caption() -> None:
+def test_send_photo_records_chat_photo_caption_and_reply_markup() -> None:
+    provider = MockTelegramProvider()
+    keyboard = {"keyboard": []}
+
+    provider.send_photo("123", b"png-bytes", caption="EURUSD", reply_markup=keyboard)
+
+    assert provider.sent_photos == [("123", b"png-bytes", "EURUSD", keyboard)]
+
+
+def test_send_photo_records_none_reply_markup_by_default() -> None:
     provider = MockTelegramProvider()
 
     provider.send_photo("123", b"png-bytes", caption="EURUSD")
 
-    assert provider.sent_photos == [("123", b"png-bytes", "EURUSD")]
+    assert provider.sent_photos == [("123", b"png-bytes", "EURUSD", None)]
 
 
 def test_answer_callback_query_records_id_and_text() -> None:

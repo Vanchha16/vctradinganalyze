@@ -27,6 +27,7 @@ from app.services.telegram.keyboards import (
     SHOW_CHART_LABEL,
     SUMMARY_REPORT_LABEL,
     build_persistent_menu_keyboard,
+    build_symbol_picker_keyboard,
 )
 from app.services.telegram.providers.base import RawTelegramUpdate, TelegramProvider
 from app.services.telegram.report_builder import build_summary_report_text
@@ -41,6 +42,10 @@ _OFFSET_SETTING_KEY = "telegram_last_update_id"
 #: instead of the link-code error path below.
 _MENU_COMMANDS = {"/start", "/menu", "/help"}
 _CHART_CANDLE_LIMIT = 60
+#: Telegram reply-keyboard buttons get cramped past a handful of rows on
+#: a phone screen - active assets beyond this count still work via
+#: typed-symbol entry, they just don't get a tap button.
+_SYMBOL_PICKER_MAX_ASSETS = 15
 _UNLINKED_ACCOUNT_MESSAGE = (
     "Link your account first: generate a code from Settings, then send /start <code> here."
 )
@@ -121,7 +126,7 @@ def _handle_update(
 
     if update.text and update.text.strip() == SHOW_CHART_LABEL:
         if _require_linked_or_reply(update.chat_id, provider, telegram_service):
-            _prompt_for_chart_symbol(update.chat_id, provider)
+            _prompt_for_chart_symbol(update.chat_id, provider, session)
         return
 
     if update.text and not update.text.startswith("/"):
@@ -148,9 +153,18 @@ def _send_summary_report(chat_id: str, provider: TelegramProvider, session: Sess
     provider.send_message(chat_id, text)
 
 
-def _prompt_for_chart_symbol(chat_id: str, provider: TelegramProvider) -> None:
+def _prompt_for_chart_symbol(chat_id: str, provider: TelegramProvider, session: Session) -> None:
     mark_awaiting_chart_symbol(chat_id)
-    provider.send_message(chat_id, escape_markdown_v2("Send me a symbol, e.g. EURUSD"))
+    assets = AssetRepository(session).list_active(limit=_SYMBOL_PICKER_MAX_ASSETS)
+    if not assets:
+        provider.send_message(chat_id, escape_markdown_v2("Send me a symbol, e.g. EURUSD"))
+        return
+
+    provider.send_message(
+        chat_id,
+        escape_markdown_v2("Choose a symbol, or type your own:"),
+        reply_markup=build_symbol_picker_keyboard([asset.symbol for asset in assets]),
+    )
 
 
 def _handle_callback_query(
@@ -178,7 +192,7 @@ def _handle_callback_query(
         return
 
     if update.callback_data == CALLBACK_SHOW_CHART:
-        _prompt_for_chart_symbol(update.chat_id, provider)
+        _prompt_for_chart_symbol(update.chat_id, provider, session)
 
 
 def _handle_possible_symbol_reply(
@@ -187,12 +201,19 @@ def _handle_possible_symbol_reply(
     if not consume_awaiting_chart_symbol(update.chat_id):
         return
 
+    # The symbol picker keyboard (`build_symbol_picker_keyboard`) is
+    # one-time-use (§13) - restore the persistent main menu on every
+    # outcome below, not just success, so the user isn't left with a
+    # keyboard that has already served its purpose.
+    menu_keyboard = build_persistent_menu_keyboard()
+
     symbol = (update.text or "").strip().upper()
     asset = AssetRepository(session).get_by_symbol(symbol)
     if asset is None:
         provider.send_message(
             update.chat_id,
             escape_markdown_v2(f"Unknown symbol: {symbol}. Tap Show Chart and try again."),
+            reply_markup=menu_keyboard,
         )
         return
 
@@ -201,13 +222,15 @@ def _handle_possible_symbol_reply(
     )
     if not candles:
         provider.send_message(
-            update.chat_id, escape_markdown_v2(f"No chart data yet for {symbol}.")
+            update.chat_id,
+            escape_markdown_v2(f"No chart data yet for {symbol}."),
+            reply_markup=menu_keyboard,
         )
         return
 
     image = render_candlestick_chart(symbol, candles)
     caption = format_current_price_caption(symbol, candles)
-    provider.send_photo(update.chat_id, image, caption=caption)
+    provider.send_photo(update.chat_id, image, caption=caption, reply_markup=menu_keyboard)
 
 
 @celery_app.task(name="telegram.send_signal", ignore_result=True)  # type: ignore[untyped-decorator]

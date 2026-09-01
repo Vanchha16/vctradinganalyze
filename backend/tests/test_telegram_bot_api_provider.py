@@ -68,6 +68,25 @@ def test_send_photo_uploads_multipart_with_chat_id_and_caption() -> None:
     assert captured_fields["caption_present"]
 
 
+def test_send_photo_json_encodes_reply_markup_for_multipart_body() -> None:
+    body_text = ""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal body_text
+        body_text = request.read().decode("latin-1")
+        return httpx.Response(200, json={"ok": True, "result": {}})
+
+    provider = _provider(httpx.MockTransport(handler))
+    keyboard = {"keyboard": [[{"text": "EURUSD"}]], "resize_keyboard": True}
+
+    provider.send_photo("123", b"\x89PNG-fake-bytes", reply_markup=keyboard)
+
+    # multipart/form-data has no top-level JSON to decode - the Bot API
+    # requires reply_markup to be sent as a JSON-*string* field there,
+    # unlike sendMessage's raw JSON body, so assert on that substring.
+    assert json.dumps(keyboard) in body_text
+
+
 def test_send_photo_raises_permanent_error_on_bad_request() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"ok": False, "description": "chat not found"})

@@ -41,8 +41,17 @@ class TelegramProvider(Protocol):
         """
         ...
 
-    def send_photo(self, chat_id: str, photo: bytes, *, caption: str | None = None) -> None:
-        """Send a PNG chart image to `chat_id` (§13's Show Chart button).
+    def send_photo(
+        self,
+        chat_id: str,
+        photo: bytes,
+        *,
+        caption: str | None = None,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        """Send a PNG chart image to `chat_id` (§13's Show Chart button),
+        optionally restoring a keyboard (e.g. the persistent main menu,
+        after a one-time symbol-picker keyboard has served its purpose).
 
         Same error classification as `send_message`.
         """

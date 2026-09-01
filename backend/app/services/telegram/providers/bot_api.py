@@ -1,3 +1,4 @@
+import json
 from typing import Any, NoReturn
 
 import httpx
@@ -63,10 +64,23 @@ class BotApiProvider:
             return
         self._raise_for_error(status_code, body)
 
-    def send_photo(self, chat_id: str, photo: bytes, *, caption: str | None = None) -> None:
+    def send_photo(
+        self,
+        chat_id: str,
+        photo: bytes,
+        *,
+        caption: str | None = None,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
         data = {"chat_id": chat_id}
         if caption is not None:
             data["caption"] = caption
+        if reply_markup is not None:
+            # Unlike sendMessage's raw JSON body, sendPhoto is a
+            # multipart/form-data request - the Bot API requires
+            # reply_markup to arrive as a JSON-encoded *string* field
+            # here, not a nested object.
+            data["reply_markup"] = json.dumps(reply_markup)
 
         try:
             status_code, body = self._http.post_multipart(

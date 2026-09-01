@@ -13,7 +13,7 @@ class MockTelegramProvider:
 
     def __init__(self) -> None:
         self.sent_messages: list[tuple[str, str, dict[str, Any] | None]] = []
-        self.sent_photos: list[tuple[str, bytes, str | None]] = []
+        self.sent_photos: list[tuple[str, bytes, str | None, dict[str, Any] | None]] = []
         self.answered_callback_queries: list[tuple[str, str | None]] = []
 
     def send_message(
@@ -21,8 +21,15 @@ class MockTelegramProvider:
     ) -> None:
         self.sent_messages.append((chat_id, text, reply_markup))
 
-    def send_photo(self, chat_id: str, photo: bytes, *, caption: str | None = None) -> None:
-        self.sent_photos.append((chat_id, photo, caption))
+    def send_photo(
+        self,
+        chat_id: str,
+        photo: bytes,
+        *,
+        caption: str | None = None,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        self.sent_photos.append((chat_id, photo, caption, reply_markup))
 
     def answer_callback_query(self, callback_query_id: str, *, text: str | None = None) -> None:
         self.answered_callback_queries.append((callback_query_id, text))

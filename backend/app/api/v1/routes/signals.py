@@ -91,6 +91,10 @@ async def generate_signal(
         from app.workers.telegram_tasks import enqueue_signal_delivery
 
         enqueue_signal_delivery(str(result.signal.id))
+
+        from app.services.signal_events import publish_signal_created
+
+        publish_signal_created(result.signal, asset.symbol)
     return _generation_result_to_response(result, asset.symbol)
 
 

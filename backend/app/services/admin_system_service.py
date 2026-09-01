@@ -1,6 +1,6 @@
 import uuid
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 
 import redis
 from sqlalchemy import text
@@ -21,6 +21,7 @@ from app.repositories.user_session_repository import UserSessionRepository
 from app.schemas.admin_system import (
     AdminAnalyticsResponse,
     AdminSystemStatusResponse,
+    CeleryHealthResponse,
     IngestionHealthResponse,
 )
 from app.services.economic_calendar.providers.exceptions import (
@@ -127,12 +128,35 @@ class AdminSystemService:
         except Exception:  # noqa: BLE001 - liveness probe, any failure means "down"
             database_status = "down"
 
+        # Built fresh from the *current* `settings.redis_url` (not the
+        # shared `get_sync_redis()` singleton) - this is a liveness probe
+        # that must reflect config changes, not a cached connection from
+        # whenever the singleton first happened to be constructed. Built
+        # once and reused for both checks below, instead of the previous
+        # two separate `from_url()` calls.
+        redis_client = redis.Redis.from_url(settings.redis_url)
+
         redis_status: Literal["ok", "down"] = "ok"
         try:
-            redis_client = redis.Redis.from_url(settings.redis_url)
             redis_client.ping()
         except Exception:  # noqa: BLE001 - same as above
             redis_status = "down"
+
+        celery_health = CeleryHealthResponse(
+            status="ok" if redis_status == "ok" else "down",
+            queue_depth=0,
+            active_queues=["celery"],
+        )
+        if redis_status == "ok":
+            try:
+                depth = cast(int, redis_client.llen("celery"))
+                celery_health = CeleryHealthResponse(
+                    status="ok",
+                    queue_depth=int(depth),
+                    active_queues=["celery"],
+                )
+            except Exception:
+                pass
 
         since_midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -150,6 +174,7 @@ class AdminSystemService:
         return AdminSystemStatusResponse(
             database=database_status,
             redis=redis_status,
+            celery=celery_health,
             signals_today=self._signal_repository.count_since(since_midnight),
             ai_analyses_today=self._ai_analysis_repository.count_since(since_midnight),
             news=IngestionHealthResponse(

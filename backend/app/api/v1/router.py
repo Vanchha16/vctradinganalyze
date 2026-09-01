@@ -22,6 +22,7 @@ from app.api.v1.routes import (
     technical_analysis,
     telegram,
     watchlists,
+    ws,
 )
 from app.config import settings
 from app.dependencies.rate_limit import rate_limit_public
@@ -53,6 +54,7 @@ api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(metrics.router, tags=["metrics"])
 api_router.include_router(auth.router)
+api_router.include_router(ws.router)
 api_router.include_router(admin_users.router)
 api_router.include_router(admin_assets.router)
 api_router.include_router(admin_logs.router)

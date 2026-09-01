@@ -35,10 +35,37 @@ class Permission(StrEnum):
     USERS_WRITE = "users.write"
     USERS_DELETE = "users.delete"
     ROLES_MANAGE = "roles.manage"
+    ASSETS_READ = "assets.read"
+    ASSETS_WRITE = "assets.write"
+    SYSTEM_READ = "system.read"
+    SYSTEM_MAINTENANCE = "system.maintenance"
+    AUDIT_LOGS_READ = "audit_logs.read"
+    SIGNALS_READ = "signals.read"
+    SIGNALS_PUBLISH = "signals.publish"
+    ANALYSIS_EXECUTE = "analysis.execute"
+    AI_CHAT_ACCESS = "ai_chat.access"
 
 
 ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
-    UserRole.ADMIN: frozenset({Permission.USERS_READ, Permission.USERS_WRITE}),
+    UserRole.GUEST: frozenset(),
+    UserRole.REGISTERED: frozenset(),
+    UserRole.PREMIUM: frozenset(),
+    UserRole.MODERATOR: frozenset(),
+    UserRole.SUPPORT: frozenset(),
+    UserRole.ADMIN: frozenset({
+        Permission.USERS_READ,
+        Permission.USERS_WRITE,
+        Permission.USERS_DELETE,
+        Permission.ASSETS_READ,
+        Permission.ASSETS_WRITE,
+        Permission.SYSTEM_READ,
+        Permission.SYSTEM_MAINTENANCE,
+        Permission.AUDIT_LOGS_READ,
+        Permission.SIGNALS_READ,
+        Permission.SIGNALS_PUBLISH,
+        Permission.ANALYSIS_EXECUTE,
+        Permission.AI_CHAT_ACCESS,
+    }),
     UserRole.SUPER_ADMIN: frozenset(Permission.__members__.values()),
 }
 """Every role not listed here (guest/registered/premium/moderator/support)

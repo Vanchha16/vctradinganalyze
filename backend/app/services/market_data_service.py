@@ -1,7 +1,7 @@
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 import structlog
 
@@ -56,6 +56,19 @@ class MarketDataService:
     ) -> CollectionResult:
         raw_candles = self._fetch_with_failover(asset, timeframe, start, end)
 
+        # Tracks the newest candle already on record before this run, so a
+        # backfill/retry that re-upserts old timestamps isn't broadcast as
+        # a live tick - only candles newer than what was already stored
+        # are genuinely new ticks worth publishing.
+        latest_before = self._price_candle_repository.get_latest(asset.id, timeframe)
+        latest_timestamp = latest_before.timestamp if latest_before is not None else None
+        # SQLite (dev/test) returns naive datetimes even for a
+        # `DateTime(timezone=True)` column, while `normalized.timestamp`
+        # is always tz-aware UTC (`normalization.py`) - same convention
+        # used there to reconcile the two.
+        if latest_timestamp is not None and latest_timestamp.tzinfo is None:
+            latest_timestamp = latest_timestamp.replace(tzinfo=UTC)
+
         persisted = 0
         rejected = 0
         for raw in raw_candles:
@@ -86,6 +99,36 @@ class MarketDataService:
             )
             self._price_candle_repository.upsert(candle)
             persisted += 1
+
+            is_new_tick = latest_timestamp is None or normalized.timestamp > latest_timestamp
+            if is_new_tick:
+                latest_timestamp = normalized.timestamp
+
+                # Publish real-time candle tick to Redis Pub/Sub (fail-open)
+                try:
+                    from app.core.redis_pubsub import get_price_channel, publish_event_sync
+
+                    channel = get_price_channel(asset.symbol, timeframe.value)
+                    publish_event_sync(
+                        channel,
+                        {
+                            "type": "candle",
+                            "symbol": asset.symbol,
+                            "timeframe": timeframe.value,
+                            "timestamp": normalized.timestamp.isoformat(),
+                            "open": float(normalized.open),
+                            "high": float(normalized.high),
+                            "low": float(normalized.low),
+                            "close": float(normalized.close),
+                            "volume": (
+                                float(normalized.volume)
+                                if normalized.volume is not None
+                                else None
+                            ),
+                        },
+                    )
+                except Exception:
+                    pass
 
         logger.info(
             "market_data.collected",

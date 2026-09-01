@@ -82,6 +82,10 @@ def _monitor_pending_signals(
             signal.profit_loss = outcome.profit_loss
         session.commit()
 
+        from app.services.signal_events import publish_signal_status_changed
+
+        publish_signal_status_changed(signal)
+
         # Deferred import: avoids a module-level import cycle, mirrors
         # `signal_tasks.py`'s existing best-effort enqueue pattern
         # (docs/57 §5) - a broker outage must not stop the rest of
@@ -144,6 +148,10 @@ def _monitor_triggered_signals(
         signal.closed_at = now
         signal.profit_loss = outcome.profit_loss
         session.commit()
+
+        from app.services.signal_events import publish_signal_status_changed
+
+        publish_signal_status_changed(signal)
 
         from app.workers.telegram_tasks import enqueue_signal_outcome_delivery
 

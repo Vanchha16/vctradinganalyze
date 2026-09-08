@@ -66,7 +66,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "News", href: "/news", icon: Newspaper },
       { label: "Economic Calendar", href: "/economic-calendar", icon: CalendarClock },
-      { label: "API Explorer", href: "/dashboard/api-explorer", icon: Terminal, preserveQuery: true },
     ],
   },
   {

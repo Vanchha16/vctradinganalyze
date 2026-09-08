@@ -8180,6 +8180,94 @@ the reason for removal, not any defect in the implementation.
 
 ---
 
+# ADR-144
+
+Title
+
+Admin API Usage Page: Fold the Existing Prometheus Counters into JSON -
+a Snapshot, Explicitly Not a Time Series
+
+Status
+
+Accepted
+
+Context
+
+`/admin/api-usage` had been an `AdminComingSoon` placeholder since Phase
+8D, whose copy read: *"No request-metrics infrastructure exists in this
+project yet (BACKLOG.md §3). ADR-124 proposes a labeled AI-analysis/
+signal-count proxy as a future step."*
+
+That stopped being true in Phase 9D. ADR-136 built exactly this
+infrastructure - `prometheus_client`, `middleware/metrics.py`,
+`GET /metrics` - and BACKLOG §3 recorded "surfacing these metrics in the
+Admin UI" as an explicit, deliberate follow-up. The follow-up was never
+scheduled, and the page went on telling operators the data did not exist
+for roughly a month while it was being collected.
+
+ADR-124's count-proxy suggestion is also moot: it was a workaround
+*because* no telemetry existed.
+
+Decision
+
+Build the page over the metrics already collected.
+
+`app/services/api_usage_service.py` reads the in-process
+`prometheus_client` registry directly and folds it into a snapshot -
+totals, per-status-class counts, and per-`(method, route template)` rows
+with request count, error count/rate, mean latency and an approximate
+p95. `GET /admin/api-usage` (`require_admin`) returns it as JSON.
+
+Reading the registry rather than scraping `GET /metrics` over HTTP and
+parsing the text exposition: same process, same numbers, no self-call,
+and no need to hand the API its own `METRICS_AUTH_TOKEN`. `/metrics`
+remains the machine surface for a real scraper (gated by
+`require_metrics_token`); this is the human one (gated by the normal
+admin session). Both read one registry, so they cannot disagree.
+
+Errors are 4xx **and** 5xx: a 401 storm and a 500 storm are both things
+an operator wants to see. p95 reports the upper bound of the containing
+histogram bucket without intra-bucket interpolation - a conservative
+over-estimate rather than false precision - and is `None` when the
+percentile falls in the `+Inf` bucket. Mean and p95 are independently
+nullable: a just-restarted process has counts but no observations.
+
+The `"unmatched"` bucket (ADR-136's cardinality guard for unrouted
+paths) is surfaced as its own row rather than filtered out - a growing
+count there means something is probing the API.
+
+No chart library, per ADR-131. The status-class breakdown is a
+plain-CSS proportion bar (`StatusClassBar`), re-treading the ground of
+the `SignalTypeDistributionBar` deleted in ADR-142 - that component was
+hardcoded to BUY/SELL and not reusable, but its reasoning holds.
+
+Consequences
+
+**This is a snapshot, not a dashboard.** Prometheus counters are
+cumulative since process start; the time series lives in the scraping
+*server*, and this project runs none. So there are no trend lines, no
+rate-per-minute, and no day-over-day comparison, and every value resets
+on restart or deploy. The page states this in body copy rather than
+letting a reader assume otherwise, and the API docstrings say it twice
+more. Real history means Prometheus + Grafana - a poor fit for the
+911MB production box (BACKLOG §10) and its own decision.
+
+Production runs `uvicorn --workers 1`, so there is a single registry and
+the numbers are internally consistent. **If the worker count is ever
+raised, this page silently becomes wrong** - each worker would hold its
+own registry and a request would hit one at random. That is the standard
+multi-process Prometheus problem, and it would need a shared registry or
+a pushgateway (the same blocker ADR-136 already recorded for Celery
+metrics).
+
+Future Review
+
+Revisit if `--workers` is raised above 1, or if trend data becomes
+genuinely necessary - at which point the answer is a scraper, not a
+richer version of this page.
+
+---
+
 # Review Policy
 
 Review ADRs:

@@ -737,6 +737,37 @@ export interface EconomicEventUpcomingResponse {
   items: EconomicEventResponse[];
 }
 
+// ---- Admin API Usage (docs/04 §Admin, ADR-144) ----
+
+export interface ApiUsageRouteResponse {
+  method: string;
+  /** Matched route *template*, or the literal "unmatched" bucket for
+   *  paths that resolved to no route (probes, typos) - ADR-136. */
+  route: string;
+  requests: number;
+  errors: number;
+  /** 0.0-1.0, not a percentage. */
+  error_rate: number;
+  avg_latency_ms: number | null;
+  /** Bucket-accurate approximation; null when the percentile falls in
+   *  the +Inf bucket. */
+  p95_latency_ms: number | null;
+}
+
+export interface AdminApiUsageResponse {
+  total_requests: number;
+  total_errors: number;
+  error_rate: number;
+  avg_latency_ms: number | null;
+  p95_latency_ms: number | null;
+  route_count: number;
+  status_2xx: number;
+  status_3xx: number;
+  status_4xx: number;
+  status_5xx: number;
+  routes: ApiUsageRouteResponse[];
+}
+
 // ---- Watchlists (docs/04 §Watchlists, docs/58 §2.3, ADR-128) ----
 
 export interface WatchlistSummaryResponse {

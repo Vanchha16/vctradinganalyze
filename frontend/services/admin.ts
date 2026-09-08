@@ -1,5 +1,6 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/services/api-client";
 import type {
+  AdminApiUsageResponse,
   AdminAssetCreateRequest,
   AdminAssetUpdateRequest,
   AdminAuditLogListResponse,
@@ -105,6 +106,16 @@ export function listAdminLogs(params: ListAdminLogsParams): Promise<AdminAuditLo
     page: params.page ? String(params.page) : undefined,
     limit: params.limit ? String(params.limit) : undefined,
   });
+}
+
+/**
+ * ADR-144 - a JSON fold of the Prometheus request metrics ADR-136 already
+ * collects. Cumulative since the API process started, NOT a time series:
+ * every counter resets on restart/deploy, so the UI must label it
+ * "since restart" rather than implying an all-time or windowed figure.
+ */
+export function getAdminApiUsage(): Promise<AdminApiUsageResponse> {
+  return apiGet<AdminApiUsageResponse>("/admin/api-usage");
 }
 
 export function getAdminSystemStatus(): Promise<AdminSystemStatusResponse> {

@@ -164,6 +164,7 @@ def _act_as(client: TestClient, actor: User) -> None:
         ("get", "/api/v1/admin/signals", None),
         ("get", "/api/v1/admin/system", None),
         ("get", "/api/v1/admin/analytics", None),
+        ("get", "/api/v1/admin/api-usage", None),
         ("post", "/api/v1/admin/news", None),
         ("post", "/api/v1/admin/maintenance", {"action": "refresh_news"}),
     ],
@@ -186,6 +187,7 @@ def test_endpoint_rejects_non_admin(
         ("get", "/api/v1/admin/signals", None),
         ("get", "/api/v1/admin/system", None),
         ("get", "/api/v1/admin/analytics", None),
+        ("get", "/api/v1/admin/api-usage", None),
         ("post", "/api/v1/admin/news", None),
         ("post", "/api/v1/admin/maintenance", {"action": "refresh_news"}),
     ],
@@ -450,3 +452,40 @@ def test_maintenance_rejects_unknown_action(client: TestClient, engine) -> None:
     response = client.post("/api/v1/admin/maintenance", json={"action": "restart_workers"})
 
     assert response.status_code == 422
+
+
+def test_admin_api_usage_returns_metrics_snapshot(client: TestClient, engine) -> None:
+    """ADR-144. The `TestClient` request itself flows through
+    `MetricsMiddleware`, so by the time the handler runs the global
+    registry already holds at least this call - the endpoint is proving
+    it reads real in-process data, not a stub."""
+    admin = _make_user(
+        engine, email="usage-admin@example.com", username="usage_admin", role=UserRole.ADMIN
+    )
+    _act_as(client, admin)
+
+    response = client.get("/api/v1/admin/api-usage")
+
+    assert response.status_code == 200
+    body = response.json()
+    for field in (
+        "total_requests",
+        "total_errors",
+        "error_rate",
+        "route_count",
+        "status_2xx",
+        "status_3xx",
+        "status_4xx",
+        "status_5xx",
+        "routes",
+    ):
+        assert field in body
+    assert isinstance(body["routes"], list)
+    assert body["total_requests"] >= 0
+    # `avg_latency_ms`/`p95_latency_ms` are deliberately nullable - a
+    # just-restarted process has no observations at all.
+    assert "avg_latency_ms" in body
+    assert "p95_latency_ms" in body
+    for route in body["routes"]:
+        assert 0.0 <= route["error_rate"] <= 1.0
+        assert route["requests"] >= route["errors"]

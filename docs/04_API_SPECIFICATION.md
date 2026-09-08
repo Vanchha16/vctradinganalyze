@@ -1035,6 +1035,31 @@ groups on `Signal.signal_type` (`signals` has no `recommendation` column -
 see ADR-130 for why this is the intended reading of docs/58 §3.2's
 "recommendation distribution" phrasing). Contract is inferred (ADR-130).
 
+GET /admin/api-usage
+
+Response: `{"total_requests": int, "total_errors": int, "error_rate": float,
+"avg_latency_ms": float|null, "p95_latency_ms": float|null, "route_count": int,
+"status_2xx": int, "status_3xx": int, "status_4xx": int, "status_5xx": int,
+"routes": [{"method": str, "route": str, "requests": int, "errors": int,
+"error_rate": float, "avg_latency_ms": float|null, "p95_latency_ms": float|null}]}`.
+
+A JSON fold of the Prometheus counters `app/middleware/metrics.py` collects
+(ADR-136), for the Admin API Usage page (ADR-144). `require_admin`-gated,
+unlike `GET /metrics`, which serves the Prometheus text format to a scraper
+behind `require_metrics_token`; both read the same in-process registry.
+
+**Cumulative since the API process started - not a time series.** Every
+counter resets on restart/deploy; there is no trend, rate-per-minute or
+historical comparison available, because Prometheus keeps history in the
+scraping server and this project runs none. `error_rate` is 0.0-1.0 and
+counts 4xx *and* 5xx. `route` is the matched route template, or the literal
+`"unmatched"` for paths that resolved to no route (ADR-136's cardinality
+guard). `avg_latency_ms`/`p95_latency_ms` are independently nullable - a
+just-restarted process has counts but no latency observations, and p95 is
+`null` when the percentile falls in the histogram's `+Inf` bucket. p95 is the
+containing bucket's upper bound, not interpolated: an over-estimate, never an
+under-estimate.
+
 POST /admin/news
 
 No request body. Runs the existing `NewsIngestionPipeline` inline (the same

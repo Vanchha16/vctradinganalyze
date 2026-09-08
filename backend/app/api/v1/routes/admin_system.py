@@ -17,6 +17,7 @@ from app.exceptions import ResourceNotFoundException
 from app.models.enums import OrderStatus, SignalStatus
 from app.models.user import User
 from app.repositories.asset_repository import AssetRepository
+from app.schemas.admin_api_usage import AdminApiUsageResponse, ApiUsageRouteResponse
 from app.schemas.admin_system import (
     AdminAnalyticsResponse,
     AdminSystemStatusResponse,
@@ -27,6 +28,7 @@ from app.schemas.admin_system import (
 )
 from app.schemas.broker_order import BrokerOrderListResponse, BrokerOrderResponse
 from app.schemas.signal import SignalListResponse, SignalResponse
+from app.services import api_usage_service
 from app.services.admin_system_service import AdminSystemService
 from app.services.signal import status_resolver
 
@@ -151,4 +153,49 @@ async def run_maintenance(
     return MaintenanceActionResponse(
         action="refresh_calendar",
         calendar=CalendarRefreshResponse(events_created=created, events_updated=updated),
+    )
+
+
+@router.get("/api-usage", response_model=AdminApiUsageResponse)
+async def get_admin_api_usage(
+    actor: Annotated[User, Depends(require_admin)],
+) -> AdminApiUsageResponse:
+    """ADR-144: a human-readable fold of the Prometheus request metrics
+    ADR-136 already collects, for the Admin API Usage page (which until
+    now was a placeholder claiming - wrongly, since Phase 9D - that no
+    request-metrics infrastructure existed).
+
+    `require_admin`, not `require_metrics_token`: this is an operator
+    page behind the normal admin session, whereas `GET /metrics` is the
+    machine surface for a scraper with its own credential. Both read the
+    same in-process registry, so they can never disagree.
+
+    Takes no `AdminSystemService` - there is nothing to inject. The data
+    lives in the `prometheus_client` registry of this very process, not
+    in the database.
+    """
+    snapshot = api_usage_service.build_snapshot()
+    return AdminApiUsageResponse(
+        total_requests=snapshot.total_requests,
+        total_errors=snapshot.total_errors,
+        error_rate=snapshot.error_rate,
+        avg_latency_ms=snapshot.avg_latency_ms,
+        p95_latency_ms=snapshot.p95_latency_ms,
+        route_count=snapshot.route_count,
+        status_2xx=snapshot.status_2xx,
+        status_3xx=snapshot.status_3xx,
+        status_4xx=snapshot.status_4xx,
+        status_5xx=snapshot.status_5xx,
+        routes=[
+            ApiUsageRouteResponse(
+                method=route.method,
+                route=route.route,
+                requests=route.requests,
+                errors=route.errors,
+                error_rate=route.error_rate,
+                avg_latency_ms=route.avg_latency_ms,
+                p95_latency_ms=route.p95_latency_ms,
+            )
+            for route in snapshot.routes
+        ],
     )

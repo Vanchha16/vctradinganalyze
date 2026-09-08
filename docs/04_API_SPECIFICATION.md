@@ -1105,21 +1105,25 @@ Response (404, token unset/missing/wrong)
 
 # WebSocket
 
-/ws/prices
+**Implemented** (`backend/app/api/v1/routes/ws.py`, registered on the main API router): both require a `token` query param (JWT access token; connection closes with `1008` if missing/invalid) and support a client-sent `"ping"` → server `"pong"` keepalive. Backed by Redis Pub/Sub fan-out (`app/core/websocket_manager.py`, `app/core/redis_pubsub.py`).
 
-Live market prices.
+/ws/prices?symbol={symbol}&timeframe={timeframe}&token={jwt}
 
-/ws/signals
+Live market price candle ticks for one asset symbol + timeframe.
 
-Live signals.
+/ws/signals?token={jwt}
+
+Live trading signal updates (new signals, triggered status, TP/SL hit).
+
+**Not implemented** (deferred, tracked in BACKLOG.md §3):
 
 /ws/news
 
-Breaking news.
+Breaking news. Not built.
 
 /ws/notifications
 
-User notifications.
+User notifications. Not built.
 
 ---
 

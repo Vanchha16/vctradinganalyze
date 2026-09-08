@@ -4,6 +4,7 @@ outcome tracking", completed by ADR-137). No DB/IO - mirrors
 `risk_management/session_classifier.py`'s shape. Callers
 (`workers/signal_monitoring_tasks.py`) own persistence."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -57,4 +58,52 @@ def _build_outcome(signal: Signal, status: SignalStatus, closed_price: Decimal) 
     return SignalOutcome(status=status, closed_price=closed_price, profit_loss=profit_loss)
 
 
-__all__ = ["SignalOutcome", "entry_touched", "evaluate_signal_outcome"]
+@dataclass(frozen=True, slots=True)
+class TriggerScan:
+    """The candle on which a pending signal's entry was touched, plus
+    the outcome if Stop Loss/Take Profit was breached on that *same*
+    candle (ADR-137 §3.3's gap/spike case)."""
+
+    candle: PriceCandle
+    outcome: SignalOutcome | None
+
+
+def scan_for_trigger(signal: Signal, candles: Sequence[PriceCandle]) -> TriggerScan | None:
+    """ADR-141: the range-scan replacement for evaluating a single
+    `get_latest()` candle. `candles` must be oldest-first (what
+    `PriceCandleRepository.list_range` returns) - the *first* candle to
+    touch entry is the fill, exactly as a limit order would behave, so
+    order matters and the scan stops there rather than considering
+    later candles."""
+    for candle in candles:
+        if entry_touched(signal, candle):
+            return TriggerScan(candle=candle, outcome=evaluate_signal_outcome(signal, candle))
+    return None
+
+
+def scan_for_outcome(
+    signal: Signal, candles: Sequence[PriceCandle]
+) -> tuple[PriceCandle, SignalOutcome] | None:
+    """ADR-141: the first candle (oldest-first) on which a live signal
+    breaches Stop Loss or Take Profit, and that outcome. Returns `None`
+    if no candle in the range resolves it.
+
+    This is the whole point of ADR-141: the previous single-candle check
+    only ever saw the newest ingested M1 candle, so a wick that touched
+    Take Profit and retraced within the surrounding four unexamined
+    minutes was missed permanently."""
+    for candle in candles:
+        outcome = evaluate_signal_outcome(signal, candle)
+        if outcome is not None:
+            return candle, outcome
+    return None
+
+
+__all__ = [
+    "SignalOutcome",
+    "TriggerScan",
+    "entry_touched",
+    "evaluate_signal_outcome",
+    "scan_for_outcome",
+    "scan_for_trigger",
+]

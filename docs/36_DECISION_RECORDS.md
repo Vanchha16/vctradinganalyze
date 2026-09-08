@@ -7893,6 +7893,127 @@ explicitly deferred this phase to keep the change minimal.
 
 ---
 
+# ADR-141
+
+Title
+
+Scan a Candle Range, Not a Single Latest Candle - Signal Outcomes Were
+Detected Hours Late or Missed Entirely
+
+Status
+
+Accepted
+
+Context
+
+Reported from production (2026-09-08): XAUUSD H1 signal cards visibly
+showed price having already reached Take Profit or Stop Loss on the
+chart, while the card itself stayed `triggered`, only flipping to
+`successful`/`stopped out` a day later. Signals also arrived less often
+than the hourly cadence implied.
+
+`workers/signal_monitoring_tasks.py` evaluated
+`PriceCandleRepository.get_latest(asset_id, M1)` - exactly one candle -
+on each 60-second tick, for both `entry_touched` (ACTIVE) and
+`evaluate_signal_outcome` (TRIGGERED). But M1 candles are ingested only
+every `market_data_min_collection_interval_seconds` (300s, ADR-140).
+Each collection backfills five minutes of candles via `outputsize=5000`
++ upsert, so the database held every M1 candle - the monitor simply
+looked at the newest one and discarded the other four.
+
+Consequences, all observed:
+
+1. Roughly 80% of ingested price action was never examined for
+   entry/SL/TP.
+2. A wick that touched a level and retraced within the unexamined
+   window was missed **permanently** - the monitor never looked
+   backward. Resolution then waited until some future *latest* candle
+   happened to sit beyond the level, routinely hours or a day.
+3. `triggered_at`/`closed_at` recorded `datetime.now(UTC)` - the tick
+   that noticed - so every stored timestamp was wrong by the full
+   detection lag, and `signal_triggered_ttl_hours` was mis-anchored.
+4. Four of every five ticks re-evaluated an identical candle.
+5. Signal *generation* slowed as a side effect: `signal_tasks.py`'s
+   `_has_open_signal` dedup gate (ADR-125/137) skips an asset while a
+   signal is unresolved, so late resolution suppressed new signals.
+
+This also silently starved the trade-outcome dataset that docs/15's
+historical calibration has been deferred on since Phase 4D - outcomes
+were not merely late, a subset was simply never recorded.
+
+Decision
+
+Scan the range of unexamined M1 candles, oldest-first, instead of one
+latest candle.
+
+- `signal_monitoring_service` gains two pure functions alongside the
+  existing single-candle ones (which `execution/reconciliation_service`
+  still uses): `scan_for_trigger` returns the first candle to touch
+  entry plus any same-candle outcome; `scan_for_outcome` returns the
+  first candle to breach SL/TP. Oldest-first ordering is load-bearing -
+  the *first* touch is the fill, as a limit order would behave.
+- `signals.last_monitored_at` (new nullable column, migration
+  `b2c7e4a91f3d`, `batch_alter_table` per BACKLOG §26) is the watermark
+  bounding each scan. `NULL` means "never scanned" and falls back to
+  `triggered_at`/`created_at`, so the first post-deploy run
+  retroactively resolves the backlog of missed signals at their true
+  prices and true timestamps.
+- `triggered_at`/`closed_at` are now the resolving **candle's**
+  timestamp, not `now`.
+- A fill and its resolution occurring on different candles inside one
+  scan are both applied in that tick, and both Telegram messages are
+  sent - both events genuinely happened and per-tick monitoring would
+  have reported both. ADR-137 §3.3's "outcome message only" rule is
+  specific to the same-candle gap/spike case and is preserved.
+- The scan is deliberately unbounded (no `list_range` `limit`):
+  `limit` keeps the most *recent* candles in a range, which would skip
+  exactly the oldest candles a first-ever scan needs. The range is
+  self-limiting after one tick once the watermark advances.
+
+Separately, `market_data_collection_interval_overrides` (empty by
+default) allows a per-timeframe interval, overriding both the
+timeframe's own duration and ADR-140's floor.
+
+Consequences
+
+Detection becomes correct rather than probabilistic; latency is now
+bounded by ingest cadence (currently ≤5 minutes) instead of unbounded.
+Stored timestamps become accurate, which is a precondition for any
+future calibration work. The generation gate unblocks at the right
+time, restoring the intended hourly cadence.
+
+Rejected: lowering ADR-140's 300s floor globally, which was the
+operator's initial request. At Twelve Data's 800/day cap, with all
+other timeframes on the floor, M1 cannot go below ~256s - a 240s floor
+projects 823 requests/day/asset and reintroduces the exact 2026-08-07
+outage ADR-140 exists to prevent. A 15% latency gain is not worth
+sitting on the cap, and the range scan fixes accuracy regardless of
+cadence.
+
+Recommended (not defaulted) override:
+`{"M1": 150, "M5": 1800, "M15": 1800, "M30": 1800}` - projects 751.18
+requests/day/asset, **identical to today's usage**, while halving M1
+staleness. The daily budget was being spent largely on M5/M15 polling
+that the price-monitoring path does not use. Left as opt-in config
+rather than a new default because slowing M5/M15 degrades
+multi-timeframe analysis (ADR-030), which is an operator trade-off, not
+an engineering one. `log_quota_projection` (ADR-140) still warns at
+startup if an override exceeds a provider cap, and a test pins the
+recommended combination under 800/day.
+
+Future Review
+
+The ≤5-minute floor on detection latency is a provider-capacity
+consequence, not a design choice - revisit when the market-data
+provider migration lands. Tick-level or broker-streamed prices would
+remove candle granularity from outcome detection entirely, but that is
+a new data path needing its own ADR. Now that outcomes accumulate
+correctly, revisit ADR-137's touch rule, `signal_ttl_hours`, and
+`signal_triggered_ttl_hours` against real data - they remain
+hand-picked.
+
+---
+
 # Review Policy
 
 Review ADRs:

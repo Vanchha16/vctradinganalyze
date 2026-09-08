@@ -82,6 +82,19 @@ The remaining six states are reserved enum values (so a future phase can start w
 
 **`app/services/signal_monitoring_service.py`** (Phase 9E, ADR-137) - `entry_touched(signal, candle) -> bool`: the touch-based trigger rule, `candle.low <= entry_price <= candle.high`. `evaluate_signal_outcome(signal, candle) -> SignalOutcome | None`: SL/TP touch-detection, valid only once a signal is `TRIGGERED` - callers gate this.
 
+**Update (ADR-141, 2026-09-08):** the two functions above evaluate a *single* candle and remain in use by `execution/reconciliation_service.py`, but `signal_monitoring_tasks.py` no longer calls them directly. It now scans the range of candles not yet examined for a given signal:
+
+- `scan_for_trigger(signal, candles) -> TriggerScan | None` - the first candle (oldest-first) to touch entry, plus any outcome breached on that same candle (ADR-137 §3.3's gap/spike case).
+- `scan_for_outcome(signal, candles) -> tuple[PriceCandle, SignalOutcome] | None` - the first candle to breach Stop Loss or Take Profit.
+
+Oldest-first ordering is load-bearing: the *first* touch is the fill, exactly as a limit order behaves.
+
+The range is bounded by **`signals.last_monitored_at`** (nullable, migration `b2c7e4a91f3d`) - the timestamp of the newest M1 candle already evaluated against this signal. `NULL` means "never scanned" and falls back to `triggered_at`/`created_at`.
+
+`triggered_at` and `closed_at` are the resolving **candle's** timestamp, not the tick that observed it. Before ADR-141 both were `datetime.now(UTC)`, so every stored value was wrong by the full detection lag - routinely hours.
+
+The single-candle read was a real production defect: with M1 ingested every 300s (ADR-140) but only the newest candle examined, ~80% of price action was never checked, and a touch that retraced inside that window was missed permanently. See ADR-141.
+
 ---
 
 # 6. API (ADR-089)

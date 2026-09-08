@@ -21,24 +21,54 @@ logger = structlog.get_logger(__name__)
 _LOOKBACK_INTERVALS = 5
 
 
-def build_beat_schedule_seconds(min_interval_seconds: float) -> dict[Timeframe, float]:
+def build_beat_schedule_seconds(
+    min_interval_seconds: float,
+    overrides: dict[str, float] | None = None,
+) -> dict[Timeframe, float]:
     """Celery Beat interval (seconds) per timeframe - shorter timeframes are
     polled more often, matching how often a new candle actually forms, but
     never more often than `min_interval_seconds` (Phase 9H, ADR-140) -
     timeframes already longer than the floor are unaffected by `max()`
     here. A plain function, not just a module-level dict comprehension, so
     the floor's effect on the schedule is directly testable without
-    reimporting the module for a different setting value."""
-    return {
+    reimporting the module for a different setting value.
+
+    ADR-141: `overrides` (keyed by `Timeframe` value, e.g. `"M1"`) wins
+    over both the timeframe's own duration and the floor - it is the
+    operator's deliberate opt-out, including going *faster* than the
+    floor, which is the only lever on signal SL/TP detection latency.
+    An unrecognised key is ignored rather than raising: this is
+    operator-supplied config read at import time, and a typo must not
+    prevent the worker from starting. `log_quota_projection` remains the
+    guard that makes an over-budget schedule visible."""
+    schedule = {
         timeframe: max(duration.total_seconds(), min_interval_seconds)
         for timeframe, duration in TIMEFRAME_DURATIONS.items()
     }
+    for key, interval in (overrides or {}).items():
+        try:
+            # `Timeframe`'s values are lowercase (`"m1"`), but an
+            # operator writing this config by hand will naturally type
+            # `"M1"` - accept both rather than silently ignoring the
+            # more likely spelling.
+            timeframe = Timeframe(key.lower())
+        except ValueError:
+            logger.warning("market_data.unknown_timeframe_override", timeframe=key)
+            continue
+        if interval <= 0:
+            logger.warning(
+                "market_data.invalid_timeframe_override", timeframe=key, interval_seconds=interval
+            )
+            continue
+        schedule[timeframe] = interval
+    return schedule
 
 
 #: Built from the configured floor at import time - this is what
 #: `register_market_data_schedule` actually registers with Celery Beat.
 BEAT_SCHEDULE_SECONDS: dict[Timeframe, float] = build_beat_schedule_seconds(
-    settings.market_data_min_collection_interval_seconds
+    settings.market_data_min_collection_interval_seconds,
+    settings.market_data_collection_interval_overrides,
 )
 
 #: Seconds in a day - named rather than inlined as `86400` in the

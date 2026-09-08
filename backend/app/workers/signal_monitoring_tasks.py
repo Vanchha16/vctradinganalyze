@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database.session import SessionLocal
 from app.dependencies.execution import get_execution_provider
 from app.models.enums import SignalStatus, Timeframe
+from app.models.price_candle import PriceCandle
 from app.models.signal import Signal
 from app.repositories.broker_order_repository import BrokerOrderRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
@@ -12,7 +13,8 @@ from app.repositories.signal_repository import SignalRepository
 from app.services.execution.providers.base import OrderExecutionProvider
 from app.services.execution.reconciliation_service import reconcile_signal
 from app.services.signal.status_resolver import effective_status
-from app.services.signal_monitoring_service import entry_touched, evaluate_signal_outcome
+from app.services.signal_monitoring_service import scan_for_outcome, scan_for_trigger
+from app.utils.time import as_aware_utc
 from app.workers.celery_app import celery_app
 
 #: Signals span every timeframe (M1-Monthly), but price itself is
@@ -26,6 +28,45 @@ _MONITORING_INTERVAL_SECONDS = 60.0
 #: convention - large enough to cover every active signal in this
 #: environment's seeded/demo asset set without unbounded pagination.
 _ACTIVE_SIGNAL_LIMIT = 1000
+
+
+def _candles_since(
+    candle_repository: PriceCandleRepository,
+    signal: Signal,
+    fallback_start: datetime,
+    now: datetime,
+) -> list[PriceCandle]:
+    """ADR-141: every M1 candle this signal has not been evaluated
+    against yet, oldest-first.
+
+    The bug this replaces: the task used to read a single
+    `get_latest()` candle per tick while M1 candles are only ingested
+    every `market_data_min_collection_interval_seconds` (300s,
+    ADR-140) - so four of every five ingested candles were never
+    examined, and a wick that touched Stop Loss/Take Profit and
+    retraced inside that window was missed *permanently*. The signal
+    then only closed hours or days later, whenever some future
+    "latest" candle happened to sit beyond the level.
+
+    `last_monitored_at` is `None` for any signal created before that
+    column existed, in which case the scan falls back to
+    `triggered_at`/`created_at` - so the first run after deploy
+    retroactively resolves the backlog of signals the old logic
+    missed, at their true prices and true timestamps.
+
+    Deliberately unbounded (no `limit`): `list_range`'s `limit` keeps
+    the most *recent* candles in the range, which would skip the
+    oldest - exactly the candles a first-ever scan needs. The range
+    is self-limiting after one tick, since the watermark advances."""
+    start = signal.last_monitored_at or fallback_start
+    return list(
+        candle_repository.list_range(
+            signal.asset_id,
+            _PRICE_TIMEFRAME,
+            start=as_aware_utc(start),
+            end=now,
+        )
+    )
 
 
 def _monitor_pending_signals(
@@ -68,18 +109,52 @@ def _monitor_pending_signals(
             )
             continue
 
-        candle = candle_repository.get_latest(signal.asset_id, _PRICE_TIMEFRAME)
-        if candle is None or not entry_touched(signal, candle):
+        candles = _candles_since(candle_repository, signal, signal.created_at, now)
+        if not candles:
+            continue
+
+        scan = scan_for_trigger(signal, candles)
+        if scan is None:
+            # Nothing filled in this range, but these candles are now
+            # accounted for - advance the watermark so the next tick
+            # doesn't re-read them (ADR-141).
+            signal.last_monitored_at = as_aware_utc(candles[-1].timestamp)
+            session.commit()
             continue
 
         signal.status = SignalStatus.TRIGGERED
-        signal.triggered_at = now
+        #: ADR-141: the *candle's* timestamp, not `now`. Under the old
+        #: single-candle logic these two were assumed equivalent; with a
+        #: range scan the fill can be many candles behind the tick, and
+        #: recording `now` would both misreport the fill time and
+        #: mis-anchor `signal_triggered_ttl_hours`.
+        signal.triggered_at = as_aware_utc(scan.candle.timestamp)
 
-        outcome = evaluate_signal_outcome(signal, candle)
-        if outcome is not None:
+        outcome = scan.outcome
+        outcome_candle: PriceCandle | None = scan.candle if outcome is not None else None
+        #: ADR-137 §3.3: trigger and resolution on the *same* candle is a
+        #: gap/spike, and sends only the outcome message.
+        resolved_same_candle = outcome is not None
+
+        if outcome is None:
+            # The fill and its resolution can both fall inside one scan
+            # range. Continue through the candles *after* the fill rather
+            # than waiting for the next tick - otherwise a signal that
+            # filled and hit Take Profit four minutes later would sit
+            # TRIGGERED for another cycle.
+            later = scan_for_outcome(
+                signal, [c for c in candles if c.timestamp > scan.candle.timestamp]
+            )
+            if later is not None:
+                outcome_candle, outcome = later
+
+        if outcome is not None and outcome_candle is not None:
             signal.status = outcome.status
-            signal.closed_at = now
+            signal.closed_at = as_aware_utc(outcome_candle.timestamp)
             signal.profit_loss = outcome.profit_loss
+            signal.last_monitored_at = as_aware_utc(outcome_candle.timestamp)
+        else:
+            signal.last_monitored_at = as_aware_utc(candles[-1].timestamp)
         session.commit()
 
         from app.services.signal_events import publish_signal_status_changed
@@ -90,14 +165,26 @@ def _monitor_pending_signals(
         # `signal_tasks.py`'s existing best-effort enqueue pattern
         # (docs/57 §5) - a broker outage must not stop the rest of
         # this run or block the next signal's evaluation.
-        if outcome is not None:
+        if outcome is None:
+            from app.workers.telegram_tasks import enqueue_signal_triggered_delivery
+
+            enqueue_signal_triggered_delivery(str(signal.id))
+        elif resolved_same_candle:
             from app.workers.telegram_tasks import enqueue_signal_outcome_delivery
 
             enqueue_signal_outcome_delivery(str(signal.id))
         else:
-            from app.workers.telegram_tasks import enqueue_signal_triggered_delivery
+            # Fill and resolution were genuinely separate events on
+            # separate candles - both really happened, and per-tick
+            # monitoring would have sent both. ADR-137 §3.3's
+            # "outcome only" rule is specific to the same-candle case.
+            from app.workers.telegram_tasks import (
+                enqueue_signal_outcome_delivery,
+                enqueue_signal_triggered_delivery,
+            )
 
             enqueue_signal_triggered_delivery(str(signal.id))
+            enqueue_signal_outcome_delivery(str(signal.id))
 
 
 def _monitor_triggered_signals(
@@ -136,17 +223,26 @@ def _monitor_triggered_signals(
             )
             continue
 
-        candle = candle_repository.get_latest(signal.asset_id, _PRICE_TIMEFRAME)
-        if candle is None:
+        candles = _candles_since(
+            candle_repository, signal, signal.triggered_at or signal.created_at, now
+        )
+        if not candles:
             continue
 
-        outcome = evaluate_signal_outcome(signal, candle)
-        if outcome is None:
+        found = scan_for_outcome(signal, candles)
+        if found is None:
+            signal.last_monitored_at = as_aware_utc(candles[-1].timestamp)
+            session.commit()
             continue
 
+        outcome_candle, outcome = found
         signal.status = outcome.status
-        signal.closed_at = now
+        #: ADR-141: the candle that actually breached the level, not the
+        #: tick that noticed it - `closed_at` was previously wrong by the
+        #: full detection lag (routinely hours).
+        signal.closed_at = as_aware_utc(outcome_candle.timestamp)
         signal.profit_loss = outcome.profit_loss
+        signal.last_monitored_at = as_aware_utc(outcome_candle.timestamp)
         session.commit()
 
         from app.services.signal_events import publish_signal_status_changed

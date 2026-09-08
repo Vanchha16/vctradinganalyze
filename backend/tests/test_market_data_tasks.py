@@ -158,3 +158,42 @@ def test_log_quota_projection_does_not_warn_when_projection_is_under_the_cap(
     assert not recorder.warnings
     assert len(recorder.infos) == 1
     assert recorder.infos[0][0] == "market_data.quota_projection"
+
+
+def test_build_beat_schedule_applies_timeframe_overrides() -> None:
+    """ADR-141: an override wins over both the timeframe's own duration
+    and the ADR-140 floor - including going *faster* than the floor,
+    which is the only lever on signal SL/TP detection latency."""
+    schedule = market_data_tasks.build_beat_schedule_seconds(300.0, {"M1": 150.0, "m5": 1800.0})
+
+    assert schedule[Timeframe.M1] == 150.0
+    assert schedule[Timeframe.M5] == 1800.0  # lowercase key accepted too
+    assert schedule[Timeframe.M15] == 900.0  # untouched, still duration-vs-floor
+
+
+def test_build_beat_schedule_ignores_unknown_and_non_positive_overrides() -> None:
+    """Operator-supplied config read at import time - a typo or a bad
+    value must never stop the worker from starting."""
+    schedule = market_data_tasks.build_beat_schedule_seconds(
+        300.0, {"NOT_A_TIMEFRAME": 60.0, "M30": 0.0, "H1": -5.0}
+    )
+
+    assert schedule[Timeframe.M30] == 1800.0
+    assert schedule[Timeframe.H1] == 3600.0
+    assert len(schedule) == len(Timeframe)
+
+
+def test_recommended_override_stays_within_twelve_data_daily_cap() -> None:
+    """The concrete tuning ADR-141 recommends: M1 twice as fresh as the
+    300s floor, paid for by slowing M5/M15/M30 - which the signal
+    pipeline does not use for price monitoring - at no extra quota cost.
+    Pinned as a test so a future edit can't silently reintroduce the
+    2026-08-07 over-cap outage (ADR-140)."""
+    seconds_per_day = 86_400
+    schedule = market_data_tasks.build_beat_schedule_seconds(
+        300.0, {"M1": 150.0, "M5": 1800.0, "M15": 1800.0, "M30": 1800.0}
+    )
+    projected = sum(seconds_per_day / interval for interval in schedule.values())
+
+    assert projected <= 800  # Twelve Data free-tier daily cap
+    assert schedule[Timeframe.M1] == 150.0

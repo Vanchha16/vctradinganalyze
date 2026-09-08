@@ -415,3 +415,183 @@ def test_register_signal_monitoring_schedule() -> None:
 
     assert schedule["signals-monitor-active"]["task"] == "signals.monitor_active"
     assert schedule["signals-monitor-active"]["schedule"] == 60.0
+
+
+# --- ADR-141: range-scan regression tests -------------------------------
+#
+# Every test below fails against the pre-ADR-141 single-`get_latest()`
+# implementation. They encode the production defect directly: the
+# resolving candle is deliberately never the newest one.
+
+
+def _seed_m1_candle_at(
+    session: Session, asset: Asset, *, timestamp: datetime, high: str, low: str
+) -> None:
+    """Like `_seed_m1_candle`, but at an explicit timestamp so a test can
+    place the resolving candle *behind* the newest one."""
+    session.add(
+        PriceCandle(
+            asset_id=asset.id,
+            timeframe=Timeframe.M1,
+            timestamp=timestamp,
+            open=high,
+            high=high,
+            low=low,
+            close=high,
+        )
+    )
+    session.commit()
+
+
+def test_triggered_signal_resolves_on_a_wick_that_is_not_the_latest_candle(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ADR-141 defect in one test: price wicks through Take Profit
+    and retraces. The newest candle is back inside the entry/TP band, so
+    the old `get_latest()` check saw nothing and left the signal
+    TRIGGERED indefinitely - the "chart already hit TP but the card still
+    says triggered" report."""
+    enqueued = _patch_enqueue(monkeypatch)
+    base = datetime.now(UTC) - timedelta(minutes=10)
+
+    with session_factory() as session:
+        asset, signal = _seed_signal(
+            session,
+            status=SignalStatus.TRIGGERED,
+            entry="100",
+            stop_loss="95",
+            take_profit="115",
+            created_at=base - timedelta(hours=1),
+            triggered_at=base,
+        )
+        signal_id = signal.id
+        # The wick: touches TP at 116, four candles back.
+        _seed_m1_candle_at(
+            session, asset, timestamp=base + timedelta(minutes=1), high="116", low="105"
+        )
+        # ...then price retraces and stays well inside the band, so the
+        # newest candle alone proves nothing.
+        for offset in (2, 3, 4, 5):
+            _seed_m1_candle_at(
+                session, asset, timestamp=base + timedelta(minutes=offset), high="107", low="104"
+            )
+
+    signal_monitoring_tasks.monitor_active_signals_task()
+
+    with session_factory() as session:
+        stored = session.get(Signal, signal_id)
+        assert stored is not None
+        assert stored.status == SignalStatus.SUCCESSFUL
+        # closed_at is the wick's own timestamp, not the tick that
+        # noticed it - the old code recorded `now`, overstating the
+        # holding period by the full detection lag.
+        assert stored.closed_at is not None
+        assert stored.closed_at.replace(tzinfo=UTC) == base + timedelta(minutes=1)
+        assert stored.profit_loss == 15  # take_profit 115 - entry 100
+    assert enqueued == [str(signal_id)]
+
+
+def test_active_signal_triggers_on_an_older_candle_not_just_the_latest(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same defect on the entry side: the fill happened on a candle the
+    old single-candle read never examined."""
+    _patch_enqueue(monkeypatch)
+    triggered = _patch_triggered_enqueue(monkeypatch)
+    base = datetime.now(UTC) - timedelta(minutes=10)
+
+    with session_factory() as session:
+        asset, signal = _seed_signal(
+            session, entry="100", stop_loss="95", take_profit="115", created_at=base
+        )
+        signal_id = signal.id
+        # Entry touched here...
+        _seed_m1_candle_at(
+            session, asset, timestamp=base + timedelta(minutes=1), high="101", low="99"
+        )
+        # ...then price moves away without reaching SL or TP, so the
+        # newest candle never covers entry.
+        for offset in (2, 3):
+            _seed_m1_candle_at(
+                session, asset, timestamp=base + timedelta(minutes=offset), high="106", low="104"
+            )
+
+    signal_monitoring_tasks.monitor_active_signals_task()
+
+    with session_factory() as session:
+        stored = session.get(Signal, signal_id)
+        assert stored is not None
+        assert stored.status == SignalStatus.TRIGGERED
+        assert stored.triggered_at is not None
+        assert stored.triggered_at.replace(tzinfo=UTC) == base + timedelta(minutes=1)
+    assert triggered == [str(signal_id)]
+
+
+def test_fill_and_resolution_on_different_candles_in_one_scan_sends_both_messages(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A signal can fill and resolve inside a single scan range. Both are
+    real, separate events that per-tick monitoring would have reported
+    separately, so both messages are sent - ADR-137 §3.3's "outcome
+    only" rule is specific to the *same-candle* gap/spike case."""
+    outcome = _patch_enqueue(monkeypatch)
+    triggered = _patch_triggered_enqueue(monkeypatch)
+    base = datetime.now(UTC) - timedelta(minutes=10)
+
+    with session_factory() as session:
+        asset, signal = _seed_signal(
+            session, entry="100", stop_loss="95", take_profit="115", created_at=base
+        )
+        signal_id = signal.id
+        _seed_m1_candle_at(
+            session, asset, timestamp=base + timedelta(minutes=1), high="101", low="99"
+        )
+        _seed_m1_candle_at(
+            session, asset, timestamp=base + timedelta(minutes=2), high="108", low="104"
+        )
+        _seed_m1_candle_at(
+            session, asset, timestamp=base + timedelta(minutes=3), high="116", low="110"
+        )
+
+    signal_monitoring_tasks.monitor_active_signals_task()
+
+    with session_factory() as session:
+        stored = session.get(Signal, signal_id)
+        assert stored is not None
+        assert stored.status == SignalStatus.SUCCESSFUL
+        assert stored.triggered_at is not None
+        assert stored.triggered_at.replace(tzinfo=UTC) == base + timedelta(minutes=1)
+        assert stored.closed_at is not None
+        assert stored.closed_at.replace(tzinfo=UTC) == base + timedelta(minutes=3)
+    assert triggered == [str(signal_id)]
+    assert outcome == [str(signal_id)]
+
+
+def test_watermark_advances_when_nothing_resolves(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`last_monitored_at` is what keeps the scan bounded - without it
+    every tick would replay the signal's whole life."""
+    _patch_enqueue(monkeypatch)
+    _patch_triggered_enqueue(monkeypatch)
+    base = datetime.now(UTC) - timedelta(minutes=10)
+
+    with session_factory() as session:
+        asset, signal = _seed_signal(
+            session, entry="100", stop_loss="95", take_profit="115", created_at=base
+        )
+        signal_id = signal.id
+        newest = base + timedelta(minutes=2)
+        _seed_m1_candle_at(
+            session, asset, timestamp=base + timedelta(minutes=1), high="106", low="104"
+        )
+        _seed_m1_candle_at(session, asset, timestamp=newest, high="107", low="105")
+
+    signal_monitoring_tasks.monitor_active_signals_task()
+
+    with session_factory() as session:
+        stored = session.get(Signal, signal_id)
+        assert stored is not None
+        assert stored.status == SignalStatus.ACTIVE
+        assert stored.last_monitored_at is not None
+        assert stored.last_monitored_at.replace(tzinfo=UTC) == newest

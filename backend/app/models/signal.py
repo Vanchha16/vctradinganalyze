@@ -48,4 +48,12 @@ class Signal(Base, UUIDMixin, CreatedAtMixin):
     )
     triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: ADR-141 monitoring watermark - the timestamp of the newest M1
+    #: candle `signal_monitoring_tasks.py` has already evaluated this
+    #: signal against. `None` means "never scanned", which the task
+    #: reads as "start from `triggered_at`/`created_at`" so a signal
+    #: created before this column existed is still resolved correctly.
+    last_monitored_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     profit_loss: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)

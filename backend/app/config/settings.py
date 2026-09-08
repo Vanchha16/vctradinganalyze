@@ -42,6 +42,27 @@ class Settings(BaseSettings):
     # newest candle can be.
     market_data_min_collection_interval_seconds: float = 300.0
 
+    # ADR-141: per-timeframe escape hatch over the floor above, keyed by
+    # `Timeframe` value (e.g. `{"M1": 120.0, "M5": 1800.0}`). Empty by
+    # default - behaviour is byte-for-byte the floor above unless an
+    # operator opts in.
+    #
+    # Why this is config, not a lowered default: signal SL/TP detection
+    # latency is bounded by how often M1 candles arrive, so a faster M1
+    # is the only way to reduce it. But at Twelve Data's 800/day cap,
+    # with every other timeframe on the 300s floor, M1 cannot go below
+    # ~256s without exceeding the cap (a 240s floor projects 823/day) -
+    # and blowing that cap is exactly the 2026-08-07 production outage
+    # ADR-140 was written for. Buying M1 headroom means *slowing* other
+    # timeframes here, which degrades multi-timeframe analysis
+    # (ADR-030). That is an operator cost/accuracy trade-off, made
+    # visible and reversible rather than baked into a default.
+    #
+    # `market_data_tasks.log_quota_projection` already warns at startup
+    # when the resulting schedule exceeds a provider's declared cap, so
+    # a bad override is loud rather than silent.
+    market_data_collection_interval_overrides: dict[str, float] = {}
+
     twelve_data_api_key: str = ""
     twelve_data_base_url: str = "https://api.twelvedata.com"
     twelve_data_timeout_seconds: float = 10.0

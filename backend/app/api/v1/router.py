@@ -6,7 +6,6 @@ from app.api.v1.routes import (
     admin_system,
     admin_users,
     ai_analysis,
-    ai_chat,
     analysis_confidence,
     auth,
     economic_calendar,
@@ -70,6 +69,5 @@ api_router.include_router(risk_management.router, dependencies=[_engine_rate_lim
 api_router.include_router(strategy.router, dependencies=[_engine_rate_limit])
 api_router.include_router(ai_analysis.router)
 api_router.include_router(signals.router)
-api_router.include_router(ai_chat.router)
 api_router.include_router(telegram.router)
 api_router.include_router(watchlists.router)

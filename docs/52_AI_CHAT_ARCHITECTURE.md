@@ -1,3 +1,13 @@
+> **SUPERSEDED (2026-09-08, ADR-143).** The AI Chat Assistant has been
+> removed in full - frontend, backend, and the `conversations`/`messages`
+> tables (migration `c8f31d7b40a2`). Production usage was 4 conversations
+> and 18 messages over ~4 weeks, last touched 2026-08-12, against a
+> metered per-message OpenAI cost.
+>
+> This document is retained as the historical record of what was built,
+> not as a description of the current system. Nothing described below
+> exists in the codebase any more. See ADR-143.
+
 # AI Chat Architecture
 
 # 1. Scope

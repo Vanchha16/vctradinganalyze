@@ -9,7 +9,6 @@ import {
   Gauge,
   LayoutDashboard,
   LineChart,
-  MessagesSquare,
   Newspaper,
   PieChart,
   Server,
@@ -56,7 +55,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "AI Analysis", href: "/ai-analysis", icon: BrainCircuit },
       { label: "Signals", href: "/signals", icon: Signal },
-      { label: "AI Chat", href: "/ai-chat", icon: MessagesSquare },
       { label: "Smart Money", href: "/dashboard/smart-money-concepts", icon: Waves, preserveQuery: true },
       { label: "Market Regime", href: "/dashboard/market-regime", icon: Gauge, preserveQuery: true },
     ],

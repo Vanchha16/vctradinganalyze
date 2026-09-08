@@ -8089,6 +8089,97 @@ express.
 
 ---
 
+# ADR-143
+
+Title
+
+Remove the AI Chat Assistant Entirely - Frontend, Backend and
+Persistence (supersedes Phase 6C / ADR-092 through ADR-098)
+
+Status
+
+Accepted
+
+Context
+
+Phase 6C (docs/52) shipped the AI Chat Assistant: `AIChatEngine`, the
+`conversations`/`messages` tables, `POST/GET/DELETE /chat/*`, and a
+two-page frontend.
+
+Production usage after roughly four weeks live: **4 conversations, 18
+messages, across 6 users, last touched 2026-08-12** - 27 days before
+this decision. Effectively abandoned.
+
+It is also the only removable surface that costs money per use: every
+message is a metered OpenAI call, which is why ADR-127's per-user quota
+(`ai_chat_quota_limit`, 30/hour) exists at all.
+
+Critically, it feeds nothing. ADR-093/094 established that `AIChatEngine`
+introduces zero evidence/weighting/recommendation logic and never calls
+`AIOrchestratorEngine.generate()`/`SignalEngine.generate()` - it only
+reads already-persisted rows. Removing it therefore cannot affect signal
+quality, unlike News/Economic Calendar (live `ContextBuilder` inputs) or
+SMC/Market Regime (30% weight and confidence inputs respectively).
+
+Decision
+
+Remove the feature in full, including persistence - the operator chose
+this over a frontend-only removal (which would have orphaned an entire
+backend) and over keeping the tables.
+
+Backend: `ai_chat_engine.py`, `services/ai_chat/`, `routes/ai_chat.py`,
+`dependencies/ai_chat.py`, `schemas/ai_chat.py`, `Conversation`/`Message`
+models, `ConversationStatus`/`MessageRole` enums, both repositories,
+their router registration, model/enum re-exports, `ai_chat_quota_limit`/
+`ai_chat_quota_window_seconds`, and four test modules.
+
+`AIProvider` Protocol: `generate_chat_reply()`, `AIChatRequest`,
+`AIChatResponse` and `ChatTurn` are removed from `providers/base.py` and
+from the mock and OpenAI implementations - with the only caller gone,
+keeping a conversational method on the interface would misrepresent what
+the provider abstraction is for. ADR-092's extension of that Protocol is
+thereby reverted. `OpenAIProvider._post_chat_completion` stays: that is
+OpenAI's HTTP endpoint name, used by `generate()` too, not this feature.
+
+Persistence: migration `c8f31d7b40a2` drops `messages` then
+`conversations`, and explicitly drops the `message_role` and
+`conversation_status` Postgres enum types - `sa.Enum` inside
+`create_table` auto-creates a type that `drop_table` does not remove,
+which migration 72e726c08dd8's own downgrade overlooked.
+
+Frontend: both pages, `features/ai-chat/`, five hooks,
+`services/ai-chat.ts`, the AI Chat type block, and the nav entry.
+
+Consequences
+
+**Irreversible for data.** The 4 conversations and 18 messages are
+destroyed. They were exported first, in both custom and plain-SQL form,
+to `~/deploy_backups/ai_chat_tables_<timestamp>.{dump,sql}` and copied
+off the server before the migration ran. `downgrade()` recreates the
+empty schema only - it cannot restore rows.
+
+Backend test count drops 1142 -> 1104. No remaining module imports
+anything removed here; `ruff`, `mypy` and the frontend build/typecheck/
+lint are clean.
+
+Telegram is unaffected despite name overlap:
+`services/telegram/conversation_state.py` is Redis-backed throwaway UI
+state for the "Show Chart" button, and `message_sections.py` formats
+outbound bot messages. Neither touches the dropped tables - verified
+before dropping.
+
+docs/52 is retained as the historical record of what was built, marked
+superseded rather than deleted.
+
+Future Review
+
+If conversational analysis is ever wanted again, this ADR plus docs/52
+describe the whole prior design. Rebuild deliberately, with a view on
+LLM cost per message - low usage against a metered per-message cost was
+the reason for removal, not any defect in the implementation.
+
+---
+
 # Review Policy
 
 Review ADRs:

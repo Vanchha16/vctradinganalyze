@@ -737,64 +737,6 @@ export interface EconomicEventUpcomingResponse {
   items: EconomicEventResponse[];
 }
 
-// ---- AI Chat (docs/04 §AI Chat, docs/52) ----
-
-export type ConversationStatus = "active" | "archived";
-
-export type MessageRole = "user" | "assistant";
-
-export interface ConversationResponse {
-  id: string;
-  title: string | null;
-  current_symbol: string | null;
-  current_timeframe: Timeframe | null;
-  status: ConversationStatus;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface MessageResponse {
-  id: string;
-  conversation_id: string;
-  role: MessageRole;
-  content: string;
-  symbol: string | null;
-  timeframe: Timeframe | null;
-  ai_analysis_id: string | null;
-  signal_id: string | null;
-  model_name: string | null;
-  created_at: string;
-}
-
-export interface ConversationDetailResponse extends ConversationResponse {
-  messages: MessageResponse[];
-}
-
-export interface ConversationListResponse {
-  items: ConversationResponse[];
-  page: number;
-  limit: number;
-  total: number;
-}
-
-export interface CreateConversationRequest {
-  symbol?: string;
-  timeframe?: Timeframe;
-}
-
-export interface SendMessageRequest {
-  content: string;
-  symbol?: string;
-  timeframe?: Timeframe;
-}
-
-export interface SendMessageResponse {
-  conversation: ConversationResponse;
-  user_message: MessageResponse;
-  assistant_message: MessageResponse;
-  warnings: string[];
-}
-
 // ---- Watchlists (docs/04 §Watchlists, docs/58 §2.3, ADR-128) ----
 
 export interface WatchlistSummaryResponse {

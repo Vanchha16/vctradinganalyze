@@ -7,7 +7,7 @@ target JSON schema at generation time - unlike News's isolated summary
 call, failures here raise (retry/fallback is the orchestrator's job,
 ADR-081), never silently return `None`.
 
-`generate()` (Phase 6A) and `generate_chat_reply()` (Phase 6C) share one
+`generate()` (Phase 6A) uses one
 `httpx.Client` construction and one status-code-to-exception
 classification (`_post_chat_completion`) - the same integration, same
 settings, same error handling, two request shapes (ADR-092)."""
@@ -16,7 +16,7 @@ import httpx
 
 from app.config import settings
 
-from .base import AIChatRequest, AIChatResponse, AIGenerationRequest, AIGenerationResponse
+from .base import AIGenerationRequest, AIGenerationResponse
 from .exceptions import (
     AIProviderConfigurationError,
     PermanentAIProviderError,
@@ -52,15 +52,6 @@ class OpenAIProvider:
         )
         content = self._extract_content(body)
         return AIGenerationResponse(raw_content=content, model_name=settings.openai_model)
-
-    def generate_chat_reply(self, request: AIChatRequest) -> AIChatResponse:
-        body = self._post_chat_completion(
-            messages=[{"role": turn.role, "content": turn.content} for turn in request.messages],
-            max_tokens=request.max_tokens,
-            response_format=None,
-        )
-        content = self._extract_content(body)
-        return AIChatResponse(content=content, model_name=settings.openai_model)
 
     def _post_chat_completion(
         self,

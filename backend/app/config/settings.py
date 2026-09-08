@@ -139,8 +139,6 @@ class Settings(BaseSettings):
     # ADR-127's Future Review.
     ai_analysis_quota_limit: int = 10
     ai_analysis_quota_window_seconds: int = 3600
-    ai_chat_quota_limit: int = 30
-    ai_chat_quota_window_seconds: int = 3600
 
     # Phase 9A (ADR-132) - trusted immediate-peer address(es) for resolving
     # the real client IP behind a reverse proxy, passed verbatim to

@@ -2,15 +2,12 @@ from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
 from app.models.audit_log import AuditLog
 from app.models.broker_order import BrokerOrder
-from app.models.conversation import Conversation
 from app.models.economic_event import EconomicEvent
 from app.models.enums import (
-    ConversationStatus,
     EconomicEventCategory,
     EconomicEventImportance,
     EconomicEventStatus,
     MarketType,
-    MessageRole,
     NewsCategory,
     NewsImportance,
     NewsSentimentLabel,
@@ -25,7 +22,6 @@ from app.models.enums import (
     UserRole,
 )
 from app.models.indicator_result import IndicatorResult
-from app.models.message import Message
 from app.models.news_article import NewsArticle
 from app.models.news_sentiment import NewsSentiment
 from app.models.news_source import NewsSource
@@ -47,16 +43,12 @@ __all__ = [
     "Asset",
     "AuditLog",
     "BrokerOrder",
-    "Conversation",
-    "ConversationStatus",
     "EconomicEvent",
     "EconomicEventCategory",
     "EconomicEventImportance",
     "EconomicEventStatus",
     "IndicatorResult",
     "MarketType",
-    "Message",
-    "MessageRole",
     "NewsArticle",
     "NewsCategory",
     "NewsImportance",

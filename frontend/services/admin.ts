@@ -1,6 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/services/api-client";
 import type {
-  AdminAnalyticsResponse,
   AdminAssetCreateRequest,
   AdminAssetUpdateRequest,
   AdminAuditLogListResponse,
@@ -16,18 +15,14 @@ import type {
   AdminUserUpdateRequest,
   Asset,
   AssetListResponse,
-  BrokerOrderListResponse,
   MaintenanceAction,
   MaintenanceActionResponse,
   NewsRefreshResponse,
-  OrderStatus,
-  SignalListResponse,
-  SignalStatus,
 } from "@/services/types";
 
 /**
- * Thin wrappers over `/admin/users*`, `/admin/logs`, `/admin/signals`,
- * `/admin/system`, `/admin/analytics`, `/admin/news`, `/admin/maintenance`
+ * Thin wrappers over `/admin/users*`, `/admin/logs`,
+ * `/admin/system`, `/admin/news`, `/admin/maintenance`
  * (docs/59 §6.2/§11, docs/58 §3.2, Phase 7D-C, ADR-129/ADR-130) - mirrors
  * every other service module's shape (`services/signals.ts`), no business
  * logic here.
@@ -112,47 +107,8 @@ export function listAdminLogs(params: ListAdminLogsParams): Promise<AdminAuditLo
   });
 }
 
-export interface ListAdminSignalsParams {
-  symbol?: string;
-  status?: SignalStatus;
-  page?: number;
-  limit?: number;
-}
-
-export function listAdminSignals(params: ListAdminSignalsParams): Promise<SignalListResponse> {
-  return apiGet<SignalListResponse>("/admin/signals", {
-    symbol: params.symbol,
-    status: params.status,
-    page: params.page ? String(params.page) : undefined,
-    limit: params.limit ? String(params.limit) : undefined,
-  });
-}
-
-export interface ListAdminOrdersParams {
-  status?: OrderStatus;
-  page?: number;
-  limit?: number;
-}
-
-/**
- * EA Bot spec §3F - every real broker order the bot has ever placed,
- * view-only. Empty by default: `EXECUTION_ENABLED=false` means the
- * pipeline only ever logs a dry-run, never creates a `BrokerOrder` row.
- */
-export function listAdminOrders(params: ListAdminOrdersParams): Promise<BrokerOrderListResponse> {
-  return apiGet<BrokerOrderListResponse>("/admin/orders", {
-    status: params.status,
-    page: params.page ? String(params.page) : undefined,
-    limit: params.limit ? String(params.limit) : undefined,
-  });
-}
-
 export function getAdminSystemStatus(): Promise<AdminSystemStatusResponse> {
   return apiGet<AdminSystemStatusResponse>("/admin/system");
-}
-
-export function getAdminAnalytics(): Promise<AdminAnalyticsResponse> {
-  return apiGet<AdminAnalyticsResponse>("/admin/analytics");
 }
 
 /**

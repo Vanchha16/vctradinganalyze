@@ -8014,6 +8014,81 @@ hand-picked.
 
 ---
 
+# ADR-142
+
+Title
+
+Remove the Signal Statistics and Broker Orders Admin Pages - Frontend
+Only, Backend Endpoints Retained
+
+Status
+
+Accepted
+
+Context
+
+Phase 7D-D (ADR-131) shipped `/admin/signal-statistics`, and the EA Bot
+spec §3F shipped `/admin/orders`. Both were operator-requested for
+removal (2026-09-08) as sidebar clutter.
+
+`/admin/signal-statistics` is largely redundant: `GET /admin/signals`
+returns the same rows the existing `/signals` page already renders, and
+`GET /admin/analytics` contributed only a daily-active-users tile and a
+plain-CSS BUY/SELL proportion bar.
+
+`/admin/orders` was not redundant - it was the only UI over
+`GET /admin/orders`, i.e. the only view of real broker fills, tickets
+and positions. This was raised with the operator explicitly, twice, and
+removal was reaffirmed.
+
+Decision
+
+Delete the frontend surface only:
+
+- `app/(protected)/admin/{orders,signal-statistics}/page.tsx`
+- `features/admin/components/{admin-order-table,admin-signal-table,
+  signal-type-distribution-bar}.tsx`
+- `hooks/use-admin-{orders,signals,analytics}.ts`
+- `listAdminSignals`/`listAdminOrders`/`getAdminAnalytics` and their
+  param types in `services/admin.ts`
+- the two `NAV_GROUPS` entries and their now-unused lucide icons
+
+`StatCard` is explicitly **kept** - it is shared with the Admin
+Dashboard and System Health pages and is not part of this removal.
+
+`GET /admin/signals`, `GET /admin/analytics` and `GET /admin/orders`
+are **retained** on the backend, with their tests. Removing a
+documented, tested API surface is a larger decision than deleting a
+page, and the data behind `/admin/orders` in particular stays
+operationally relevant the moment `execution_enabled` is turned on.
+
+Consequences
+
+Three backend endpoints now have no frontend caller. They remain
+covered by backend tests and present in the OpenAPI schema, so they are
+callable directly (curl, the API Explorer page) if an operator needs
+the data.
+
+**There is no UI view of EA Bot trade execution any more.** With
+`execution_enabled=true`, broker orders would be observable only via
+the API or direct SQL. This is the accepted cost of the removal, not an
+oversight - if live execution becomes routine, rebuilding a view over
+`GET /admin/orders` is the obvious first ask, and `admin-order-table.tsx`
+is recoverable from this commit's parent.
+
+ADR-131 (`SignalTypeDistributionBar`, "no chart library added") is
+superseded in effect: the component it describes no longer exists. Its
+underlying reasoning - do not add a charting dependency for one bar -
+still stands should the page ever return.
+
+Future Review
+
+Revisit if live trade execution is enabled for real, or if an operator
+needs signal-wide statistics that the per-user `/signals` page cannot
+express.
+
+---
+
 # Review Policy
 
 Review ADRs:

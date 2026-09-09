@@ -8566,6 +8566,122 @@ strategy set stops changing.
 
 ---
 
+# ADR-148
+
+Title
+
+BBMA as an Eighth Strategy, With Four Invented Constants the Source
+Material Does Not Define
+
+Status
+
+Accepted
+
+Context
+
+The operator supplied four BBMA documents (recorded in docs/61) and asked
+for the strategy to be added to the project. BBMA is deterministic -
+every term is defined by where price and moving averages sit relative to
+Bollinger Bands - which makes it the kind of reproducible logic
+`AIOrchestratorEngine` cannot provide, and the kind ADR-085 explicitly
+left the door open for.
+
+Three decisions were put to the operator and answered:
+
+1. **Role** - BBMA becomes another `StrategyName` inside `StrategyEngine`
+   rather than a parallel engine or a replacement for the AI. The AI
+   still makes the final BUY/SELL call; BBMA competes for
+   `primary_strategy`, which ADR-147 now records on every signal.
+2. **Thresholds** - the operator asked for proposed values to approve
+   rather than supplying their own.
+3. **Timeframes** - the Intraday set (H4/H1/M15, docs/61 §5).
+
+Decision
+
+`app/services/bbma/` - pure detection over an `OHLCVSeries`, no IO,
+mirroring `technical_analysis/`'s analyzer shape:
+
+- `indicators.py` - **series-valued** Bollinger/EMA and the linear
+  weighted MA. The existing `app/indicators/` functions return only the
+  latest value, which is useless for BBMA: it must look back to find an
+  Extreme, then its reverse candle, then its retest. `bollinger_series`
+  deliberately reuses the same `sma`/`population_stdev` as
+  `volatility.bollinger_bands` so the two can never disagree about where
+  a band sits, and a test pins that equality.
+- `detector.py` - a single forward pass that enforces BBMA's ordering law
+  (docs/61 §4) rather than three independent scans.
+
+`StrategyName.BBMA` is declared **last**. Declaration order is the
+ranking tie-break (ADR-076), so inserting it anywhere earlier would have
+silently changed which strategy already wins an exact tie - it was
+initially placed before `SWING_TRADING` and moved.
+
+`StrategyEvidenceBundle` gains `bbma`, and `StrategyEngine` runs
+detection over 200 recent candles (Bollinger warm-up plus room for a full
+Extreme -> reverse -> retest sequence). `None` on no candles, matching how
+`technical`/`smc`/`market_regime` already degrade.
+
+**The four invented constants**, all approved by the operator:
+
+| Constant | Value | Reason |
+|---|---|---|
+| `REVERSE_SEARCH_BARS` | 5 | The manual has the reverse follow the Extreme closely |
+| `REVERSE_MIN_BODY_RATIO` | 0.30 | Below roughly a third, the candle is indecision, not rejection |
+| `RETEST_SEARCH_BARS` | 10 | Price may wander before returning to test the level |
+| `RETEST_TOLERANCE_ATR_MULTIPLE` | 0.10 | Exact touches are rare; a fixed pip value cannot serve XAUUSD and EURUSD alike |
+
+Plus `BB_EXPANSION_MIN_RATIO` (0.05) for the expanding-vs-flat
+distinction, and `_MAX_SETUP_AGE_BARS` (3) for setup staleness - also
+invented, also undefined in the source.
+
+These exist **only because the source material defines "CS Reverse" and
+"CS Retest" in prose** ("a candle that stops the move", "price returns to
+test the highest volume") with no ratio, tolerance or window anywhere
+across four documents (docs/61 §7.3). They stand exactly as
+ADR-028/030/035's constants do: uncalibrated starting points, not
+validated parameters.
+
+Everything else is taken from the source and invented nothing: the
+reverse must close **back inside** the band; the marked level is the
+reverse candle's **body**, not its wick ("mark the highest body"); a
+retest must close back on the setup's side, since a close *through* the
+level is the setup failing; entry sits at the MA5/10 band, never at the
+marked level; MHV is only valid after an Extreme.
+
+Two further source ambiguities were resolved in the English manual's
+favour, as docs/61 §7.1/§7.4 recommended: **MA10L applies to Low** (both
+Khmer decks say "High" beside a line named "Low"), and **Extreme = MA5
+leaves the BB** rather than the deck's "3 candles break", which is not
+reproducible as written.
+
+Consequences
+
+BBMA is detected, scored and can win `primary_strategy` - at which point
+ADR-147 makes every signal and Telegram message say so. Adding it did not
+change any existing strategy's behaviour: the enum position is last, and
+`StrategyEvidenceBundle.bbma` defaults to `None` in the shared test
+helper, so BBMA simply scores 0/4 without evidence.
+
+**BBMA is not validated.** The source material contains no win rate,
+sample size or drawdown; this project has no backtesting; and the six
+constants above are guesses. BBMA winning `primary_strategy` means it
+scored highest under `StrategyEngine`'s existing weighting - not that it
+is correct.
+
+Only the **Extreme** setup is detected. MHV and Re-entry exist in
+`BBMASetupKind` and in the requirements checklist, but the detector does
+not yet produce them - `detect` finds Extreme sequences only. Multi-
+timeframe (TF1/TF2/TF3) is not implemented either: BBMA currently reads
+one timeframe, the one being evaluated.
+
+Future Review
+
+Revisit every constant once real BBMA outcomes exist. Implement MHV and
+Re-entry detection, then the three-timeframe combination, before
+treating BBMA as a complete implementation of docs/61.
+
+---
+
 # Review Policy
 
 Review ADRs:

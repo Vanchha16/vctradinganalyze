@@ -42,6 +42,15 @@ _COMPATIBLE_REGIMES: dict[StrategyName, frozenset[MarketRegimeState]] = {
             MarketRegimeState.BREAKOUT,
         }
     ),
+    #: ADR-148 - BBMA reads structure, not a regime label, and its
+    #: own trend-major filter lives in its requirements checklist.
+    #: Trending and breakout regimes are where an Extreme most
+    #: often forms; ranging markets produce flat BB, which docs/61
+    #: §2 treats as no-momentum.
+    StrategyName.BBMA: frozenset(
+        {MarketRegimeState.TRENDING_BULLISH, MarketRegimeState.TRENDING_BEARISH,
+         MarketRegimeState.BREAKOUT}
+    ),
     StrategyName.SWING_TRADING: frozenset(
         {
             MarketRegimeState.TRENDING_BULLISH,
@@ -60,6 +69,9 @@ _PREFERRED_TIMEFRAMES: dict[StrategyName, frozenset[Timeframe]] = {
     StrategyName.MEAN_REVERSION: frozenset({Timeframe.H1, Timeframe.H4}),
     StrategyName.SCALPING: frozenset({Timeframe.M1, Timeframe.M5}),
     StrategyName.SWING_TRADING: frozenset({Timeframe.H4, Timeframe.D1, Timeframe.W1}),
+    #: The Intraday BBMA set (docs/61 §5) - the operator's chosen
+    #: first target. Other BBMA styles exist and are not wired up.
+    StrategyName.BBMA: frozenset({Timeframe.M15, Timeframe.H1, Timeframe.H4}),
 }
 
 

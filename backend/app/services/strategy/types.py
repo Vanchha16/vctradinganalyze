@@ -12,6 +12,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from app.models.enums import Timeframe
+from app.services.bbma.types import BBMAResult
 from app.services.market_regime.types import MarketRegimeResult
 from app.services.risk_management.economic_filter import EconomicFilterResult
 from app.services.risk_management.types import LiquidityClassification, MarketSession
@@ -33,6 +34,10 @@ class StrategyName(StrEnum):
     MEAN_REVERSION = "mean_reversion"
     SCALPING = "scalping"
     SWING_TRADING = "swing_trading"
+    #: ADR-148, declared genuinely last. Declaration order is the
+    #: ranking tie-break (ADR-076), so inserting BBMA anywhere earlier
+    #: would silently change which strategy already wins an exact tie.
+    BBMA = "bbma"
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +49,10 @@ class StrategyEvidenceBundle:
     `AnalysisConfidenceEngine` degraded gracefully (no candle data)."""
 
     technical: TechnicalAnalysisResult | None
+    #: ADR-148 - BBMA structure for this symbol/timeframe.
+    #: `None` when there were not enough candles, exactly like
+    #: the three fields below it.
+    bbma: BBMAResult | None
     smc: SMCAnalysisResult | None
     market_regime: MarketRegimeResult | None
     overall_confidence: float

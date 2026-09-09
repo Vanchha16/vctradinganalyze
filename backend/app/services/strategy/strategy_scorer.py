@@ -7,6 +7,7 @@ from app.services.market_regime.types import VolatilityRegimeState
 from app.services.risk_management.types import LiquidityClassification, MarketSession
 from app.services.strategy import historical_performance, market_match
 from app.services.strategy.requirements import (
+    bbma,
     breakout,
     mean_reversion,
     pullback,
@@ -34,6 +35,7 @@ _REQUIREMENTS_CHECKERS = {
     StrategyName.MEAN_REVERSION: mean_reversion.check,
     StrategyName.SCALPING: scalping.check,
     StrategyName.SWING_TRADING: swing_trading.check,
+    StrategyName.BBMA: bbma.check,
 }
 
 _LOW_LIQUIDITY_PENALTY = -3.0

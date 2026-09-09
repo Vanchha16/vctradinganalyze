@@ -2,6 +2,7 @@
 Strategy Engine unit tests - reuses `analysis_confidence_helpers`'s
 `make_technical_result`/`make_smc_result`/`make_regime_result`."""
 
+from app.services.bbma.types import BBMAResult
 from app.services.market_regime.types import MarketRegimeResult
 from app.services.risk_management.economic_filter import EconomicFilterResult
 from app.services.risk_management.types import LiquidityClassification, MarketSession
@@ -27,6 +28,7 @@ def make_evidence_bundle(
     liquidity: LiquidityClassification = LiquidityClassification.NORMAL,
     economic: EconomicFilterResult = _NEUTRAL_ECONOMIC,
     include_evidence: bool = True,
+    bbma: BBMAResult | None = None,
 ) -> StrategyEvidenceBundle:
     if include_evidence:
         technical = technical if technical is not None else make_technical_result()
@@ -35,6 +37,11 @@ def make_evidence_bundle(
 
     return StrategyEvidenceBundle(
         technical=technical,
+        # ADR-148: defaults to None, so every pre-existing test keeps
+        # asserting exactly what it asserted before - BBMA's checklist
+        # simply scores 0/4 with no evidence, which is its own
+        # documented behaviour rather than a special case.
+        bbma=bbma,
         smc=smc,
         market_regime=market_regime,
         overall_confidence=overall_confidence,

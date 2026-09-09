@@ -160,6 +160,52 @@ def test_generate_persists_a_row(session: Session, asset: Asset) -> None:
     assert row.asset_id == asset.id
 
 
+def test_generate_persists_the_token_usage_the_provider_reported(
+    session: Session, asset: Asset
+) -> None:
+    """ADR-149 - without this column there is no way to know what a
+    signal costs, which is what makes any model comparison possible."""
+    _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
+    engine = _make_engine(session, MockAIProvider(input_tokens=3120, output_tokens=480))
+
+    result = engine.generate(asset, Timeframe.H1)
+
+    row = session.get(AIAnalysis, result.id)
+    assert row is not None
+    assert row.input_tokens == 3120
+    assert row.output_tokens == 480
+
+
+def test_generate_leaves_token_usage_null_when_the_provider_reports_none(
+    session: Session, asset: Asset
+) -> None:
+    _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
+    engine = _make_engine(session, MockAIProvider())
+
+    result = engine.generate(asset, Timeframe.H1)
+
+    row = session.get(AIAnalysis, result.id)
+    assert row is not None
+    assert row.input_tokens is None
+    assert row.output_tokens is None
+
+
+def test_fallback_narration_records_no_token_usage(session: Session, asset: Asset) -> None:
+    """The deterministic fallback runs when the LLM call failed, so no
+    tokens were billed - recording zero would understate the real cost
+    of a retried-then-failed analysis just as badly as guessing."""
+    _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
+    engine = _make_engine(session, MockAIProvider(raises=PermanentAIProviderError("boom")))
+
+    result = engine.generate(asset, Timeframe.H1)
+
+    row = session.get(AIAnalysis, result.id)
+    assert row is not None
+    assert row.ai_available is False
+    assert row.input_tokens is None
+    assert row.output_tokens is None
+
+
 def test_generate_falls_back_gracefully_when_provider_fails(session: Session, asset: Asset) -> None:
     _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
     provider = MockAIProvider(raises=PermanentAIProviderError("boom"))

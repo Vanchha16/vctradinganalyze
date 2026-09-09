@@ -8680,6 +8680,75 @@ Revisit every constant once real BBMA outcomes exist. Implement MHV and
 Re-entry detection, then the three-timeframe combination, before
 treating BBMA as a complete implementation of docs/61.
 
+# ADR-149
+
+Title
+
+Record the Provider's Reported Token Usage on Every AI Analysis
+
+Status
+
+Accepted
+
+Context
+
+The operator asked which AI API to analyse signals with - Claude or
+ChatGPT. That question cannot be answered here, because **nothing in
+this project has ever measured what an analysis costs.** `ai_analysis`
+stored `latency_ms` and nothing else about the call; the provider's
+`usage` block was parsed away and discarded. Cost per signal, cost per
+day, and the price of switching models were all unknowable, so any
+model comparison would have been argued from list prices and guessed
+token counts rather than from this system's own traffic.
+
+Decision
+
+`AIGenerationResponse` carries nullable `input_tokens`/`output_tokens`,
+`OpenAIProvider` fills them from `body["usage"]`, and
+`AIOrchestratorEngine` persists them on the `ai_analysis` row
+(migration `f3d81a05c74e`).
+
+**The numbers are the provider's own, or they are absent.** `None` means
+"not reported" and is never replaced by an estimate - not by a
+tokeniser, not by a character-count heuristic, not by zero. A guessed
+number in the same column as a billed one makes every total built on
+that column untrustworthy, and cost visibility that cannot be trusted is
+worse than none. `_as_int` in `openai_provider` enforces this: anything
+that is not an `int` on the wire becomes `None`, and a malformed `usage`
+block never costs us the narration itself.
+
+The deterministic fallback path records no usage either, because no LLM
+call succeeded - `ai_available=False` with two nulls is the honest
+record of an analysis that was narrated locally.
+
+`_narrate` returns a private `_Narration` dataclass instead of the
+four-tuple it had. Six positional values at one call site is where a
+tuple stops being readable.
+
+Consequences
+
+Cost is now answerable from the database: spend per analysis, per day,
+per model, and per timeframe are all `SELECT`s over `ai_analysis`. That
+is the precondition for the operator's actual question - once a few
+days of usage have accumulated, a Claude-vs-GPT comparison can be made
+against this system's real prompt sizes rather than against list prices.
+
+The column is **nullable and not back-filled**. Every analysis before
+this deploy has no usage, and inventing one would defeat the purpose.
+Cost queries must therefore be scoped to rows where the counts are not
+null, and a total over all history will understate spend.
+
+Nothing surfaces this in the UI yet. `MockAIProvider` gained the same
+two optional fields so tests can state what a provider "reported"
+without a real call.
+
+Future Review
+
+If a second provider is added, its `usage` shape must be mapped in its
+own adapter - the engine sees only the two integers and must stay
+provider-agnostic (ADR-081). Surfacing cost on the Admin API Usage page
+(ADR-144) is the obvious next step once real data exists.
+
 ---
 
 # Review Policy

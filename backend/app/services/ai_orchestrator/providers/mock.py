@@ -14,6 +14,10 @@ class MockAIProvider:
     name: str = "mock"
     response_content: str | None = None
     raises: AIProviderError | None = None
+    #: ADR-149 - what this fake provider claims it spent. `None` by
+    #: default, matching a provider that reports no usage block.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     calls: list[AIGenerationRequest] = field(default_factory=list)
 
     def generate(self, request: AIGenerationRequest) -> AIGenerationResponse:
@@ -31,7 +35,12 @@ class MockAIProvider:
                 "conclusion": "Mock conclusion.",
             }
         )
-        return AIGenerationResponse(raw_content=content, model_name="mock-model")
+        return AIGenerationResponse(
+            raw_content=content,
+            model_name="mock-model",
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+        )
 
     def health_check(self) -> bool:
         return True

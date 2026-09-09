@@ -11,6 +11,7 @@ deterministic template and sets `ai_available=False`.
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -38,6 +39,21 @@ from .ai_orchestrator.types import AIAnalysisResult, AnalysisContext, ReasoningS
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class _Narration:
+    """What `_narrate` produced, including the provider's own token
+    counts (ADR-149). `input_tokens`/`output_tokens` are `None` whenever
+    the provider did not report usage - and always on the deterministic
+    fallback path, where no LLM call happened at all."""
+
+    reasoning: ReasoningSections
+    ai_available: bool
+    model_name: str
+    warnings: list[str]
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
 class AIOrchestratorEngine:
     def __init__(
         self,
@@ -58,7 +74,7 @@ class AIOrchestratorEngine:
         extracted = evidence_extractor.extract(context)
         conditions = invalidation_builder.build(context, decision.recommendation)
 
-        reasoning, ai_available, model_name, warnings = self._narrate(context, decision, extracted)
+        narration = self._narrate(context, decision, extracted)
 
         latency_ms = round((time.monotonic() - start) * 1000)
 
@@ -82,15 +98,17 @@ class AIOrchestratorEngine:
             stop_loss=candidate.stop_loss if candidate is not None else None,
             take_profit=candidate.take_profit if candidate is not None else None,
             execution_guidance=execution_guidance,
-            reasoning=reasoning,
-            model_name=model_name,
-            ai_available=ai_available,
+            reasoning=narration.reasoning,
+            model_name=narration.model_name,
+            ai_available=narration.ai_available,
             latency_ms=latency_ms,
+            input_tokens=narration.input_tokens,
+            output_tokens=narration.output_tokens,
             supporting_evidence=extracted.supporting_evidence,
             conflicting_evidence=extracted.conflicting_evidence,
             risks=extracted.risks,
             invalidation_conditions=conditions,
-            warnings=warnings,
+            warnings=narration.warnings,
         )
 
         return AIAnalysisResult(
@@ -109,16 +127,16 @@ class AIOrchestratorEngine:
             stop_loss=candidate.stop_loss if candidate is not None else None,
             take_profit=candidate.take_profit if candidate is not None else None,
             execution_guidance=execution_guidance,
-            reasoning=reasoning,
-            model_name=model_name,
+            reasoning=narration.reasoning,
+            model_name=narration.model_name,
             prompt_version=prompt_builder.PROMPT_VERSION,
-            ai_available=ai_available,
+            ai_available=narration.ai_available,
             calculated_at=calculated_at,
             supporting_evidence=extracted.supporting_evidence,
             conflicting_evidence=extracted.conflicting_evidence,
             risks=extracted.risks,
             invalidation_conditions=conditions,
-            warnings=warnings,
+            warnings=narration.warnings,
         )
 
     def _narrate(
@@ -126,7 +144,7 @@ class AIOrchestratorEngine:
         context: AnalysisContext,
         decision: RecommendationDecision,
         extracted: ExtractedEvidence,
-    ) -> tuple[ReasoningSections, bool, str, list[str]]:
+    ) -> _Narration:
         request = AIGenerationRequest(
             system_prompt=prompt_builder.SYSTEM_PROMPT,
             user_prompt=prompt_builder.build_user_prompt(
@@ -148,7 +166,14 @@ class AIOrchestratorEngine:
             try:
                 response = self._provider.generate(request)
                 reasoning = response_parser.parse(response.raw_content)
-                return reasoning, True, response.model_name, warnings
+                return _Narration(
+                    reasoning=reasoning,
+                    ai_available=True,
+                    model_name=response.model_name,
+                    warnings=warnings,
+                    input_tokens=response.input_tokens,
+                    output_tokens=response.output_tokens,
+                )
             except AIProviderError as exc:
                 last_error = exc
                 logger.warning(
@@ -161,7 +186,9 @@ class AIOrchestratorEngine:
 
         warnings.append(f"AI narration unavailable ({last_error}) - deterministic summary shown.")
         fallback = summary_fallback.build(context, decision.recommendation, decision.reasons)
-        return fallback, False, "none", warnings
+        return _Narration(
+            reasoning=fallback, ai_available=False, model_name="none", warnings=warnings
+        )
 
     def _persist(
         self,
@@ -180,6 +207,8 @@ class AIOrchestratorEngine:
         model_name: str,
         ai_available: bool,
         latency_ms: int,
+        input_tokens: int | None,
+        output_tokens: int | None,
         supporting_evidence: list[str],
         conflicting_evidence: list[str],
         risks: list[str],
@@ -214,6 +243,8 @@ class AIOrchestratorEngine:
             prompt_version=prompt_builder.PROMPT_VERSION,
             ai_available=ai_available,
             latency_ms=latency_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             warnings=warnings,
         )
         self._ai_analysis_repository.create(row)

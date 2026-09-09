@@ -22,6 +22,11 @@ class AIGenerationResponse:
 
     raw_content: str
     model_name: str
+    #: Token usage as the provider reported it (ADR-149). `None` when the
+    #: provider did not return usage - never estimated, because a guessed
+    #: token count in a cost table is worse than an honest gap.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class AIProvider(Protocol):

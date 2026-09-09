@@ -58,4 +58,10 @@ class AIAnalysis(Base, UUIDMixin, CreatedAtMixin):
     prompt_version: Mapped[str] = mapped_column(String(20), nullable=False)
     ai_available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Token usage as the provider reported it (ADR-149) - the basis for
+    #: any real cost measurement or model comparison. `None` when the
+    #: provider returned no usage, or for analyses persisted before this
+    #: was recorded; never estimated.
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)

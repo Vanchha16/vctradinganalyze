@@ -51,7 +51,17 @@ class OpenAIProvider:
             },
         )
         content = self._extract_content(body)
-        return AIGenerationResponse(raw_content=content, model_name=settings.openai_model)
+        raw_usage = body.get("usage")
+        usage: dict[str, object] = raw_usage if isinstance(raw_usage, dict) else {}
+        return AIGenerationResponse(
+            raw_content=content,
+            model_name=settings.openai_model,
+            # ADR-149. `.get` rather than indexing: usage is not part of the
+            # contract `_extract_content` validates, and a provider omitting
+            # it must not turn a successful analysis into an error.
+            input_tokens=_as_int(usage.get("prompt_tokens")),
+            output_tokens=_as_int(usage.get("completion_tokens")),
+        )
 
     def _post_chat_completion(
         self,
@@ -115,3 +125,9 @@ class OpenAIProvider:
 
     def health_check(self) -> bool:
         return bool(settings.openai_api_key)
+
+
+def _as_int(value: object) -> int | None:
+    """Usage counts arrive as JSON from a third party - coerce defensively
+    rather than trusting the type."""
+    return value if isinstance(value, int) else None

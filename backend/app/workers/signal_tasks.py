@@ -120,6 +120,7 @@ def generate_signals_task() -> None:
             economic_calendar_engine,
             strategy_engine,
             risk_management_engine,
+            price_candle_repository,
         )
         ai_orchestrator_engine = get_ai_orchestrator_engine(
             context_builder,

@@ -128,6 +128,7 @@ def _make_engine(session: Session, provider: MockAIProvider) -> AIOrchestratorEn
         economic_calendar_engine=economic_calendar_engine,
         strategy_engine=strategy_engine,
         risk_management_engine=risk_management_engine,
+        price_candle_repository=price_candle_repository,
     )
     return AIOrchestratorEngine(
         context_builder=context_builder,

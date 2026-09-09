@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.models.asset import Asset
 from app.models.enums import Timeframe
+from app.repositories.price_candle_repository import PriceCandleRepository
 from app.services.analysis_confidence_engine import AnalysisConfidenceEngine
 from app.services.economic_calendar.types import EconomicCalendarResult
 from app.services.economic_calendar_engine import EconomicCalendarEngine
@@ -28,12 +29,22 @@ class ContextBuilder:
         economic_calendar_engine: EconomicCalendarEngine,
         strategy_engine: StrategyEngine,
         risk_management_engine: RiskManagementEngine,
+        price_candle_repository: PriceCandleRepository,
     ) -> None:
         self._confidence_engine = confidence_engine
         self._news_sentiment_engine = news_sentiment_engine
         self._economic_calendar_engine = economic_calendar_engine
         self._strategy_engine = strategy_engine
         self._risk_management_engine = risk_management_engine
+        #: ADR-145: the candidate setup needs the real traded price.
+        #: `TechnicalAnalysisResult` carries no price field, which is
+        #: why `candidate_setup_builder` previously fell back to a
+        #: support/resistance midpoint - the bug this repository
+        #: closes. Every other consumer of candles in this graph
+        #: (`StrategyEngine`, `RiskManagementEngine`) already takes
+        #: this same repository, so this is composition, not a new
+        #: data path.
+        self._price_candle_repository = price_candle_repository
 
     def build(self, asset: Asset, timeframe: Timeframe) -> AnalysisContext:
         now = datetime.now(UTC)
@@ -47,7 +58,14 @@ class ContextBuilder:
 
         strategy = self._strategy_engine.evaluate(asset, timeframe)
 
-        candidate_setup = candidate_setup_builder.build(confidence, strategy)
+        #: The signal's own timeframe, not M1: the setup is a call on
+        #: this timeframe's structure, so its entry should be that
+        #: timeframe's most recent close. (Signal *monitoring* uses M1
+        #: as a live-price proxy - ADR-137/141 - a different job.)
+        latest_candle = self._price_candle_repository.get_latest(asset.id, timeframe)
+        latest_close = latest_candle.close if latest_candle is not None else None
+
+        candidate_setup = candidate_setup_builder.build(confidence, strategy, latest_close)
 
         risk = None
         if candidate_setup is not None:

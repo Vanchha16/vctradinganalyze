@@ -8268,6 +8268,118 @@ richer version of this page.
 
 ---
 
+# ADR-145
+
+Title
+
+Candidate Setup Entry Is the Real Traded Price, Not a Support/Resistance
+Midpoint (corrects ADR-080)
+
+Status
+
+Accepted
+
+Context
+
+Reported from production (2026-09-09): a SELL signal on XAUUSD showed
+`active` while price had already passed its take-profit level, and no
+outcome alert was sent. The alerting was correct - the order never
+filled, so there was no fill to report - but investigating why it never
+filled exposed a defect in every signal this project has produced.
+
+`candidate_setup_builder.build` (ADR-080) derived its entry from a
+helper named `_latest_close`, whose docstring claimed the
+support/resistance midpoint "approximates" the latest close:
+
+    return (support.price + resistance.price) / 2
+
+It does not approximate it. The midpoint of a range equals the price
+only when price happens to sit mid-range.
+
+The failure is systematic, not random, and the mechanism is the reason
+it went unnoticed: a candidate is built **only** when Market Regime
+reports an unambiguous trend (`_direction_for` returns `None` for
+SIDEWAYS). In a trend, price sits near a range *extreme*. So the very
+precondition for generating a signal guarantees the midpoint is far from
+price - and in a downtrend the midpoint sits *above* price, producing a
+SELL entry above market that fills only on a rally.
+
+Measured against production, 14 days:
+
+- **10 of 14 entries were on the unfillable side of the market**, gaps
+  from 0.91 to 45.65 points.
+- **4 of 14 never filled at all**, and those four had the largest gaps
+  (+45.65, +27.45, -40.40, +15.32).
+- The reported case: market 4369.30, entry 4384.62 - 15.32 points above.
+  Price fell to the take-profit without ever touching entry.
+
+Every other level derives from `entry_price`, so a wrong entry also
+moved the stop, the target, and the *real* (as opposed to nominal)
+risk/reward of every signal. The nominal 1:2 was always honest relative
+to the entry; the entry was not honest relative to the market.
+
+Each unfilled signal also consumed an OpenAI call and then held
+`signal_tasks._has_open_signal`'s dedup gate for a full
+`signal_ttl_hours` (24h), suppressing new generation for that
+asset/timeframe - four dead days of signal generation in two weeks.
+
+Decision
+
+`build()` takes `latest_close: Decimal | None` from its caller and uses
+it verbatim as `entry_price`. `_latest_close` is deleted.
+
+`ContextBuilder` gains `price_candle_repository` and reads
+`get_latest(asset.id, timeframe).close` - the **signal's own
+timeframe**, not M1: the setup is a call on that timeframe's structure,
+so its entry is that timeframe's most recent close. (Signal *monitoring*
+uses M1 as a live-price proxy, ADR-137/141 - a different job with
+different requirements.) Every other candle consumer in this graph
+(`StrategyEngine`, `RiskManagementEngine`) already receives the same
+repository, so this is composition, not a new data path.
+
+No price means **no candidate**, hence WAIT (ADR-011) - deliberately not
+falling back to the old midpoint. A silent fallback to a known-wrong
+entry is worse than declining to recommend. Near-unreachable in
+practice: `confidence.technical` only exists if the candles this price
+comes from were present.
+
+Stop-loss and take-profit logic is untouched. Note that the stop stays
+pinned to structural support/resistance whenever that sits further from
+entry than the ATR stop (`_more_conservative_*_stop` picks the further
+of the two) - so the stop does not move with entry, but the risk
+*distance* does, and the target with it.
+
+Consequences
+
+Entries now sit at the market, so signals fill essentially immediately
+rather than waiting on a retrace that may never come. This should raise
+the fill rate well above the observed 10/14 and largely stop unfillable
+signals squatting on the dedup gate.
+
+**This changes what every future signal recommends** - entry, stop,
+target and effective risk/reward all shift. Historical signals were
+generated under the old logic and are not comparable; combined with
+ADR-141's finding that pre-2026-09-08 outcomes are unreliable, the
+usable calibration dataset now starts from this deploy.
+
+An entry at the latest close is effectively a market order. This
+supersedes ADR-080's implicit intent that entry be a *derived* level,
+but it restores the intent its own naming and docstring stated. Whether
+the project instead wants a deliberate limit entry - a level better than
+market, accepting that some signals never fill in exchange for a better
+average price - is a genuine trading-strategy decision that was never
+actually made, only backed into by a buggy helper. It is explicitly left
+open here rather than silently settled.
+
+Future Review
+
+Revisit if fill rate is now ~100% but average entry quality is visibly
+worse than a limit strategy would give - at which point the limit-entry
+question above needs deciding on its own terms, with real outcome data
+from after this deploy.
+
+---
+
 # Review Policy
 
 Review ADRs:

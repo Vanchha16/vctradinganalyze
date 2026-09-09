@@ -8,10 +8,12 @@ from app.config import settings
 from app.dependencies.analysis_confidence import get_analysis_confidence_engine
 from app.dependencies.database import get_db
 from app.dependencies.economic_calendar import get_economic_calendar_engine
+from app.dependencies.market_data import get_price_candle_repository
 from app.dependencies.news import get_news_sentiment_engine
 from app.dependencies.risk_management import get_risk_management_engine
 from app.dependencies.strategy import get_strategy_engine
 from app.repositories.ai_analysis_repository import AIAnalysisRepository
+from app.repositories.price_candle_repository import PriceCandleRepository
 from app.services.ai_orchestrator.context_builder import ContextBuilder
 from app.services.ai_orchestrator.providers.base import AIProvider
 from app.services.ai_orchestrator.providers.exceptions import AIProviderConfigurationError
@@ -55,6 +57,7 @@ def get_context_builder(
     ],
     strategy_engine: Annotated[StrategyEngine, Depends(get_strategy_engine)],
     risk_management_engine: Annotated[RiskManagementEngine, Depends(get_risk_management_engine)],
+    price_candle_repository: Annotated[PriceCandleRepository, Depends(get_price_candle_repository)],
 ) -> ContextBuilder:
     """Composes every input `AnalysisContext` needs (docs/50 §3) - no new
     provider/repository wiring, only composition of already-existing
@@ -65,6 +68,7 @@ def get_context_builder(
         economic_calendar_engine=economic_calendar_engine,
         strategy_engine=strategy_engine,
         risk_management_engine=risk_management_engine,
+        price_candle_repository=price_candle_repository,
     )
 
 

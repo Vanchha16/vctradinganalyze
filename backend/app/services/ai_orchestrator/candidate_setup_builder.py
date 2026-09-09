@@ -11,7 +11,7 @@ from decimal import Decimal
 from app.services.analysis_confidence.types import ConfidenceResult
 from app.services.risk_management.types import TradeDirection
 from app.services.strategy.types import StrategyEvaluation
-from app.services.technical_analysis.types import TechnicalAnalysisResult, TrendDirection
+from app.services.technical_analysis.types import TrendDirection
 
 from .types import CandidateSetup
 
@@ -27,22 +27,6 @@ def _direction_for(confidence: ConfidenceResult) -> TradeDirection | None:
         return TradeDirection.LONG
     if trend_direction is TrendDirection.BEARISH:
         return TradeDirection.SHORT
-    return None
-
-
-def _latest_close(technical: TechnicalAnalysisResult) -> Decimal | None:
-    """`TechnicalAnalysisResult` has no raw "latest close" field of its
-    own - support/resistance levels are already computed relative to it,
-    so their midpoint approximates it deterministically without
-    re-fetching a candle here."""
-    support = technical.support
-    resistance = technical.resistance
-    if support is not None and resistance is not None:
-        return (support.price + resistance.price) / 2
-    if support is not None:
-        return support.price
-    if resistance is not None:
-        return resistance.price
     return None
 
 
@@ -90,7 +74,32 @@ def _further_target_short(
     return min_target
 
 
-def build(confidence: ConfidenceResult, strategy: StrategyEvaluation) -> CandidateSetup | None:
+def build(
+    confidence: ConfidenceResult,
+    strategy: StrategyEvaluation,
+    latest_close: Decimal | None,
+) -> CandidateSetup | None:
+    """`latest_close` is the real most-recent traded price, supplied by
+    the caller (ADR-145).
+
+    It used to be derived here as the midpoint of support and
+    resistance, in a helper *named* `_latest_close` whose docstring
+    claimed to approximate the latest close. It did not: the midpoint of
+    a range only equals the price when price happens to sit mid-range.
+
+    That failed systematically rather than randomly, because a candidate
+    is only built when Market Regime reports an unambiguous trend
+    (`_direction_for`) - and in a trend price sits near a range
+    *extreme*, not its middle. In a downtrend the midpoint therefore
+    lands above price, producing a SELL entry above market that only
+    fills on a rally. Measured on production over 14 days: 10 of 14
+    entries were on the unfillable side of the market, gaps up to 45.65
+    points, and the 4 signals that never filled had the largest gaps.
+
+    Every other level is derived from `entry_price`, so a wrong entry
+    also moved the stop, the target, and the real (as opposed to
+    nominal) risk/reward of every signal this project has produced.
+    """
     if strategy.primary_strategy is None or confidence.technical is None:
         return None
 
@@ -99,7 +108,12 @@ def build(confidence: ConfidenceResult, strategy: StrategyEvaluation) -> Candida
         return None
 
     technical = confidence.technical
-    entry_price = _latest_close(technical)
+    #: No price, no candidate. Deliberately not falling back to the old
+    #: midpoint: a silent fallback to a known-wrong entry is worse than
+    #: producing no setup (which yields WAIT, ADR-011). Near-unreachable
+    #: in practice - `confidence.technical` only exists if the same
+    #: candles this price comes from were present.
+    entry_price = latest_close
     if entry_price is None:
         return None
 

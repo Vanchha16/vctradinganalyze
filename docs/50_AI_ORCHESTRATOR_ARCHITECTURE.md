@@ -91,6 +91,10 @@ take_profit = entry -+ max(2x risk distance, nearest opposing SMC structure)
 
 Reuses `TechnicalAnalysisResult.support`/`.resistance`/`.volatility.atr` and `SMCAnalysisResult` structure - never invents a price.
 
+**Update (ADR-145, 2026-09-09): `entry_price = latest close` is now literally true. It was not, from Phase 6A until this fix.** The implementation derived entry from a private helper *named* `_latest_close` that actually returned the support/resistance midpoint - a value that equals the traded price only when price happens to sit mid-range. Because a candidate is built only in a trending regime, and price in a trend sits at a range extreme, the entry was systematically displaced: measured on production over 14 days, 10 of 14 entries landed on the unfillable side of the market and 4 never filled at all.
+
+`ContextBuilder` now supplies the real close (`PriceCandleRepository.get_latest(asset, timeframe).close`, the signal's own timeframe) and `build()` uses it verbatim; with no price it returns `None`, yielding WAIT rather than a guessed entry. **This section of the document was correct throughout - the code had drifted from it.** Worth remembering the next time an implementation detail and a doc disagree.
+
 **`recommendation_decision.py`** (ADR-078) - the core decision tree:
 
 | Condition | Recommendation | Reason |

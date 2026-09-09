@@ -8,15 +8,18 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy.orm import Session
 
 from app.core.client_ip import get_client_ip
 from app.dependencies.admin import get_admin_system_service
+from app.dependencies.database import get_db
 from app.dependencies.market_data import get_asset_repository
 from app.dependencies.rbac import require_admin
 from app.exceptions import ResourceNotFoundException
 from app.models.enums import OrderStatus, SignalStatus
 from app.models.user import User
 from app.repositories.asset_repository import AssetRepository
+from app.repositories.tradingview_alert_repository import TradingViewAlertRepository
 from app.schemas.admin_api_usage import AdminApiUsageResponse, ApiUsageRouteResponse
 from app.schemas.admin_system import (
     AdminAnalyticsResponse,
@@ -28,6 +31,10 @@ from app.schemas.admin_system import (
 )
 from app.schemas.broker_order import BrokerOrderListResponse, BrokerOrderResponse
 from app.schemas.signal import SignalListResponse, SignalResponse
+from app.schemas.tradingview_alert import (
+    TradingViewAlertListResponse,
+    TradingViewAlertResponse,
+)
 from app.services import api_usage_service
 from app.services.admin_system_service import AdminSystemService
 from app.services.signal import status_resolver
@@ -198,4 +205,51 @@ async def get_admin_api_usage(
             )
             for route in snapshot.routes
         ],
+    )
+
+
+@router.get("/tradingview-alerts", response_model=TradingViewAlertListResponse)
+async def list_tradingview_alerts(
+    actor: Annotated[User, Depends(require_admin)],
+    session: Annotated[Session, Depends(get_db)],
+    symbol: Annotated[str | None, Query()] = None,
+    direction: Annotated[str | None, Query()] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> TradingViewAlertListResponse:
+    """ADR-146: read side for inbound TradingView webhook alerts, same
+    pagination envelope as `GET /admin/users`/`GET /admin/logs`.
+
+    Read-only by design - nothing in this project mutates an alert after
+    the webhook stores it, except the delivery task stamping
+    `delivered_at`. There is deliberately no endpoint to replay an alert
+    into the signal pipeline: alerts and AI signals are separate all the
+    way down, and a replay route would quietly join them.
+    """
+    repository = TradingViewAlertRepository(session)
+    offset = (page - 1) * limit
+    alerts = repository.list_filtered(
+        symbol=symbol, direction=direction, offset=offset, limit=limit
+    )
+    total = repository.count_filtered(symbol=symbol, direction=direction)
+    return TradingViewAlertListResponse(
+        items=[
+            TradingViewAlertResponse(
+                id=str(alert.id),
+                symbol=alert.symbol,
+                exchange=alert.exchange,
+                timeframe=alert.timeframe,
+                direction=alert.direction,
+                score=alert.score,
+                entry_price=alert.entry_price,
+                alert_time=alert.alert_time,
+                source=alert.source,
+                delivered_at=alert.delivered_at,
+                created_at=alert.created_at,
+            )
+            for alert in alerts
+        ],
+        page=page,
+        limit=limit,
+        total=total,
     )

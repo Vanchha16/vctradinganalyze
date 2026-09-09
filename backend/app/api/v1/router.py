@@ -21,6 +21,7 @@ from app.api.v1.routes import (
     technical_analysis,
     telegram,
     watchlists,
+    webhooks,
     ws,
 )
 from app.config import settings
@@ -54,6 +55,12 @@ api_router.include_router(health.router, tags=["health"])
 api_router.include_router(metrics.router, tags=["metrics"])
 api_router.include_router(auth.router)
 api_router.include_router(ws.router)
+#: ADR-146: public and unauthenticated-by-session, so it carries the same
+#: per-IP limit as the other public routers. It authenticates on a shared
+#: secret in the path instead of a user session, but a rate limit still
+#: matters here: without one, the URL - which is bearer-equivalent - could
+#: be brute-forced or an obtained URL used to flood the table.
+api_router.include_router(webhooks.router, dependencies=[_data_rate_limit])
 api_router.include_router(admin_users.router)
 api_router.include_router(admin_assets.router)
 api_router.include_router(admin_logs.router)

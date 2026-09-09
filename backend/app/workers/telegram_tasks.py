@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
 from app.repositories.system_setting_repository import SystemSettingRepository
 from app.repositories.telegram_account_repository import TelegramAccountRepository
+from app.repositories.tradingview_alert_repository import TradingViewAlertRepository
 from app.services.telegram.chart_renderer import (
     format_current_price_caption,
     render_candlestick_chart,
@@ -361,3 +363,45 @@ def register_telegram_schedule() -> dict[str, dict[str, object]]:
             "schedule": float(settings.telegram_poll_interval_seconds),
         }
     }
+
+
+@celery_app.task(name="telegram.send_tradingview_alert", ignore_result=True)  # type: ignore[untyped-decorator]
+def send_tradingview_alert_task(alert_id: str) -> None:
+    """ADR-146: delivery hook for an inbound TradingView webhook alert.
+
+    Stamps `delivered_at` only when at least one chat actually received
+    the message - zero linked accounts means nothing was delivered, and
+    recording a time then would misrepresent it.
+    """
+    session = SessionLocal()
+    try:
+        repository = TradingViewAlertRepository(session)
+        alert = repository.get_by_id(uuid.UUID(alert_id))
+        if alert is None:
+            return
+
+        telegram_service = TelegramService(
+            account_repository=TelegramAccountRepository(session),
+            provider=get_telegram_provider(),
+        )
+        delivered = telegram_service.send_tradingview_alert(alert)
+        if delivered > 0:
+            alert.delivered_at = datetime.now(UTC)
+            session.commit()
+    finally:
+        session.close()
+
+
+def enqueue_tradingview_alert_delivery(alert_id: str) -> None:
+    """Best-effort, mirroring `enqueue_signal_delivery` (docs/57 §5).
+
+    The webhook has already accepted and stored the alert by the time
+    this runs. A broker outage must not turn that into a failed HTTP
+    response, or TradingView would retry an alert we already hold.
+    """
+    try:
+        send_tradingview_alert_task.delay(alert_id)
+    except Exception:
+        logger.warning(
+            "telegram_tradingview_alert_enqueue_failed", alert_id=alert_id, exc_info=True
+        )

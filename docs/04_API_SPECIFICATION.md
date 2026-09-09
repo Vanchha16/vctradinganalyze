@@ -1035,6 +1035,21 @@ groups on `Signal.signal_type` (`signals` has no `recommendation` column -
 see ADR-130 for why this is the intended reading of docs/58 §3.2's
 "recommendation distribution" phrasing). Contract is inferred (ADR-130).
 
+GET /admin/tradingview-alerts
+
+Query: `symbol`, `direction`, `page`, `limit` (1-100, default 50).
+Response: `{"items": [{"id", "symbol", "exchange", "timeframe", "direction",
+"score", "entry_price", "alert_time", "source", "delivered_at", "created_at"}],
+"page", "limit", "total"}`, newest first.
+
+`require_admin`-gated read side for inbound TradingView webhook alerts
+(ADR-146). Read-only: nothing mutates an alert after the webhook stores it
+except the delivery task stamping `delivered_at`, and there is deliberately
+no route to replay an alert into the signal pipeline. `timeframe` is
+TradingView's own interval string ("60", "15", "1D"), not this project's
+`Timeframe` enum. `delivered_at` is null when the Telegram notification never
+went out - usually because no account is linked.
+
 GET /admin/api-usage
 
 Response: `{"total_requests": int, "total_errors": int, "error_rate": float,
@@ -1125,6 +1140,35 @@ Response (404, token unset/missing/wrong)
 ```json
 {"error": "resource_not_found", "message": "Not Found"}
 ```
+
+---
+
+# Webhooks
+
+POST /webhooks/tradingview/{token}
+
+Request: `{"symbol": str, "direction": "buy"|"sell", "exchange"?: str,
+"timeframe"?: str, "score"?: float, "entry"?: number, "time"?: datetime,
+"source"?: str}`. Only `symbol` and `direction` are required - a
+partially-filled alert is still recorded, since rejecting it would hide a
+misconfigured TradingView template. `direction` is normalised
+(`" BUY "` -> `"buy"`); anything other than buy/sell is a 422.
+
+Response (200): `{"status": "accepted"}` - deliberately minimal, revealing
+nothing about what was stored.
+
+Response (404): the token is wrong, **or** `TRADINGVIEW_WEBHOOK_SECRET` is
+unset (the default, meaning the webhook was never enabled). The two are
+indistinguishable by design, and are also indistinguishable from a route
+that does not exist - see ADR-146.
+
+Authenticated by a shared secret in the URL path rather than a header,
+because TradingView's alert UI cannot set request headers. Per-IP rate
+limited like the other public routers.
+
+**An accepted alert is recorded and forwarded to Telegram, never traded.**
+It does not create a `Signal`, never reaches `OrderExecutionService`, and
+cannot place a broker order (ADR-146).
 
 ---
 

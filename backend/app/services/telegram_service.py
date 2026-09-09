@@ -6,11 +6,13 @@ from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
 from app.models.signal import Signal
 from app.models.telegram_account import TelegramAccount
+from app.models.tradingview_alert import TradingViewAlert
 from app.repositories.telegram_account_repository import TelegramAccountRepository
 from app.services.telegram.message_sections import (
     compose_signal_message,
     compose_signal_outcome_message,
     compose_signal_triggered_message,
+    compose_tradingview_alert_message,
     escape_markdown_v2,
 )
 from app.services.telegram.providers.base import TelegramProvider
@@ -125,3 +127,24 @@ class TelegramService:
             if account.telegram_chat_id is None:
                 continue
             self._provider.send_message(account.telegram_chat_id, text)
+
+    def send_tradingview_alert(
+        self, alert: TradingViewAlert, *, now: datetime | None = None
+    ) -> int:
+        """ADR-146: broadcasts an inbound TradingView alert to every
+        linked account, same fan-out as `send_signal` (ADR-113, no
+        per-user filtering).
+
+        Returns the number of chats actually delivered to, so the caller
+        can record `delivered_at` honestly - `0` linked accounts means
+        nothing was sent, and stamping a delivery time in that case would
+        be a lie.
+        """
+        text = compose_tradingview_alert_message(alert, now=now or datetime.now(UTC))
+        delivered = 0
+        for account in self.linked_accounts():
+            if account.telegram_chat_id is None:
+                continue
+            self._provider.send_message(account.telegram_chat_id, text)
+            delivered += 1
+        return delivered

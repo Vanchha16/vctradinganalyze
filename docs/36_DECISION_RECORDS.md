@@ -8380,6 +8380,118 @@ from after this deploy.
 
 ---
 
+# ADR-146
+
+Title
+
+Inbound TradingView Webhook: Record and Notify, Never Trade - a Separate
+Table, Not a Signal
+
+Status
+
+Accepted
+
+Context
+
+`pinescript/` ships two Pine v6 indicators whose `alertcondition()`s emit
+a JSON webhook payload, but nothing in `backend/app/api` has ever
+accepted one - the scripts' own README says so. The operator asked for
+the receiving end.
+
+Two facts shaped the design more than anything else:
+
+1. **The payload has no stop and no target.** It carries
+   `symbol, exchange, timeframe, direction, score, entry, time, source`.
+2. **A `Signal` cannot represent it.** `signals.analysis_id` is NOT NULL
+   with an FK to `ai_analysis`, and `stop_loss`/`take_profit` are
+   required. Storing an alert there would mean fabricating an
+   `ai_analysis` row - inventing AI provenance for something produced by
+   an external indicator.
+
+The Pine README is also explicit that these scripts are a technical-only
+heuristic whose output will *not* agree with `AIOrchestratorEngine`. So
+this is a second, weaker signal source arriving in the same Telegram
+chat as the first.
+
+Decision
+
+**A separate `tradingview_alerts` table** (migration `d5a2f61c983b`),
+not a `Signal`. Columns stay deliberately loose - plain strings, nullable
+numerics, TradingView's own interval string kept verbatim rather than
+mapped onto `Timeframe` - because every value is attacker-influenced and
+a third party editing their alert template must never be able to fail an
+enum lookup and wedge the ingest path. The full body is retained in
+`raw_payload` as the forensic record. No unique constraint: TradingView
+re-fires alerts, and the fact that a duplicate arrived is itself
+information.
+
+**`POST /webhooks/tradingview/{token}`**, authenticated by a shared
+secret in the **URL path**. TradingView's alert UI allows a URL and a
+JSON body but *not* request headers, so `Authorization`/`X-Signature` -
+what every other authenticated surface here uses - are unavailable. The
+URL is the lesser evil; a body-embedded secret would be duplicated into
+every alert template and displayed next to the data it protects. The
+token is compared with `hmac.compare_digest`.
+
+**Fail-closed, mirroring `require_metrics_token` (ADR-136).** An unset
+`tradingview_webhook_secret` (the default) means the webhook was never
+deliberately enabled: the route returns 404, not 403 and not an empty
+200. A wrong token returns the identical 404. Nothing distinguishes "not
+configured" from "wrong secret" from "no such route".
+
+**Recorded and notified, never executed.** An accepted alert is stored
+and forwarded to Telegram. It does not create a `Signal`, never reaches
+`OrderExecutionService`, and cannot place a broker order. There is
+deliberately no endpoint to replay an alert into the signal pipeline -
+that route would quietly join two sources this ADR keeps apart. The
+operator chose "store + send to Telegram" over the execution-capable
+option after the trade-off was put to them.
+
+The Telegram message is headed TRADINGVIEW ALERT, not BUY/SELL, and
+states in words that it is an external indicator with no stop or target
+and that nothing was traded. That labelling is load-bearing: the same
+chat now carries two sources of differing provenance and reliability.
+
+Store first, then enqueue delivery. If the enqueue came first and the
+commit then failed, TradingView would be told the alert was accepted
+while nothing was kept. Delivery failure never fails the response -
+TradingView retries on a non-2xx and would duplicate an alert already
+held. `delivered_at` is stamped only when at least one chat actually
+received the message; zero linked accounts means nothing was delivered,
+and a timestamp there would misrepresent it.
+
+Per-IP rate limited like the other public routers (ADR-132's Phase 9A
+work), and `GET /admin/tradingview-alerts` (`require_admin`) is the
+read side, with a frontend page that says on screen what these are not.
+
+Consequences
+
+This is the **only unauthenticated-by-session surface in the project
+that writes to the database**. A URL token is bearer authentication:
+anyone who obtains the URL can post alerts. It lives in TradingView's
+stored alert config and may appear in reverse-proxy access logs.
+Rotation means changing config and re-pointing every alert; there is no
+revocation list and no second factor. Accepted as the standard
+TradingView pattern with its limits stated rather than assumed away -
+and bounded by the fact that the worst an attacker with the URL achieves
+is a false Telegram notification and a junk row, never a trade.
+
+Telegram now carries two signal sources. The labelling is what keeps
+them distinguishable; anyone changing that message format should treat
+the "external indicator / no stop / nothing traded" line as part of the
+contract, not decoration.
+
+Future Review
+
+Revisit if the Pine heuristic is ever validated well enough to justify
+creating real signals - which would need `analysis_id` nullable or a
+synthetic analysis row, both of which change what a "signal" means here
+and would affect the monitoring, dedup and statistics paths. Revisit the
+auth mechanism if TradingView ever supports custom headers, which would
+allow a proper HMAC signature over the body.
+
+---
+
 # Review Policy
 
 Review ADRs:

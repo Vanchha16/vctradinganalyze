@@ -33,7 +33,21 @@ right-click the chart → Add Alert → Condition → pick one of the two, set
 webhook URL under Notifications if you want TradingView to POST it
 somewhere.
 
-**There is currently no webhook receiver in the backend for this.** Nothing
+**Update (2026-09-09, ADR-146): the webhook receiver now exists.**
+`POST /webhooks/tradingview/{token}` accepts these alerts, stores them in
+`tradingview_alerts`, and forwards them to Telegram. It is disabled by
+default - set `TRADINGVIEW_WEBHOOK_SECRET` in `backend/.env` and point the
+alert's webhook URL at `https://<host>/api/v1/webhooks/tradingview/<secret>`.
+Until that secret is set the route returns 404.
+
+An accepted alert is **recorded and notified, never traded**: it does not
+create a `Signal` and cannot place a broker order. See ADR-146 for the
+trust-boundary reasoning, including why the secret travels in the URL.
+
+The paragraph below described the state before that endpoint existed and is
+kept for context:
+
+**There was previously no webhook receiver in the backend for this.** Nothing
 in `backend/app/api` accepts an inbound TradingView alert today - the
 Telegram delivery pipeline (`signal_tasks.py` → `telegram_tasks.py`) only
 fires for signals the backend's own Signal Engine generates from its own

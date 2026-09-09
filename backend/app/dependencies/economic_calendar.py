@@ -12,6 +12,7 @@ from app.services.economic_calendar.providers.exceptions import (
     EconomicCalendarProviderConfigurationError,
 )
 from app.services.economic_calendar.providers.finnhub import FinnhubProvider
+from app.services.economic_calendar.providers.forexfactory import ForexFactoryProvider
 from app.services.economic_calendar.providers.mock import MockEconomicCalendarProvider
 from app.services.economic_calendar_engine import EconomicCalendarEngine
 from app.services.economic_calendar_ingestion_pipeline import EconomicCalendarIngestionPipeline
@@ -29,9 +30,18 @@ def _build_finnhub_provider() -> EconomicCalendarProvider:
     )
 
 
+def _build_forexfactory_provider() -> EconomicCalendarProvider:
+    """No API key check: the feed is public (ADR-150)."""
+    return ForexFactoryProvider(
+        base_url=settings.forexfactory_base_url,
+        timeout=settings.forexfactory_timeout_seconds,
+    )
+
+
 _PROVIDER_FACTORIES: dict[str, Callable[[], EconomicCalendarProvider]] = {
     "mock": MockEconomicCalendarProvider,
     "finnhub": _build_finnhub_provider,
+    "forexfactory": _build_forexfactory_provider,
 }
 
 

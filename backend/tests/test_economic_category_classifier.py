@@ -40,3 +40,32 @@ def test_classify_prefers_specific_pmi_variants_over_generic_pmi() -> None:
 
 def test_classify_falls_back_to_other_when_no_keyword_matches() -> None:
     assert classify("Some Unrecognized Minor Report") == EconomicEventCategory.OTHER
+
+
+@pytest.mark.parametrize(
+    ("event_name", "expected"),
+    [
+        # ForexFactory names a rate decision after the rate, not the
+        # committee - every one of these classified as OTHER before
+        # ADR-150, against a real week of the live feed.
+        ("Federal Funds Rate", EconomicEventCategory.CENTRAL_BANK),
+        ("Main Refinancing Rate", EconomicEventCategory.CENTRAL_BANK),
+        ("Monetary Policy Statement", EconomicEventCategory.CENTRAL_BANK),
+        ("Official Bank Rate", EconomicEventCategory.CENTRAL_BANK),
+        ("Official Cash Rate", EconomicEventCategory.CENTRAL_BANK),
+        ("SNB Policy Rate", EconomicEventCategory.CENTRAL_BANK),
+        ("FOMC Meeting Minutes", EconomicEventCategory.CENTRAL_BANK),
+        ("Non-Farm Employment Change", EconomicEventCategory.EMPLOYMENT),
+        ("ADP Non-Farm Employment Change", EconomicEventCategory.EMPLOYMENT),
+        ("Unemployment Claims", EconomicEventCategory.EMPLOYMENT),
+        ("Claimant Count Change", EconomicEventCategory.EMPLOYMENT),
+        ("Prelim UoM Inflation Expectations", EconomicEventCategory.INFLATION),
+    ],
+)
+def test_classify_recognises_forexfactory_naming(
+    event_name: str, expected: EconomicEventCategory
+) -> None:
+    """ADR-150 - the keyword lists were written against Finnhub's names.
+    Adopting ForexFactory without extending them left the ECB and Fed
+    rate decisions in OTHER, and therefore scored LOW."""
+    assert classify(event_name) == expected

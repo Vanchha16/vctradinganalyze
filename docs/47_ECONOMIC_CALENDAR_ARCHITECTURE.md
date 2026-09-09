@@ -167,6 +167,33 @@ Exception hierarchy (`app/services/economic_calendar/providers/exceptions.py`) m
 
 **Update (Phase 9G, ADR-139):** `AllEconomicCalendarProvidersFailedError` above existed in this hierarchy since Phase 5B but was never raised anywhere until this phase - `EconomicCalendarIngestionPipeline.run()` now raises it if every configured provider fails, and returns `CalendarIngestionResult` (`created`, `updated`, `provider_outcomes: list[ProviderOutcome]`) instead of a bare `(created, updated)` tuple otherwise. This closes the mirror-image problem to News's defect: the calendar *does* produce data even when misconfigured (mock is never-failing by design), so the risk here was `GET /calendar` silently serving synthetic events with nothing indicating the configured provider is a mock - now surfaced via `Pipeline.provider_names`/`.uses_mock` in `GET /admin/system` (docs/58 §3.2). Finnhub activation (`providers/finnhub.py`/`finnhub_http.py`, Phase 7E-B) remains configuration-only, unchanged by this phase - see ADR-139 for exactly what the operator needs to set.
 
+
+**Update (ADR-150): ForexFactory is the production provider.** Finnhub's
+economic calendar is a paid resource - it returned `403 You don't have
+access to this resource` on every 15-minute ingestion run since deploy,
+and `economic_events` was empty for that entire period. `ForexFactoryProvider`
+(`providers/forexfactory.py`) reads the public weekly JSON feed at
+`nfs.faireconomy.media/ff_calendar_thisweek.json` with no API key.
+Set `ECONOMIC_CALENDAR_PROVIDERS=["forexfactory"]`; `ECONOMIC_API_KEY` is
+not required for it.
+
+Two declared limits, both visible in `capabilities()`:
+
+- **Rolling ~7 days.** Only the current-week file exists; `nextweek`,
+  `lastweek` and `thismonth` are all 404. The pipeline still asks for 7
+  back / 30 forward and receives the intersection.
+- **No `actual` values.** The feed publishes `forecast` and `previous`
+  only, so `surprise_calculator` produces nothing for these rows. The
+  risk filter uses importance and release time only, so gating is
+  unaffected.
+
+The feed's `impact` field is discarded - importance stays this project's
+own derivation (§5, ADR-059). That made extending the keyword lists
+mandatory: ForexFactory names releases differently ("Federal Funds
+Rate", "Main Refinancing Rate", "Non-Farm Employment Change",
+"Unemployment Claims"), and against a real week of the live feed all of
+them scored `OTHER`/`LOW` before ADR-150.
+
 ---
 
 # 9. Not Timeframe-Scoped

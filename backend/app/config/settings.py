@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     economic_api_base_url: str = "https://finnhub.io"
     economic_api_timeout_seconds: float = 10.0
 
+    #: ADR-150 - the ForexFactory weekly feed needs no API key. Its host
+    #: is separate from `economic_api_base_url` because the two
+    #: providers can be configured at the same time.
+    forexfactory_base_url: str = "https://nfs.faireconomy.media"
+    forexfactory_timeout_seconds: float = 15.0
+
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"

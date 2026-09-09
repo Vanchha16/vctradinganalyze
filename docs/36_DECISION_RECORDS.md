@@ -8749,6 +8749,99 @@ own adapter - the engine sees only the two integers and must stay
 provider-agnostic (ADR-081). Surfacing cost on the Admin API Usage page
 (ADR-144) is the obvious next step once real data exists.
 
+# ADR-150
+
+Title
+
+Replace Finnhub With ForexFactory as the Economic Calendar Source, and
+Teach the Classifiers Its Naming
+
+Status
+
+Accepted
+
+Context
+
+`economic_events` has **zero rows and always has.** Finnhub returns
+`403 You don't have access to this resource` on
+`/api/v1/calendar/economic` - the economic calendar is not on its free
+tier - and `economic_calendar.ingest` had been fetching, failing, and
+raising `AllEconomicCalendarProvidersFailedError` every 15 minutes since
+deploy. `ECONOMIC_CALENDAR_PROVIDERS=finnhub` alone, so there was no
+fallback.
+
+The consequence is worse than a missing page: economic evidence carries
+weight in every signal, and `economic_filter` - the thing that is
+supposed to refuse a trade in the window around an FOMC or CPI release -
+has never had an event to see. Finnhub's paid tier is ~$3,500/month,
+which this project will not pay.
+
+Decision
+
+`ForexFactoryProvider` reads ForexFactory's public weekly JSON feed
+(`nfs.faireconomy.media/ff_calendar_thisweek.json`). No API key, no
+signup. Verified live before writing: 200, 80 events, including the ECB
+Main Refinancing Rate and US CPI. Selected by the operator over paying
+for a vendor.
+
+`EconomicCalendarProvider` is a Protocol, so this is one new file plus a
+factory entry - no engine, pipeline or model change.
+
+**Two limits are real and are declared rather than papered over.** Only
+the current-week file exists (`nextweek`/`lastweek`/`thismonth` all
+404), so coverage is a rolling ~7 days and `capabilities()` says 7, not
+Finnhub's 30 - the pipeline still requests 7 back / 30 forward and
+simply gets the intersection. And the feed carries no `actual` values at
+all, so `surprise_calculator` has nothing to work with for these rows.
+The risk filter reads only importance and release time, so gating is
+unaffected; surprise-based evidence is not available from this source.
+
+The feed's own `impact` field is **discarded**. Importance is this
+project's decision, derived from the event name by `importance_scorer`
+(ADR-059); letting a third party set it would put them in charge of when
+we refuse to trade.
+
+**The classifiers had to be extended, and this is the load-bearing half
+of the change.** The keyword lists were written against Finnhub's
+naming. ForexFactory names the same releases differently: the Fed
+decision is "Federal Funds Rate", the ECB's is "Main Refinancing Rate",
+NFP is "Non-Farm Employment Change", jobless claims are "Unemployment
+Claims". Scored against a real week of the live feed, every one of those
+fell through to `OTHER` and therefore to `LOW`. A calendar full of
+LOW-scored rate decisions is worse than an empty one: it looks like the
+filter is working. After the change, every event ForexFactory marks High
+scores HIGH or CRITICAL, checked against that same real week.
+
+`"employment change"` deliberately also matches ADP's release, which
+forecasts NFP rather than being it. Over-scoring ADP costs one extra
+blackout window; under-scoring the real NFP means trading into it. Those
+are not symmetric.
+
+Consequences
+
+The calendar fills, and `economic_filter` starts blocking around real
+releases for the first time. That is a **behaviour change in signal
+generation**: trades that would previously have been issued in the hour
+around CPI will now be filtered. This is the intended behaviour and the
+reason the 15% economic weight exists, but it is not a no-op.
+
+The dependency is a free, unversioned, unofficial endpoint with no
+stability guarantee. A shape change surfaces as zero parsed events
+rather than an error, since malformed rows are skipped individually so
+one bad row cannot cost a whole run. `economic_events` staying at zero
+after this deploy is the signal that the feed changed.
+
+Finnhub remains registered and configurable; nothing about it was
+removed. If a calendar plan is ever bought, switching back is a config
+value.
+
+Future Review
+
+Watch the row count for a week after deploy - the honest test of a
+scraped feed is whether it keeps working. Revisit if a paid provider is
+ever justified: actuals and a longer horizon would restore surprise
+analysis, which this source cannot support.
+
 ---
 
 # Review Policy

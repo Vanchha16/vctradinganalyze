@@ -40,3 +40,36 @@ def test_score_matches_rule_table(
     category: EconomicEventCategory, event_name: str, expected: EconomicEventImportance
 ) -> None:
     assert score(category, event_name) == expected
+
+
+@pytest.mark.parametrize(
+    "event_name",
+    [
+        "Federal Funds Rate",
+        "Main Refinancing Rate",
+        "Official Bank Rate",
+        "Official Cash Rate",
+        "Cash Rate",
+        "Overnight Rate",
+        "SNB Policy Rate",
+        "Monetary Policy Statement",
+        "RBA Rate Statement",
+        "Non-Farm Employment Change",
+    ],
+)
+def test_forexfactory_named_rate_decisions_score_critical(event_name: str) -> None:
+    """ADR-150 - these are the releases the calendar exists to block
+    around. Under ForexFactory's naming they scored LOW, and LOW is
+    precisely what lets `economic_filter` wave a trade through."""
+    assert score(EconomicEventCategory.CENTRAL_BANK, event_name) is EconomicEventImportance.CRITICAL
+
+
+def test_a_policy_report_hearing_is_high_not_critical() -> None:
+    """A hearing about past policy is not a rate decision. It still
+    moves price, so it is not LOW either - the distinction is why
+    "monetary policy report" is a category keyword rather than a
+    critical-name override."""
+    assert (
+        score(EconomicEventCategory.CENTRAL_BANK, "Monetary Policy Report Hearings")
+        is EconomicEventImportance.HIGH
+    )

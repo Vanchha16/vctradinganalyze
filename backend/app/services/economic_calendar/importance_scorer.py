@@ -5,6 +5,15 @@ since economic data has one canonical value per event."""
 
 from app.models.enums import EconomicEventCategory, EconomicEventImportance
 
+#: ADR-150 added ForexFactory's names for these same releases. A rate
+#: decision it calls "Federal Funds Rate" or "Main Refinancing Rate" was
+#: scoring LOW, which is the one error this scorer must not make: LOW is
+#: what lets `economic_filter` allow a trade through.
+#:
+#: "employment change" deliberately also catches ADP's release, which is
+#: a forecast of NFP rather than NFP itself. Over-scoring it means one
+#: extra blackout window; under-scoring the real NFP means trading into
+#: it. Those are not symmetric.
 _CRITICAL_EVENT_NAME_KEYWORDS = (
     "fomc",
     "interest rate decision",
@@ -15,6 +24,16 @@ _CRITICAL_EVENT_NAME_KEYWORDS = (
     "cpi",
     "core cpi",
     "gdp",
+    "federal funds rate",
+    "main refinancing rate",
+    "official bank rate",
+    "official cash rate",
+    "cash rate",
+    "overnight rate",
+    "policy rate",
+    "monetary policy statement",
+    "rate statement",
+    "employment change",
 )
 _HIGH_CATEGORIES = {
     EconomicEventCategory.CENTRAL_BANK,

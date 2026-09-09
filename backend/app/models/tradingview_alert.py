@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Numeric, String
+from sqlalchemy import JSON, DateTime, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -37,6 +37,13 @@ class TradingViewAlert(Base, UUIDMixin, CreatedAtMixin):
     """
 
     __tablename__ = "tradingview_alerts"
+
+    #: `created_at` comes from `CreatedAtMixin`, which declares no index -
+    #: so the index the admin list's `ORDER BY created_at DESC` needs has
+    #: to be declared here rather than via `mapped_column(index=True)`.
+    #: Without this the model and the migration disagree and `alembic
+    #: check` reports drift in CI (it did, on the first attempt).
+    __table_args__ = (Index("ix_tradingview_alerts_created_at", "created_at"),)
 
     #: Raw ticker as TradingView sends it (`{{ticker}}`), e.g. "XAUUSD".
     #: Not an FK to `assets`: the alert may reference a symbol this

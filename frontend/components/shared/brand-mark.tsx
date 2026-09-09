@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-/** ClaudeTrading AI logomark - zigzag chart-arrow, matches the uploaded brand logo's shape/color DNA. */
+/** VC Trading AI logomark - zigzag chart-arrow, matches the uploaded brand logo's shape/color DNA. */
 export function BrandMark({ className }: { className?: string }) {
   return (
     <svg

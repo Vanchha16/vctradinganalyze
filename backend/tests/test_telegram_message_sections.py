@@ -233,7 +233,7 @@ def test_compose_signal_message_matches_expected_layout() -> None:
     assert "Technical Confirmation" not in text
     assert "Market News" not in text
     assert "Signal Quality" not in text
-    assert "ClaudeTrading AI" not in text
+    assert "VC Trading AI" not in text
 
 
 def _make_closed_signal(

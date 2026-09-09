@@ -16,8 +16,8 @@ const sans = Inter_Tight({ variable: "--font-sans", subsets: ["latin"] });
 const mono = JetBrains_Mono({ variable: "--font-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ClaudeTrading AI",
-  description: "ClaudeTrading AI application shell",
+  title: "VC Trading AI",
+  description: "VC Trading AI application shell",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

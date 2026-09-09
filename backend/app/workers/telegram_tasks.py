@@ -100,7 +100,7 @@ def _handle_update(
         code = update.text.removeprefix("/start ").strip()
         account = telegram_service.resolve_link_code(code, update.chat_id)
         reply = (
-            "Linked to ClaudeTrading AI. You'll receive trading signals here."
+            "Linked to VC Trading AI. You'll receive trading signals here."
             if account is not None
             else "That link code is invalid or expired. Generate a new one from Settings."
         )

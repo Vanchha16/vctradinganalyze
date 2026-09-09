@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { AuthCard } from "@/features/auth/components/auth-card";
 import { LoginForm } from "@/features/auth/components/login-form";
 
-export const metadata: Metadata = { title: "Sign in - ClaudeTrading AI" };
+export const metadata: Metadata = { title: "Sign in - VC Trading AI" };
 
 /**
  * No "create an account" link (Phase 8E, docs/59 §9) - accounts are
@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: "Sign in - ClaudeTrading AI" };
  */
 export default function LoginPage() {
   return (
-    <AuthCard title="Sign in" description="Access your ClaudeTrading AI dashboard.">
+    <AuthCard title="Sign in" description="Access your VC Trading AI dashboard.">
       <LoginForm />
     </AuthCard>
   );

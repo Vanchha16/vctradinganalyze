@@ -344,7 +344,7 @@ def test_start_with_valid_code_links_account_and_shows_menu(
     )
 
     assert len(provider.sent_messages) == 2
-    assert "Linked to ClaudeTrading AI" in provider.sent_messages[0][1].replace("\\", "")
+    assert "Linked to VC Trading AI" in provider.sent_messages[0][1].replace("\\", "")
     assert provider.sent_messages[1][2] is not None  # menu keyboard attached
 
     with session_factory() as session:

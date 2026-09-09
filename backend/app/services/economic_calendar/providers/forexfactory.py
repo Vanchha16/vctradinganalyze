@@ -100,7 +100,7 @@ class ForexFactoryProvider:
             transport=transport,
             # The feed is served by a CDN that refuses the default httpx
             # user agent.
-            headers={"User-Agent": "ClaudeTradingAI/1.0"},
+            headers={"User-Agent": "VCTradingAI/1.0"},
         )
 
     def fetch_events(self, start: datetime, end: datetime) -> list[RawEconomicEvent]:

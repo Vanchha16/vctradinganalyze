@@ -35,7 +35,7 @@ export function Sidebar({
         </Link>
         {!collapsed && (
           <Link href="/dashboard" className="min-w-0">
-            <p className="truncate text-[13px] font-semibold tracking-tight">ClaudeTrading</p>
+            <p className="truncate text-[13px] font-semibold tracking-tight">VC Trading</p>
             <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-primary">AI Terminal</p>
           </Link>
         )}

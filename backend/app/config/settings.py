@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "ClaudeTradingAI"
+    app_name: str = "VC Trading AI"
     app_env: str = "development"
     app_debug: bool = False
     log_level: str = "INFO"

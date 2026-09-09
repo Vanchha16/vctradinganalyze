@@ -29,7 +29,7 @@ export function TopNav({
           <div className="grid size-7 place-items-center rounded-lg bg-gradient-brand text-primary-foreground">
             <BrandMark className="size-3.5" />
           </div>
-          <span className="text-[13px] font-semibold">ClaudeTrading</span>
+          <span className="text-[13px] font-semibold">VC Trading</span>
         </div>
 
         <button

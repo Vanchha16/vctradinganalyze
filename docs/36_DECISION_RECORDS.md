@@ -8812,10 +8812,17 @@ LOW-scored rate decisions is worse than an empty one: it looks like the
 filter is working. After the change, every event ForexFactory marks High
 scores HIGH or CRITICAL, checked against that same real week.
 
-`"employment change"` deliberately also matches ADP's release, which
-forecasts NFP rather than being it. Over-scoring ADP costs one extra
-blackout window; under-scoring the real NFP means trading into it. Those
-are not symmetric.
+`"non-farm employment change"` is deliberately the full phrase. The
+bare `"employment change"` was tried first and **reverted within an hour
+of deploy**: it matched "ADP Weekly Employment Change", a weekly series
+the feed itself marks Low, and CRITICAL inside a risk window is a *hard
+reject* - so a minor weekly release would have blocked every USD signal
+for 30 minutes, every week. The full phrase still catches "ADP Non-Farm
+Employment Change", the monthly NFP forecast, and that one is kept on
+purpose: it costs one window a month, against trading into the real NFP.
+
+This is the general hazard of deriving importance from names, and it
+only became visible once real rows existed.
 
 Consequences
 

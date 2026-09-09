@@ -10,10 +10,14 @@ from app.models.enums import EconomicEventCategory, EconomicEventImportance
 #: scoring LOW, which is the one error this scorer must not make: LOW is
 #: what lets `economic_filter` allow a trade through.
 #:
-#: "employment change" deliberately also catches ADP's release, which is
-#: a forecast of NFP rather than NFP itself. Over-scoring it means one
-#: extra blackout window; under-scoring the real NFP means trading into
-#: it. Those are not symmetric.
+#: The keyword is the FULL "non-farm employment change", not a bare
+#: "employment change". The short form was tried and reverted: it also
+#: matched "ADP Weekly Employment Change" - a weekly series the feed
+#: itself marks Low - so a CRITICAL score hard-rejected every USD signal
+#: in its 30-minute window once a week. It still matches "ADP Non-Farm
+#: Employment Change", the monthly NFP forecast, and that one is
+#: deliberate: over-scoring it costs one window a month, while
+#: under-scoring the real NFP means trading into it.
 _CRITICAL_EVENT_NAME_KEYWORDS = (
     "fomc",
     "interest rate decision",
@@ -33,7 +37,7 @@ _CRITICAL_EVENT_NAME_KEYWORDS = (
     "policy rate",
     "monetary policy statement",
     "rate statement",
-    "employment change",
+    "non-farm employment change",
 )
 _HIGH_CATEGORIES = {
     EconomicEventCategory.CENTRAL_BANK,

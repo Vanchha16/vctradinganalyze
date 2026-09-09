@@ -73,3 +73,29 @@ def test_a_policy_report_hearing_is_high_not_critical() -> None:
         score(EconomicEventCategory.CENTRAL_BANK, "Monetary Policy Report Hearings")
         is EconomicEventImportance.HIGH
     )
+
+
+def test_the_weekly_adp_series_does_not_hard_reject_signals() -> None:
+    """Found in production the day ADR-150 deployed: a bare "employment
+    change" keyword scored "ADP Weekly Employment Change" CRITICAL, and
+    CRITICAL inside a risk window is a *hard reject* - so a release the
+    feed itself marks Low would have blocked every USD signal for 30
+    minutes, once a week."""
+    assert (
+        score(EconomicEventCategory.EMPLOYMENT, "ADP Weekly Employment Change")
+        is not EconomicEventImportance.CRITICAL
+    )
+
+
+def test_the_monthly_adp_nfp_forecast_stays_critical() -> None:
+    """Narrowing the keyword must not cost the monthly release. It
+    carries "Non-Farm" in its name, and over-scoring it costs one window
+    a month against trading into the real NFP."""
+    assert (
+        score(EconomicEventCategory.EMPLOYMENT, "ADP Non-Farm Employment Change")
+        is EconomicEventImportance.CRITICAL
+    )
+    assert (
+        score(EconomicEventCategory.EMPLOYMENT, "Non-Farm Employment Change")
+        is EconomicEventImportance.CRITICAL
+    )

@@ -7,23 +7,43 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Pagination } from "@/components/ui/pagination";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalendarCardList } from "@/features/economic-calendar/components/calendar-card-list";
-import { CalendarFilterBar, type CalendarFilters } from "@/features/economic-calendar/components/calendar-filter-bar";
+import {
+  CalendarFilterBar,
+  type CalendarFilters,
+} from "@/features/economic-calendar/components/calendar-filter-bar";
 import { CalendarTable } from "@/features/economic-calendar/components/calendar-table";
 import { ErrorCard } from "@/features/dashboard/components/error-card";
 import { PageContainer } from "@/features/dashboard/components/page-container";
 import { useCalendarEvents } from "@/hooks/use-calendar-events";
 import { useQueryFilters } from "@/hooks/use-query-filters";
-import type { EconomicEventCategory, EconomicEventImportance } from "@/services/types";
+import type { CalendarSort } from "@/services/calendar";
+import type {
+  EconomicEventCategory,
+  EconomicEventImportance,
+} from "@/services/types";
 
-const DEFAULT_FILTERS: CalendarFilters = { importance: undefined, category: undefined, range: undefined };
+const DEFAULT_FILTERS: CalendarFilters = {
+  importance: undefined,
+  category: undefined,
+  range: undefined,
+  currency: undefined,
+  sort: undefined,
+};
 
 export default function EconomicCalendarPage() {
-  const { filters, page, setFilters, setPage } = useQueryFilters(DEFAULT_FILTERS);
+  const { filters, page, setFilters, setPage } =
+    useQueryFilters(DEFAULT_FILTERS);
+
+  // `undefined` rather than "time_asc" so the default sort stays out of
+  // the URL, keeping a plain /economic-calendar link clean.
+  const sort = (filters.sort as CalendarSort | undefined) ?? "time_asc";
 
   const eventsQuery = useCalendarEvents({
     importance: filters.importance as EconomicEventImportance | undefined,
     category: filters.category as EconomicEventCategory | undefined,
     range: filters.range as "today" | "week" | undefined,
+    currency: filters.currency,
+    sort,
     page,
     limit: 25,
   });
@@ -33,27 +53,50 @@ export default function EconomicCalendarPage() {
 
   return (
     <div>
-      <PageHeader title="Economic Calendar" description="Scheduled and released economic events." />
-      <CalendarFilterBar filters={filters} onChange={(next) => setFilters(next)} />
+      <PageHeader
+        title="Economic Calendar"
+        description="Scheduled and released economic events."
+      />
+      <CalendarFilterBar
+        filters={filters}
+        onChange={(next) => setFilters(next)}
+      />
       <PageContainer>
         {eventsQuery.isLoading ? (
           <Skeleton className="h-96 w-full" />
         ) : eventsQuery.isError ? (
-          <ErrorCard error={eventsQuery.error} onRetry={() => eventsQuery.refetch()} />
+          <ErrorCard
+            error={eventsQuery.error}
+            onRetry={() => eventsQuery.refetch()}
+          />
         ) : eventsQuery.data && eventsQuery.data.items.length > 0 ? (
           <>
             <div className="hidden md:block">
-              <CalendarTable events={eventsQuery.data.items} />
+              <CalendarTable
+                events={eventsQuery.data.items}
+                sort={sort}
+                onSortChange={(next) =>
+                  setFilters({ sort: next === "time_asc" ? undefined : next })
+                }
+              />
             </div>
             <div className="md:hidden">
               <CalendarCardList events={eventsQuery.data.items} />
             </div>
             <div className="pt-4">
-              <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+              <Pagination
+                page={page}
+                totalPages={totalPages}
+                onPageChange={setPage}
+              />
             </div>
           </>
         ) : (
-          <EmptyState icon={Calendar} title="No events found" description="Try a different filter or date range." />
+          <EmptyState
+            icon={Calendar}
+            title="No events found"
+            description="Try a different filter or date range."
+          />
         )}
       </PageContainer>
     </div>

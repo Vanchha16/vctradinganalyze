@@ -15,16 +15,19 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: "Asia/Bangkok",
 });
 
-const relativeFormatter = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
+const relativeFormatter = new Intl.RelativeTimeFormat("en-US", {
+  numeric: "auto",
+});
 
-const RELATIVE_UNITS: { unit: Intl.RelativeTimeFormatUnit; seconds: number }[] = [
-  { unit: "year", seconds: 31536000 },
-  { unit: "month", seconds: 2592000 },
-  { unit: "week", seconds: 604800 },
-  { unit: "day", seconds: 86400 },
-  { unit: "hour", seconds: 3600 },
-  { unit: "minute", seconds: 60 },
-];
+const RELATIVE_UNITS: { unit: Intl.RelativeTimeFormatUnit; seconds: number }[] =
+  [
+    { unit: "year", seconds: 31536000 },
+    { unit: "month", seconds: 2592000 },
+    { unit: "week", seconds: 604800 },
+    { unit: "day", seconds: 86400 },
+    { unit: "hour", seconds: 3600 },
+    { unit: "minute", seconds: 60 },
+  ];
 
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—";
@@ -60,10 +63,16 @@ export function formatPrice(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   const numeric = typeof value === "string" ? Number(value) : value;
   if (Number.isNaN(numeric)) return "—";
-  return numeric.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 5 });
+  return numeric.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 5,
+  });
 }
 
-export function formatPercent(value: number | null | undefined, fractionDigits = 1): string {
+export function formatPercent(
+  value: number | null | undefined,
+  fractionDigits = 1,
+): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   return `${value.toFixed(fractionDigits)}%`;
 }
@@ -78,6 +87,28 @@ export function formatCurrency(value: number | null | undefined): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+/**
+ * Economic calendar figures (forecast / previous / actual).
+ *
+ * The backend stores these as `Numeric(20, 8)`, so the raw JSON is
+ * unreadable: "0.8%" arrives as "0.80000000", and Python renders a zero
+ * as "0E-8", which reached the UI verbatim. Trailing zeros are dropped
+ * and the provider's unit ("%", "K", "B") is appended, so the table
+ * shows the figure the way the release prints it.
+ */
+export function formatEconomicValue(
+  value: string | number | null | undefined,
+  unit?: string | null,
+): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const numeric = typeof value === "string" ? Number(value) : value;
+  if (Number.isNaN(numeric)) return "—";
+  const formatted = numeric.toLocaleString("en-US", {
+    maximumFractionDigits: 4,
+  });
+  return unit ? `${formatted}${unit}` : formatted;
 }
 
 export function formatEnumLabel(value: string | null | undefined): string {

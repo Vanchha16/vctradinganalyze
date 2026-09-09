@@ -46,6 +46,10 @@ async def list_calendar_events(
     range_: Annotated[Literal["today", "week"] | None, Query(alias="range")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    #: ADR-151. Only `release_time` is sortable: it is the one column a
+    #: calendar is ever ordered by, and the only one with an index.
+    #: Default stays ascending so existing callers are unaffected.
+    sort: Annotated[Literal["time_asc", "time_desc"], Query()] = "time_asc",
 ) -> EconomicEventListResponse:
     start, end = _resolve_range(range_, from_, to)
     offset = (page - 1) * limit
@@ -59,6 +63,7 @@ async def list_calendar_events(
         end=end,
         offset=offset,
         limit=limit,
+        descending=sort == "time_desc",
     )
     return EconomicEventListResponse(
         items=[EconomicEventResponse.model_validate(e) for e in result.events],

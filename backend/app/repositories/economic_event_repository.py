@@ -48,6 +48,7 @@ class EconomicEventRepository(BaseRepository[EconomicEvent]):
         end: datetime | None = None,
         offset: int = 0,
         limit: int = 20,
+        descending: bool = False,
     ) -> Sequence[EconomicEvent]:
         query = self._filter_by(
             self._query(), **self._build_filters(country, currency, importance, category)
@@ -56,7 +57,11 @@ class EconomicEventRepository(BaseRepository[EconomicEvent]):
             query = query.where(EconomicEvent.release_time >= start)
         if end is not None:
             query = query.where(EconomicEvent.release_time <= end)
-        query = query.order_by(EconomicEvent.release_time.asc())
+        # Ordering is applied here rather than by the caller because it
+        # must be inside the same statement as LIMIT/OFFSET - sorting a
+        # page after the fact would only sort that page (ADR-151).
+        release_time = EconomicEvent.release_time
+        query = query.order_by(release_time.desc() if descending else release_time.asc())
         return (
             self.session.execute(self._paginate(query, offset=offset, limit=limit)).scalars().all()
         )

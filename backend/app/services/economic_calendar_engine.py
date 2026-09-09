@@ -42,6 +42,7 @@ class EconomicCalendarEngine:
         end: datetime | None = None,
         offset: int = 0,
         limit: int = 20,
+        descending: bool = False,
     ) -> tuple[EconomicCalendarResult, int]:
         rows = self._event_repository.find_paginated(
             country=country,
@@ -52,6 +53,7 @@ class EconomicCalendarEngine:
             end=end,
             offset=offset,
             limit=limit,
+            descending=descending,
         )
         total = self._event_repository.count_filtered(
             country=country,

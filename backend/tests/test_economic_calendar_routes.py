@@ -185,3 +185,54 @@ def test_upcoming_route_is_not_shadowed_by_id_route(client: TestClient, session:
     response = client.get("/api/v1/calendar/upcoming")
 
     assert response.status_code == 200
+
+
+def test_list_calendar_events_defaults_to_soonest_first(
+    client: TestClient, session: Session
+) -> None:
+    now = datetime.now(UTC)
+    _seed(session, event_name="Later", release_time=now + timedelta(hours=5))
+    _seed(session, event_name="Sooner", release_time=now + timedelta(hours=1))
+
+    response = client.get("/api/v1/calendar")
+
+    assert response.status_code == 200
+    assert [e["event_name"] for e in response.json()["items"]] == ["Sooner", "Later"]
+
+
+def test_list_calendar_events_sorts_newest_first_on_request(
+    client: TestClient, session: Session
+) -> None:
+    """ADR-151 - the calendar page needs a newest-first view to read what
+    already happened, which ascending order buries behind every upcoming
+    release."""
+    now = datetime.now(UTC)
+    _seed(session, event_name="Later", release_time=now + timedelta(hours=5))
+    _seed(session, event_name="Sooner", release_time=now + timedelta(hours=1))
+
+    response = client.get("/api/v1/calendar", params={"sort": "time_desc"})
+
+    assert response.status_code == 200
+    assert [e["event_name"] for e in response.json()["items"]] == ["Later", "Sooner"]
+
+
+def test_sorting_is_applied_across_pages_not_within_one(
+    client: TestClient, session: Session
+) -> None:
+    """The ORDER BY must sit in the same statement as LIMIT/OFFSET.
+    Sorting a page after fetching it would make page 1 of a descending
+    sort show the *oldest* three events, reordered among themselves."""
+    now = datetime.now(UTC)
+    for i in range(6):
+        _seed(session, event_name=f"Event {i}", release_time=now + timedelta(hours=i))
+
+    response = client.get("/api/v1/calendar", params={"sort": "time_desc", "limit": 3, "page": 1})
+
+    assert response.status_code == 200
+    assert [e["event_name"] for e in response.json()["items"]] == ["Event 5", "Event 4", "Event 3"]
+
+
+def test_an_unknown_sort_value_is_rejected(client: TestClient) -> None:
+    """Better a 422 than silently falling back to ascending and showing
+    the operator the opposite of what they asked for."""
+    assert client.get("/api/v1/calendar", params={"sort": "importance"}).status_code == 422

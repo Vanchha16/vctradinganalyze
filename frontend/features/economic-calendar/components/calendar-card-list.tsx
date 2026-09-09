@@ -1,12 +1,21 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { AnalyzeXauusdButton, shouldShowAnalyzeXauusd } from "@/features/economic-calendar/components/analyze-xauusd-button";
+import {
+  AnalyzeXauusdButton,
+  shouldShowAnalyzeXauusd,
+} from "@/features/economic-calendar/components/analyze-xauusd-button";
 import { importanceVariant } from "@/lib/badge-variants";
-import { formatDateTime, formatEnumLabel } from "@/lib/format";
+import {
+  formatDateTime,
+  formatEconomicValue,
+  formatEnumLabel,
+} from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { EconomicEventResponse } from "@/services/types";
 
-function biasLabel(marketBias: EconomicEventResponse["market_bias"]): string | null {
+function biasLabel(
+  marketBias: EconomicEventResponse["market_bias"],
+): string | null {
   if (!marketBias) return null;
   const values = Object.values(marketBias);
   return values.length > 0 ? formatEnumLabel(values[0]) : null;
@@ -19,7 +28,11 @@ function biasLabel(marketBias: EconomicEventResponse["market_bias"]): string | n
  * `economic-calendar/page.tsx`, not a replacement. Risk-window
  * highlighting carried over as a left border accent, matching the table.
  */
-export function CalendarCardList({ events }: { events: EconomicEventResponse[] }) {
+export function CalendarCardList({
+  events,
+}: {
+  events: EconomicEventResponse[];
+}) {
   return (
     <div className="flex flex-col gap-2">
       {events.map((event) => {
@@ -27,7 +40,9 @@ export function CalendarCardList({ events }: { events: EconomicEventResponse[] }
         return (
           <Card
             key={event.id}
-            className={cn(event.risk_window && "border-l-2 border-l-warning bg-warning/10")}
+            className={cn(
+              event.risk_window && "bg-warning/10 border-l-2 border-l-warning",
+            )}
           >
             <CardContent className="flex flex-col gap-2 py-3">
               <div className="flex items-start justify-between gap-2">
@@ -37,24 +52,34 @@ export function CalendarCardList({ events }: { events: EconomicEventResponse[] }
                     {event.currency} · {formatDateTime(event.release_time)}
                   </p>
                 </div>
-                <Badge variant={importanceVariant(event.importance)}>{formatEnumLabel(event.importance)}</Badge>
+                <Badge variant={importanceVariant(event.importance)}>
+                  {formatEnumLabel(event.importance)}
+                </Badge>
               </div>
               <dl className="grid grid-cols-3 gap-2 border-t border-border pt-2 text-sm">
                 <div>
                   <dt className="text-xs text-muted-foreground">Forecast</dt>
-                  <dd className="tabular-nums">{event.forecast ?? "—"}</dd>
+                  <dd className="tabular-nums">
+                    {formatEconomicValue(event.forecast, event.unit)}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">Previous</dt>
-                  <dd className="tabular-nums">{event.previous ?? "—"}</dd>
+                  <dd className="tabular-nums">
+                    {formatEconomicValue(event.previous, event.unit)}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">Actual</dt>
-                  <dd className="tabular-nums">{event.actual ?? "—"}</dd>
+                  <dd className="tabular-nums">
+                    {formatEconomicValue(event.actual, event.unit)}
+                  </dd>
                 </div>
               </dl>
               {bias ? <Badge variant="outline">{bias}</Badge> : null}
-              {shouldShowAnalyzeXauusd(event.importance) ? <AnalyzeXauusdButton /> : null}
+              {shouldShowAnalyzeXauusd(event.importance) ? (
+                <AnalyzeXauusdButton />
+              ) : null}
             </CardContent>
           </Card>
         );

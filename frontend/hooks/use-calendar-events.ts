@@ -2,8 +2,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { listCalendarEvents } from "@/services/calendar";
-import type { EconomicEventCategory, EconomicEventImportance } from "@/services/types";
+import { listCalendarEvents, type CalendarSort } from "@/services/calendar";
+import type {
+  EconomicEventCategory,
+  EconomicEventImportance,
+} from "@/services/types";
 
 export function useCalendarEvents(params: {
   page?: number;
@@ -13,6 +16,7 @@ export function useCalendarEvents(params: {
   importance?: EconomicEventImportance;
   category?: EconomicEventCategory;
   range?: "today" | "week";
+  sort?: CalendarSort;
 }) {
   return useQuery({
     queryKey: ["calendar-events", params],

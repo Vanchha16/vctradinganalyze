@@ -6,6 +6,10 @@ import type {
   EconomicEventUpcomingResponse,
 } from "@/services/types";
 
+/** Only `release_time` is sortable server-side (ADR-151) - it is the
+ * one column a calendar is ordered by and the only indexed one. */
+export type CalendarSort = "time_asc" | "time_desc";
+
 export function listCalendarEvents(params: {
   page?: number;
   limit?: number;
@@ -14,6 +18,7 @@ export function listCalendarEvents(params: {
   importance?: EconomicEventImportance;
   category?: EconomicEventCategory;
   range?: "today" | "week";
+  sort?: CalendarSort;
 }): Promise<EconomicEventListResponse> {
   return apiGet<EconomicEventListResponse>("/calendar", {
     page: params.page?.toString(),
@@ -23,6 +28,7 @@ export function listCalendarEvents(params: {
     importance: params.importance,
     category: params.category,
     range: params.range,
+    sort: params.sort,
   });
 }
 

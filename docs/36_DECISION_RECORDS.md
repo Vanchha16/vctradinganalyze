@@ -8849,6 +8849,85 @@ scraped feed is whether it keeps working. Revisit if a paid provider is
 ever justified: actuals and a longer horizon would restore surprise
 analysis, which this source cannot support.
 
+# ADR-151
+
+Title
+
+Server-Side Sorting and a Currency Filter for the Economic Calendar
+
+Status
+
+Accepted
+
+Context
+
+With the calendar finally holding real rows (ADR-150), the page became
+usable enough to show what it was missing. The operator asked for
+sorting and richer filtering, comparing it to ForexFactory's own
+calendar.
+
+Three concrete gaps:
+
+1. **No sorting at all.** `find_paginated` hardcoded
+   `release_time.asc()`, so the page always opened on the oldest event
+   of the range and what already happened was buried behind everything
+   upcoming.
+2. **No currency filter in the UI** - though `GET /calendar` has
+   accepted `currency` since Phase 5B. The filter existed; nothing
+   exposed it.
+3. **Unreadable figures.** `forecast`/`previous`/`actual` are
+   `Numeric(20, 8)`, and the raw JSON reached the table verbatim: "0.8%"
+   rendered as `0.80000000`, and a zero rendered as `0E-8` - Python's
+   `Decimal` scientific notation, shown to the operator as-is.
+
+Decision
+
+**Sorting is server-side, not client-side.** `GET /calendar` takes
+`sort=time_asc|time_desc`, threaded to `ORDER BY` in the same statement
+as `LIMIT`/`OFFSET`. Sorting in the browser would reorder only the 25
+rows already fetched, so page 1 of a "newest first" sort would show the
+*oldest* 25 events rearranged among themselves - confidently wrong in a
+way that looks right. A test pins exactly this.
+
+**Only `release_time` is sortable.** It is the one column a calendar is
+ordered by, and the only indexed one. An unrecognised `sort` value is a
+422 rather than a silent fall back to ascending, which would show the
+operator the opposite of what they asked for.
+
+`time_asc` remains the default, so every existing caller is unaffected,
+and the frontend keeps the default *out of the URL* so a plain
+`/economic-calendar` link stays clean.
+
+**The currency filter is hardcoded to the nine covered currencies**
+rather than derived from the rows currently on screen - options that
+change as you filter are a worse experience than a fixed list, and the
+provider set is known and stable.
+
+**`formatEconomicValue` trims trailing zeros and appends the unit**, so
+the table shows `0.8%`, `205K`, `768B` - the figure as the release
+prints it. The `unit` column was already populated and simply never
+displayed.
+
+Consequences
+
+The calendar can be read both ways: soonest-first to see what is coming,
+newest-first to review what just landed. Filtering by USD alone now
+matches what actually drives XAUUSD, which is the only active asset.
+
+The sort parameter is additive - no migration, no change to any existing
+response shape, and `descending=False` keeps every internal caller
+(`ContextBuilder`, the upcoming-events endpoint) on the old behaviour.
+
+Sorting by importance or by currency is deliberately not offered.
+Neither is indexed, and neither is a natural ordering for a calendar;
+filtering covers the same need.
+
+Future Review
+
+If the events table grows past a few thousand rows per week, revisit
+whether `release_time` needs a composite index with the filter columns.
+At one week of data (~80 rows) it does not.
+
 ---
 
 # Review Policy

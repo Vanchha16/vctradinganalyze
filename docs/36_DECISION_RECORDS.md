@@ -9006,6 +9006,67 @@ If the button is ever extended past XAUUSD/H1, the symbol should come
 from the event's own currency rather than staying hardcoded. Persisting
 the focus event becomes worthwhile at the same time.
 
+# ADR-153
+
+Title
+
+The Calendar's Analysis Answer Opens In Place, Not On Another Page
+
+Status
+
+Accepted
+
+Context
+
+"Should I buy or sell XAUUSD?" generated an analysis and then navigated
+to `/ai-analysis/{id}`. With ADR-152 making the answer genuinely about
+the clicked release, the navigation became the bottleneck: the reader is
+scanning a week of releases, and being thrown onto a full analysis page
+to read one paragraph - then having to navigate back to compare the next
+one - made the shortcut slower than the thing it shortcuts.
+
+Decision
+
+The answer opens in a dialog on the calendar. `AnalyzeXauusdDialog`
+shows the recommendation, confidence, risk, the entry/stop/target
+levels, and the reasoning - leading with the `economic` section, because
+that is the one addressing the release the reader clicked (ADR-152).
+
+**The dialog is a summary, not a second copy of the analysis page.** It
+carries the four things that answer the question asked and links out for
+the chart, evidence lists and full reasoning. Rebuilding the page inside
+a modal would mean two places to keep in step, and the reader who wants
+that depth is one click away.
+
+**It opens before the request resolves**, showing a skeleton for the
+~4 seconds the LLM call takes. The alternative - leaving the reader on
+an "Analyzing…" button with nothing else happening - reads as a hang. On
+failure the dialog closes and the existing toast carries the reason: an
+empty dialog explains nothing.
+
+Consequences
+
+Comparing several releases in one sitting is now open-read-close rather
+than navigate-read-back, which is the actual workflow on a calendar
+page.
+
+Every field shown is deterministic and reused verbatim from the response
+(ADR-078/079); the only model-written text is `reasoning`. When the LLM
+failed, the recommendation still stands - it was never the model's - but
+the prose is a deterministic template, so the dialog carries the
+existing "Narration unavailable" badge rather than presenting a template
+as analysis (ADR-081).
+
+Each click still costs one real LLM call and writes an `ai_analysis`
+row. The dialog does not change that, and deliberately does not cache:
+"what does the system think right now" has a short shelf life, and a
+silently stale answer would be worse than a slow fresh one.
+
+Future Review
+
+If the button is extended beyond XAUUSD/H1, the dialog needs a symbol in
+its header - it currently states the pair as a constant.
+
 ---
 
 # Review Policy

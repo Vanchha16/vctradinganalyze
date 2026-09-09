@@ -78,7 +78,7 @@ export function CalendarCardList({
               </dl>
               {bias ? <Badge variant="outline">{bias}</Badge> : null}
               {shouldShowAnalyzeXauusd(event.importance) ? (
-                <AnalyzeXauusdButton eventId={event.id} />
+                <AnalyzeXauusdButton eventId={event.id} eventName={event.event_name} />
               ) : null}
             </CardContent>
           </Card>

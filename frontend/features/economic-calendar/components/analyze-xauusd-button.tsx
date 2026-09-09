@@ -15,6 +15,11 @@ import type { EconomicEventImportance } from "@/services/types";
 //: from the event's own currency, per explicit operator request (docs/50
 //: reasoning already covers cross-asset relevance in its own "economic"
 //: section - this button is a fast path to that, not a new analysis).
+//:
+//: ADR-152: the clicked event's id is now sent with the request. Without
+//: it the backend only saw "XAUUSD, H1" and answered about whatever fell
+//: inside its default +24h window - a click on Thursday's CPI came back
+//: describing that day's bond auction.
 const ANALYZABLE_IMPORTANCE = new Set<EconomicEventImportance>(["critical", "high"]);
 const XAUUSD_SYMBOL = "XAUUSD";
 const ANALYSIS_TIMEFRAME = "h1";
@@ -23,13 +28,17 @@ export function shouldShowAnalyzeXauusd(importance: EconomicEventImportance): bo
   return ANALYZABLE_IMPORTANCE.has(importance);
 }
 
-export function AnalyzeXauusdButton() {
+export function AnalyzeXauusdButton({ eventId }: { eventId?: string }) {
   const router = useRouter();
   const generate = useGenerateAiAnalysis();
 
   async function handleClick() {
     try {
-      const result = await generate.mutateAsync({ symbol: XAUUSD_SYMBOL, timeframe: ANALYSIS_TIMEFRAME });
+      const result = await generate.mutateAsync({
+        symbol: XAUUSD_SYMBOL,
+        timeframe: ANALYSIS_TIMEFRAME,
+        eventId,
+      });
       router.push(`/ai-analysis/${result.id}`);
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "Something went wrong.";

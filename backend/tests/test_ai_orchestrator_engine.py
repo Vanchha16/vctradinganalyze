@@ -1,4 +1,5 @@
 import math
+import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -11,7 +12,14 @@ from app.database.base import Base
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
 from app.models.economic_event import EconomicEvent
-from app.models.enums import MarketType, Recommendation, Timeframe
+from app.models.enums import (
+    EconomicEventCategory,
+    EconomicEventImportance,
+    EconomicEventStatus,
+    MarketType,
+    Recommendation,
+    Timeframe,
+)
 from app.models.news_article import NewsArticle
 from app.models.news_sentiment import NewsSentiment
 from app.models.news_source import NewsSource
@@ -226,3 +234,57 @@ def test_generate_waits_when_no_candle_data(session: Session, asset: Asset) -> N
 
     assert result.recommendation is Recommendation.WAIT
     assert result.entry_price is None
+
+
+def test_focus_event_reaches_the_prompt_without_touching_the_scored_events(
+    session: Session, asset: Asset
+) -> None:
+    """ADR-152 - the focus event is looked up separately and deliberately
+    kept OUT of `economic.events`, which feeds the deterministic risk and
+    confidence scoring. Clicking a calendar row must change what the
+    narration talks about, never what was decided (ADR-079)."""
+    _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
+    event = EconomicEvent(
+        country="US",
+        currency="USD",
+        event_name="Core CPI m/m",
+        category=EconomicEventCategory.INFLATION,
+        importance=EconomicEventImportance.CRITICAL,
+        status=EconomicEventStatus.SCHEDULED,
+        source="forexfactory",
+        # Deliberately far outside ContextBuilder's +24h window: this is
+        # exactly the case the button hits, and the reason a click on
+        # Thursday's CPI used to be answered with today's bond auction.
+        release_time=datetime.now(UTC) + timedelta(days=3),
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+
+    provider = MockAIProvider()
+    engine = _make_engine(session, provider)
+
+    baseline = engine.generate(asset, Timeframe.H1)
+    focused = engine.generate(asset, Timeframe.H1, focus_event_id=event.id)
+
+    prompt = provider.calls[-1].user_prompt
+    assert "Core CPI m/m" in prompt
+    assert "in 3 days" in prompt
+    # The deterministic half is identical either way.
+    assert focused.recommendation == baseline.recommendation
+    assert focused.confidence_score == baseline.confidence_score
+
+
+def test_an_unknown_focus_event_id_still_returns_an_analysis(
+    session: Session, asset: Asset
+) -> None:
+    """A stale calendar tab pointing at a deleted event should degrade to
+    an ordinary analysis, not a 500."""
+    _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
+    provider = MockAIProvider()
+    engine = _make_engine(session, provider)
+
+    result = engine.generate(asset, Timeframe.H1, focus_event_id=uuid.uuid4())
+
+    assert result.ai_available is True
+    assert "asking specifically about" not in provider.calls[-1].user_prompt

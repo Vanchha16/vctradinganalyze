@@ -2,6 +2,7 @@
 call (docs/50 §3/§5) - every upstream engine is called at most once."""
 
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from app.models.asset import Asset
 from app.models.enums import Timeframe
@@ -46,7 +47,9 @@ class ContextBuilder:
         #: data path.
         self._price_candle_repository = price_candle_repository
 
-    def build(self, asset: Asset, timeframe: Timeframe) -> AnalysisContext:
+    def build(
+        self, asset: Asset, timeframe: Timeframe, focus_event_id: UUID | None = None
+    ) -> AnalysisContext:
         now = datetime.now(UTC)
 
         confidence = self._confidence_engine.analyze(asset, timeframe)
@@ -78,6 +81,16 @@ class ContextBuilder:
                 candidate_setup.take_profit,
             )
 
+        #: ADR-152. Looked up separately from `economic`, and left out of
+        #: it: the calendar button can point at a release days away,
+        #: outside the +24h window, and merging it into the scored event
+        #: list would let the row you clicked move the risk score.
+        focus_event = (
+            self._economic_calendar_engine.get_by_id(focus_event_id)
+            if focus_event_id is not None
+            else None
+        )
+
         return AnalysisContext(
             asset=asset,
             timeframe=timeframe,
@@ -87,6 +100,7 @@ class ContextBuilder:
             strategy=strategy,
             candidate_setup=candidate_setup,
             risk=risk,
+            focus_event=focus_event,
         )
 
     def _economic_events_for(self, asset: Asset, now: datetime) -> EconomicCalendarResult:

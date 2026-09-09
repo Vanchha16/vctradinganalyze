@@ -8928,6 +8928,84 @@ If the events table grows past a few thousand rows per week, revisit
 whether `release_time` needs a composite index with the filter columns.
 At one week of data (~80 rows) it does not.
 
+# ADR-152
+
+Title
+
+The Calendar's Analysis Button Names the Release It Was Clicked On
+
+Status
+
+Accepted
+
+Context
+
+The economic calendar's "Should I buy or sell XAUUSD?" button sent only
+`symbol=XAUUSD` and `timeframe=h1`. The row it sat on was never passed.
+
+`ContextBuilder` then assembles economic context from a fixed window -
+2 hours back, 24 hours ahead - so a release further out than a day was
+not in the model's context at all. Demonstrated on production: clicking
+Thursday's CPI (two days away) returned an `economic` section reading
+*"Upcoming economic events, including the ADP Weekly Employment Change
+and the 10-year Bond Auction..."* - it never mentioned CPI, because CPI
+was outside the window.
+
+The button therefore answered a different question from the one its
+label promises, and clicking it on four different CPI rows produced four
+near-identical analyses.
+
+Decision
+
+`POST /analysis/ai/{symbol}` accepts an optional `event_id`, threaded
+through `AIOrchestratorEngine.generate()` to
+`ContextBuilder.build(..., focus_event_id)`, which resolves it via the
+already-existing `EconomicCalendarEngine.get_by_id`.
+
+**The focus event is deliberately kept OUT of `economic.events`.** That
+list feeds the deterministic risk and confidence scoring, and injecting
+a clicked row into it would let the calendar row you happen to click
+move the risk score - a `MEDIUM` event present drops the economic score
+from 10.0 to 7.0. Clicking a row must change *what the narration talks
+about*, never *what was decided* (ADR-079). `AnalysisContext.focus_event`
+is a separate field read only by `prompt_builder`, and a test asserts
+the recommendation and confidence are identical with and without it.
+
+The prompt line carries the full release - name, currency, importance,
+how far away it is in plain words ("in 2 days"), and forecast against
+previous - because the gap between forecast and previous is the entire
+reason a release matters; a bare name gives the model nothing to reason
+from. It closes by restating that the recommendation must not change.
+
+An unknown `event_id` is ignored rather than raising a 404: a stale
+calendar tab should still return an analysis.
+
+Consequences
+
+The button now does what its label says. The narration addresses the
+release the reader asked about, including whether it lands near enough
+to matter for the setup on that timeframe.
+
+Every other caller is unaffected - `focus_event_id` defaults to `None`,
+and the hourly signal worker passes nothing, so its prompt is
+byte-identical to before. A test pins that.
+
+Clicking still costs one real LLM call per click (~$0.0002, ADR-149) and
+writes a new `ai_analysis` row. Clicks on different rows now produce
+genuinely different narration rather than near-duplicates, which is the
+point, but the deterministic half is identical across them.
+
+**The chosen event is not persisted.** `ai_analysis` has no
+`focus_event_id` column, so reopening an old analysis will not show
+which release prompted it beyond what the reasoning text happens to say.
+Adding a column was judged not worth a migration yet.
+
+Future Review
+
+If the button is ever extended past XAUUSD/H1, the symbol should come
+from the event's own currency rather than staying hardcoded. Persisting
+the focus event becomes worthwhile at the same time.
+
 ---
 
 # Review Policy

@@ -113,7 +113,7 @@ export function CalendarTable({
               </TableCell>
               <TableCell>
                 {shouldShowAnalyzeXauusd(event.importance) ? (
-                  <AnalyzeXauusdButton />
+                  <AnalyzeXauusdButton eventId={event.id} />
                 ) : null}
               </TableCell>
             </TableRow>

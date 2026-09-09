@@ -90,8 +90,14 @@ async def generate_ai_analysis(
         ),
     ],
     engine: Annotated[AIOrchestratorEngine, Depends(get_ai_orchestrator_engine)],
+    #: ADR-152 - the economic calendar's "Should I buy or sell XAUUSD?"
+    #: button passes the row it sits on, so the narration addresses that
+    #: release instead of whatever falls inside the default +24h window.
+    #: An unknown id is ignored rather than a 404: a stale calendar tab
+    #: should still return an analysis.
+    event_id: Annotated[UUID | None, Query()] = None,
 ) -> AIAnalysisResponse:
-    result = engine.generate(asset, timeframe)
+    result = engine.generate(asset, timeframe, focus_event_id=event_id)
     return _result_to_response(result)
 
 

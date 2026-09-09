@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import UUID
 
 from app.config import settings
 from app.models.ai_analysis import AIAnalysis
@@ -65,11 +66,17 @@ class AIOrchestratorEngine:
         self._provider = provider
         self._ai_analysis_repository = ai_analysis_repository
 
-    def generate(self, asset: Asset, timeframe: Timeframe) -> AIAnalysisResult:
+    def generate(
+        self, asset: Asset, timeframe: Timeframe, focus_event_id: UUID | None = None
+    ) -> AIAnalysisResult:
+        """`focus_event_id` (ADR-152) names one economic release the
+        caller wants the narration to address. It changes only the
+        prompt - never the recommendation, which stays deterministic
+        (ADR-079)."""
         start = time.monotonic()
         calculated_at = datetime.now(UTC)
 
-        context = self._context_builder.build(asset, timeframe)
+        context = self._context_builder.build(asset, timeframe, focus_event_id)
         decision = recommendation_decision_module.decide(context)
         extracted = evidence_extractor.extract(context)
         conditions = invalidation_builder.build(context, decision.recommendation)

@@ -3,9 +3,17 @@ Orchestrator unit tests - reuses `analysis_confidence_helpers`'s
 `make_technical_result`/`make_smc_result`/`make_regime_result`."""
 
 from datetime import UTC, datetime
+from decimal import Decimal
+from uuid import uuid4
 
 from app.models.asset import Asset
-from app.models.enums import MarketType, Timeframe
+from app.models.enums import (
+    EconomicEventCategory,
+    EconomicEventImportance,
+    EconomicEventStatus,
+    MarketType,
+    Timeframe,
+)
 from app.services.ai_orchestrator.types import AnalysisContext, CandidateSetup
 from app.services.analysis_confidence.types import (
     AlignmentEvidence,
@@ -15,7 +23,7 @@ from app.services.analysis_confidence.types import (
     ConflictSeverity,
     NormalizedDirection,
 )
-from app.services.economic_calendar.types import EconomicCalendarResult
+from app.services.economic_calendar.types import EconomicCalendarResult, EconomicEventEvidence
 from app.services.news_sentiment.types import NewsSentimentResult
 from app.services.risk_management.types import RiskEvaluation
 from app.services.strategy.types import StrategyBreakdown, StrategyEvaluation, StrategyName
@@ -123,6 +131,7 @@ def make_analysis_context(
     strategy: StrategyEvaluation | None = None,
     candidate_setup: CandidateSetup | None = None,
     risk: RiskEvaluation | None = None,
+    focus_event: EconomicEventEvidence | None = None,
 ) -> AnalysisContext:
     return AnalysisContext(
         asset=make_asset(),
@@ -133,4 +142,37 @@ def make_analysis_context(
         strategy=strategy if strategy is not None else make_strategy_evaluation(),
         candidate_setup=candidate_setup,
         risk=risk,
+        focus_event=focus_event,
+    )
+
+
+def make_economic_event_evidence(
+    *,
+    event_name: str = "Core CPI m/m",
+    currency: str = "USD",
+    importance: EconomicEventImportance = EconomicEventImportance.CRITICAL,
+    release_time: datetime | None = None,
+    forecast: Decimal | None = Decimal("0.40000000"),
+    previous: Decimal | None = Decimal("0.10000000"),
+    actual: Decimal | None = None,
+    unit: str | None = "%",
+) -> EconomicEventEvidence:
+    """ADR-152 - the release a calendar row points at."""
+    return EconomicEventEvidence(
+        id=uuid4(),
+        country="US",
+        currency=currency,
+        event_name=event_name,
+        category=EconomicEventCategory.INFLATION,
+        importance=importance,
+        forecast=forecast,
+        previous=previous,
+        actual=actual,
+        surprise=None,
+        unit=unit,
+        status=EconomicEventStatus.SCHEDULED,
+        source="forexfactory",
+        release_time=release_time if release_time is not None else _CALCULATED_AT,
+        risk_window=False,
+        market_bias=None,
     )

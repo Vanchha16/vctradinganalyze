@@ -16,7 +16,7 @@ from decimal import Decimal
 from app.models.asset import Asset
 from app.models.enums import Recommendation, Timeframe
 from app.services.analysis_confidence.types import ConfidenceResult
-from app.services.economic_calendar.types import EconomicCalendarResult
+from app.services.economic_calendar.types import EconomicCalendarResult, EconomicEventEvidence
 from app.services.news_sentiment.types import NewsSentimentResult
 from app.services.risk_management.types import RiskEvaluation, TradeDirection
 from app.services.strategy.types import StrategyEvaluation, StrategyName
@@ -48,6 +48,13 @@ class AnalysisContext:
     strategy: StrategyEvaluation
     candidate_setup: CandidateSetup | None
     risk: RiskEvaluation | None
+    #: ADR-152 - one economic release the caller asked about, from the
+    #: calendar's "Should I buy or sell XAUUSD?" button. Deliberately
+    #: NOT merged into `economic.events`: that list feeds the
+    #: deterministic risk/confidence scoring, and clicking a calendar row
+    #: must not change the recommendation, only what the narration talks
+    #: about (ADR-079).
+    focus_event: EconomicEventEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)

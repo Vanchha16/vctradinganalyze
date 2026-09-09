@@ -9,8 +9,15 @@ export function useGenerateAiAnalysis() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ symbol, timeframe }: { symbol: string; timeframe: Timeframe }) =>
-      generateAiAnalysis(symbol, timeframe),
+    mutationFn: ({
+      symbol,
+      timeframe,
+      eventId,
+    }: {
+      symbol: string;
+      timeframe: Timeframe;
+      eventId?: string;
+    }) => generateAiAnalysis(symbol, timeframe, eventId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["ai-analysis-history"] });
     },

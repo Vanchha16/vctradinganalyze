@@ -3,7 +3,11 @@ skeleton with concrete content). The model is given the already-decided
 recommendation/confidence/risk/prices and asked only to narrate them -
 never to decide anything (ADR-078/079)."""
 
+from datetime import datetime
+from decimal import Decimal
+
 from app.models.enums import Recommendation
+from app.utils.time import as_aware_utc
 
 from .types import AnalysisContext
 
@@ -105,6 +109,14 @@ def build_user_prompt(
     else:
         lines.append("Economic events: none in the current window.")
 
+    #: ADR-152. Placed last and labelled explicitly, because without it
+    #: the model answers about whatever happens to be inside the +24h
+    #: window - a click on Thursday's CPI produced a paragraph about
+    #: today's bond auction. Full details, not just a name: the release's
+    #: forecast against its previous is the whole reason it matters.
+    if context.focus_event is not None:
+        lines.append(f"The reader is asking specifically about: {_focus_event_line(context)}")
+
     if context.strategy.primary_strategy is not None:
         lines.append(f"Strategy fit: {context.strategy.primary_strategy.value}")
     else:
@@ -115,6 +127,58 @@ def build_user_prompt(
     lines.append(f"Risks: {'; '.join(risks) or 'none'}")
 
     return "\n".join(lines)
+
+
+def _focus_event_line(context: AnalysisContext) -> str:
+    """One dense line describing the release the reader clicked."""
+    event = context.focus_event
+    assert event is not None  # guarded by the caller
+
+    parts = [
+        f"{event.event_name} ({event.currency}, {event.importance.value} importance)",
+        f"releases {_relative_release(event.release_time, context.economic.calculated_at)}",
+    ]
+    if event.forecast is not None:
+        forecast = f"forecast {_number(event.forecast)}{event.unit or ''}"
+        if event.previous is not None:
+            forecast += f" vs {_number(event.previous)}{event.unit or ''} previous"
+        parts.append(forecast)
+    elif event.previous is not None:
+        parts.append(f"previous {_number(event.previous)}{event.unit or ''}")
+    if event.actual is not None:
+        parts.append(f"actual {_number(event.actual)}{event.unit or ''}")
+
+    return (
+        f"{', '.join(parts)}. Address this release directly in the `economic` section, "
+        "including whether it lands near enough to matter for this setup. Do not change "
+        "the recommendation because of it."
+    )
+
+
+def _relative_release(release_time: datetime, now: datetime) -> str:
+    """"in 2 days" reads better than a timestamp, and tells the model the
+    one thing it must judge: whether the release is close enough to
+    matter for a setup on this timeframe."""
+    # SQLite hands back naive datetimes where Postgres gives aware ones,
+    # so normalise both - the same guard `risk_window.is_in_risk_window`
+    # already applies to this exact column.
+    delta = as_aware_utc(release_time) - as_aware_utc(now)
+    hours = delta.total_seconds() / 3600
+    if hours < -24:
+        return f"{abs(round(hours / 24))} days ago"
+    if hours < -1:
+        return f"{abs(round(hours))} hours ago"
+    if hours < 1:
+        return "within the hour"
+    if hours < 24:
+        return f"in {round(hours)} hours"
+    return f"in {round(hours / 24)} days"
+
+
+def _number(value: Decimal) -> str:
+    """Trims the Numeric(20, 8) trailing zeros so "0.4%" does not reach
+    the model as "0.40000000" and burn tokens on noise."""
+    return f"{value.normalize():f}"
 
 
 def max_tokens() -> int:

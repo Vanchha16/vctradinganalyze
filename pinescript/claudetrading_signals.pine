@@ -1,0 +1,254 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ClaudeTrading AI
+
+// Companion to claudetrading_technical_score.pine - plots BUY/SELL labels
+// with ATR-based stop-loss/take-profit directly on the price chart.
+//
+// IMPORTANT - this is a self-contained technical-only heuristic, NOT a port
+// of the backend's real signal logic. The backend's actual BUY/SELL + TP/SL
+// (backend/app/services/signal_engine.py) comes from AIOrchestratorEngine -
+// an LLM call reasoning over Technical Analysis + SMC + Confidence + News
+// Sentiment + Economic Calendar together (docs/07, docs/50). That reasoning
+// step has no portable formula, so this script does NOT reproduce it and
+// its output will not match what the backend/Telegram bot sends. It reuses
+// only the technical score from claudetrading_technical_score.pine and adds
+// a plain ATR stop/target on top, entirely independent of the AI reasoning
+// path. Two separate scripts because Pine can't mix a 0-100 oscillator
+// scale and real price levels in a single pane.
+
+//@version=6
+indicator("ClaudeTrading Signals (Technical-Only Heuristic)", shorttitle = "CT Signals", overlay = true)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+grp_thresh = "Signal Thresholds"
+bullishThreshold = input.float(70.0, "Bullish score threshold", minval = 0.0, maxval = 100.0, group = grp_thresh)
+bearishThreshold = input.float(30.0, "Bearish score threshold", minval = 0.0, maxval = 100.0, group = grp_thresh)
+
+grp_risk = "Risk (ATR-based, technical-only heuristic - not the backend's AI-derived levels)"
+atrLength = input.int(14, "ATR length", minval = 1, group = grp_risk)
+slAtrMultiple = input.float(1.5, "Stop-loss = entry ± this many ATR", minval = 0.1, group = grp_risk)
+tpAtrMultiple = input.float(3.0, "Take-profit = entry ± this many ATR", minval = 0.1, group = grp_risk)
+
+grp_sr = "Support / Resistance"
+swingLookback = input.int(5, "Swing high/low lookback (bars each side)", minval = 1, group = grp_sr)
+
+grp_lines = "Display"
+extendBars = input.int(30, "Extend SL/TP lines this many bars right", minval = 1, group = grp_lines)
+
+// ---------------------------------------------------------------------------
+// Raw indicators (duplicated from claudetrading_technical_score.pine -
+// Pine has no local-file import, so the two scripts must be kept in sync by
+// hand if the scoring formula ever changes)
+// ---------------------------------------------------------------------------
+ema20  = ta.ema(close, 20)
+ema50  = ta.ema(close, 50)
+ema100 = ta.ema(close, 100)
+ema200 = ta.ema(close, 200)
+
+[_diplus, _diminus, adx] = ta.dmi(14, 14)
+[macdLine, macdSignal, _macdHist] = ta.macd(close, 12, 26, 9)
+rsi14 = ta.rsi(close, 14)
+vwapVal = ta.vwap(hlc3)
+
+bbBasis = ta.sma(close, 20)
+bbDev = 2.0 * ta.stdev(close, 20)
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+
+atr = ta.atr(atrLength)
+
+// ---------------------------------------------------------------------------
+// Trend evidence
+// ---------------------------------------------------------------------------
+pair1Bullish = ema20 > ema50
+pair2Bullish = ema50 > ema100
+pair3Bullish = ema100 > ema200
+bullishPairs = (pair1Bullish ? 1 : 0) + (pair2Bullish ? 1 : 0) + (pair3Bullish ? 1 : 0)
+alignmentScore = bullishPairs / 3.0
+
+bullishAlignment = bullishPairs == 3
+bearishAlignment = bullishPairs == 0
+trendDirection = bullishAlignment ? 1 : bearishAlignment ? -1 : 0
+
+strengthWeight = na(adx) ? 0.0 : adx >= 40.0 ? 1.0 : adx >= 25.0 ? 0.8 : adx >= 20.0 ? 0.4 : 0.0
+
+TREND_ALIGNMENT_MAX = 25.0
+TREND_STRENGTH_MAX = 15.0
+trendScore = (alignmentScore * TREND_ALIGNMENT_MAX) + (strengthWeight * TREND_STRENGTH_MAX)
+
+// ---------------------------------------------------------------------------
+// Momentum evidence
+// ---------------------------------------------------------------------------
+macdBullishNa = na(macdLine) or na(macdSignal)
+macdBullish = macdBullishNa ? bool(na) : macdLine > macdSignal
+
+MOMENTUM_MAX = 15.0
+momentumScore = trendDirection == 0 or macdBullishNa ? MOMENTUM_MAX * 0.5 :
+     ((trendDirection == 1) == macdBullish ? MOMENTUM_MAX : 0.0)
+
+// ---------------------------------------------------------------------------
+// Oscillator evidence
+// ---------------------------------------------------------------------------
+RSI_OVERBOUGHT = 70.0
+RSI_OVERSOLD = 30.0
+rsiOverbought = rsi14 >= RSI_OVERBOUGHT
+rsiOversold = rsi14 <= RSI_OVERSOLD
+rsiHealthy = not rsiOverbought and not rsiOversold
+
+OSCILLATOR_MAX = 15.0
+oscillatorScore = rsiHealthy ? OSCILLATOR_MAX : OSCILLATOR_MAX * 0.5
+
+// ---------------------------------------------------------------------------
+// Volume evidence
+// ---------------------------------------------------------------------------
+priceAboveVwapNa = na(vwapVal)
+priceAboveVwap = priceAboveVwapNa ? bool(na) : close > vwapVal
+
+VOLUME_MAX = 15.0
+volumeScore = trendDirection == 0 or priceAboveVwapNa ? VOLUME_MAX * 0.5 :
+     ((trendDirection == 1) == priceAboveVwap ? VOLUME_MAX : 0.0)
+
+// ---------------------------------------------------------------------------
+// Volatility evidence
+// ---------------------------------------------------------------------------
+SQUEEZE_BAND_WIDTH_RATIO = 0.02
+bandWidthRatio = bbBasis != 0 ? (bbUpper - bbLower) / bbBasis : na
+
+volatilityWeight = na(bandWidthRatio) ? 0.5 :
+     bandWidthRatio < SQUEEZE_BAND_WIDTH_RATIO ? 0.5 :
+     close >= bbUpper ? 0.5 :
+     close <= bbLower ? 0.5 : 1.0
+
+VOLATILITY_MAX = 10.0
+volatilityScore = volatilityWeight * VOLATILITY_MAX
+
+// ---------------------------------------------------------------------------
+// Support/Resistance evidence
+// ---------------------------------------------------------------------------
+pivotHigh = ta.pivothigh(high, swingLookback, swingLookback)
+pivotLow = ta.pivotlow(low, swingLookback, swingLookback)
+var float lastSwingHigh = na
+var float lastSwingLow = na
+if not na(pivotHigh)
+    lastSwingHigh := pivotHigh
+if not na(pivotLow)
+    lastSwingLow := pivotLow
+
+[dailyHigh, dailyLow] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_off)
+[weeklyHigh, weeklyLow] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_off)
+[monthlyHigh, monthlyLow] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead = barmerge.lookahead_off)
+
+magnitude = close > 0 ? math.floor(math.log10(close)) : 0.0
+roundStep = close > 0 ? math.pow(10, magnitude) / 20 : na
+roundLower = (not na(roundStep) and roundStep > 0) ? math.floor(close / roundStep) * roundStep : na
+roundUpper = (not na(roundLower)) ? roundLower + roundStep : na
+
+candidateResistances = array.new_float(0)
+candidateSupports = array.new_float(0)
+
+addLevel(arr, price, isResistance) =>
+    if not na(price)
+        if isResistance and price > close
+            array.push(arr, price)
+        if not isResistance and price < close
+            array.push(arr, price)
+
+addLevel(candidateResistances, dailyHigh, true)
+addLevel(candidateResistances, weeklyHigh, true)
+addLevel(candidateResistances, monthlyHigh, true)
+addLevel(candidateResistances, lastSwingHigh, true)
+addLevel(candidateResistances, roundUpper, true)
+addLevel(candidateResistances, roundLower, true)
+
+addLevel(candidateSupports, dailyLow, false)
+addLevel(candidateSupports, weeklyLow, false)
+addLevel(candidateSupports, monthlyLow, false)
+addLevel(candidateSupports, lastSwingLow, false)
+addLevel(candidateSupports, roundUpper, false)
+addLevel(candidateSupports, roundLower, false)
+
+hasResistance = array.size(candidateResistances) > 0
+hasSupport = array.size(candidateSupports) > 0
+
+SUPPORT_RESISTANCE_MAX = 5.0
+supportResistanceScore = hasSupport and hasResistance ? SUPPORT_RESISTANCE_MAX :
+     (hasSupport or hasResistance) ? SUPPORT_RESISTANCE_MAX * 0.5 : 0.0
+
+// ---------------------------------------------------------------------------
+// Conflicts + total score
+// ---------------------------------------------------------------------------
+CONFLICT_PENALTY = 10.0
+trendWeak = trendDirection != 0 and strengthWeight == 0.0
+
+conflictCount = 0
+conflictCount += (trendDirection == 1 and macdBullish == false) ? 1 : 0
+conflictCount += (trendDirection == -1 and macdBullish == true) ? 1 : 0
+conflictCount += trendWeak ? 1 : 0
+conflictCount += (trendDirection == 1 and rsiOverbought) ? 1 : 0
+conflictCount += (trendDirection == -1 and rsiOversold) ? 1 : 0
+conflictCount += (trendDirection == 1 and priceAboveVwap == false) ? 1 : 0
+conflictCount += (trendDirection == -1 and priceAboveVwap == true) ? 1 : 0
+
+penaltyScore = -CONFLICT_PENALTY * conflictCount
+
+rawScore = trendScore + momentumScore + oscillatorScore + volumeScore + volatilityScore + supportResistanceScore + penaltyScore
+totalScore = math.max(0.0, math.min(100.0, rawScore))
+
+// Hidden - exists only so the alertcondition messages below can reference
+// {{plot("Technical Score")}}; the visible score line lives in the
+// companion claudetrading_technical_score.pine, not here.
+plot(totalScore, title = "Technical Score", display = display.none)
+
+// ---------------------------------------------------------------------------
+// Signal + heuristic TP/SL (ATR-based - see file header, not the backend's
+// AI-derived levels)
+// ---------------------------------------------------------------------------
+bullishSignal = ta.crossover(totalScore, bullishThreshold) and trendDirection == 1
+bearishSignal = ta.crossunder(totalScore, bearishThreshold) and trendDirection == -1
+
+var line entryLine = na
+var line slLine = na
+var line tpLine = na
+var label signalLabel = na
+
+// Inlined once per direction (not a shared function) - Pine v6 doesn't
+// allow a user-defined function to reassign global `var` variables
+// (CE10088), so the line/label redraw logic can't live in a helper.
+if bullishSignal or bearishSignal
+    isBuy = bullishSignal
+    entryPrice = close
+    slPrice = isBuy ? entryPrice - slAtrMultiple * atr : entryPrice + slAtrMultiple * atr
+    tpPrice = isBuy ? entryPrice + tpAtrMultiple * atr : entryPrice - tpAtrMultiple * atr
+
+    line.delete(entryLine)
+    line.delete(slLine)
+    line.delete(tpLine)
+    label.delete(signalLabel)
+
+    entryLine := line.new(bar_index, entryPrice, bar_index + extendBars, entryPrice, color = color.new(color.gray, 40), style = line.style_dashed)
+    slLine := line.new(bar_index, slPrice, bar_index + extendBars, slPrice, color = color.new(color.red, 20), style = line.style_solid, width = 2)
+    tpLine := line.new(bar_index, tpPrice, bar_index + extendBars, tpPrice, color = color.new(color.teal, 20), style = line.style_solid, width = 2)
+
+    labelText = (isBuy ? "BUY" : "SELL") + "\nEntry: " + str.tostring(entryPrice, format.mintick) +
+         "\nSL: " + str.tostring(slPrice, format.mintick) +
+         "\nTP: " + str.tostring(tpPrice, format.mintick) +
+         "\nScore: " + str.tostring(totalScore, "#.0")
+    signalLabel := label.new(
+         bar_index, slPrice,
+         labelText,
+         style = isBuy ? label.style_label_up : label.style_label_down,
+         color = isBuy ? color.new(color.teal, 0) : color.new(color.red, 0),
+         textcolor = color.white,
+         yloc = yloc.price,
+         size = size.small)
+
+// ---------------------------------------------------------------------------
+// Alerts
+// ---------------------------------------------------------------------------
+alertcondition(bullishSignal, title = "CT Heuristic BUY",
+     message = '{"symbol":"{{ticker}}","exchange":"{{exchange}}","timeframe":"{{interval}}","direction":"buy","score":{{plot("Technical Score")}},"entry":{{close}},"time":"{{timenow}}","source":"technical_heuristic_only"}')
+
+alertcondition(bearishSignal, title = "CT Heuristic SELL",
+     message = '{"symbol":"{{ticker}}","exchange":"{{exchange}}","timeframe":"{{interval}}","direction":"sell","score":{{plot("Technical Score")}},"entry":{{close}},"time":"{{timenow}}","source":"technical_heuristic_only"}')

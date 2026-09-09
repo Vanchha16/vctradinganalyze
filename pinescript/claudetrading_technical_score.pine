@@ -1,0 +1,233 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ClaudeTrading AI
+
+// Ports backend/app/services/technical_analysis/scoring_engine.py (ADR-028) to
+// Pine Script so a TradingView chart can display the same 100-point technical
+// score the backend computes, and fire native TradingView alerts on it.
+//
+// This is a *parallel* re-implementation, not a live connection to the
+// backend - the two will only agree when fed the same OHLCV history and can
+// drift if either side's formula changes. There is currently no webhook
+// receiver in the backend for these alerts (see pinescript/README.md); wire
+// one up before pointing a real TradingView alert's webhook URL at anything.
+
+//@version=6
+indicator("ClaudeTrading Technical Score", shorttitle = "CT Score", overlay = false, precision = 1)
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+grp_thresh = "Signal Thresholds"
+bullishThreshold = input.float(70.0, "Bullish alert threshold", minval = 0.0, maxval = 100.0, group = grp_thresh)
+bearishThreshold = input.float(30.0, "Bearish alert threshold", minval = 0.0, maxval = 100.0, group = grp_thresh)
+
+grp_sr = "Support / Resistance"
+swingLookback = input.int(5, "Swing high/low lookback (bars each side)", minval = 1, group = grp_sr)
+
+// ---------------------------------------------------------------------------
+// Raw indicators (mirrors app/indicators/* defaults used by the backend)
+// ---------------------------------------------------------------------------
+ema20  = ta.ema(close, 20)
+ema50  = ta.ema(close, 50)
+ema100 = ta.ema(close, 100)
+ema200 = ta.ema(close, 200)
+
+// Only ADX (not +DI/-DI) feeds the score, matching trend_analyzer.py.
+[_diplus, _diminus, adx] = ta.dmi(14, 14)
+
+// Only the MACD/signal cross feeds the score, matching momentum_analyzer.py
+// (the raw Momentum(10) indicator is fetched by the backend but never
+// scored either - see scoring_engine.py).
+[macdLine, macdSignal, _macdHist] = ta.macd(close, 12, 26, 9)
+
+// Only RSI feeds the score, matching oscillator_analyzer.py (Stoch RSI/CCI
+// are computed by the backend but likewise never scored).
+rsi14 = ta.rsi(close, 14)
+
+vwapVal = ta.vwap(hlc3)
+
+bbBasis = ta.sma(close, 20)
+bbDev = 2.0 * ta.stdev(close, 20)
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+
+// ---------------------------------------------------------------------------
+// Trend evidence (moving_average_analyzer.py + trend_analyzer.py)
+// ---------------------------------------------------------------------------
+pair1Bullish = ema20 > ema50
+pair2Bullish = ema50 > ema100
+pair3Bullish = ema100 > ema200
+bullishPairs = (pair1Bullish ? 1 : 0) + (pair2Bullish ? 1 : 0) + (pair3Bullish ? 1 : 0)
+totalPairs = 3
+alignmentScore = bullishPairs / 3.0
+
+bullishAlignment = bullishPairs == 3
+bearishAlignment = bullishPairs == 0
+
+// TrendDirection: 1 = bullish, -1 = bearish, 0 = sideways
+trendDirection = bullishAlignment ? 1 : bearishAlignment ? -1 : 0
+
+// TrendStrengthLevel weight: very_strong=1.0, strong=0.8, moderate=0.4, weak=0.0
+strengthWeight = na(adx) ? 0.0 : adx >= 40.0 ? 1.0 : adx >= 25.0 ? 0.8 : adx >= 20.0 ? 0.4 : 0.0
+
+TREND_ALIGNMENT_MAX = 25.0
+TREND_STRENGTH_MAX = 15.0
+trendScore = (alignmentScore * TREND_ALIGNMENT_MAX) + (strengthWeight * TREND_STRENGTH_MAX)
+
+// ---------------------------------------------------------------------------
+// Momentum evidence (momentum_analyzer.py)
+// ---------------------------------------------------------------------------
+// `bool(na)` (not a bare `na`) - Pine can't infer a bare na's type against
+// a bool branch in a ternary ("simple na" vs. "series bool" mismatch).
+macdBullishNa = na(macdLine) or na(macdSignal)
+macdBullish = macdBullishNa ? bool(na) : macdLine > macdSignal
+
+MOMENTUM_MAX = 15.0
+momentumScore = trendDirection == 0 or macdBullishNa ? MOMENTUM_MAX * 0.5 :
+     ((trendDirection == 1) == macdBullish ? MOMENTUM_MAX : 0.0)
+
+// ---------------------------------------------------------------------------
+// Oscillator evidence (oscillator_analyzer.py) - only RSI feeds the score,
+// Stoch RSI/CCI are computed above for display/alerts only, same as backend.
+// ---------------------------------------------------------------------------
+RSI_OVERBOUGHT = 70.0
+RSI_OVERSOLD = 30.0
+rsiOverbought = rsi14 >= RSI_OVERBOUGHT
+rsiOversold = rsi14 <= RSI_OVERSOLD
+rsiHealthy = not rsiOverbought and not rsiOversold
+
+OSCILLATOR_MAX = 15.0
+oscillatorScore = rsiHealthy ? OSCILLATOR_MAX : OSCILLATOR_MAX * 0.5
+
+// ---------------------------------------------------------------------------
+// Volume evidence (volume_analyzer.py)
+// ---------------------------------------------------------------------------
+priceAboveVwapNa = na(vwapVal)
+priceAboveVwap = priceAboveVwapNa ? bool(na) : close > vwapVal
+
+VOLUME_MAX = 15.0
+volumeScore = trendDirection == 0 or priceAboveVwapNa ? VOLUME_MAX * 0.5 :
+     ((trendDirection == 1) == priceAboveVwap ? VOLUME_MAX : 0.0)
+
+// ---------------------------------------------------------------------------
+// Volatility evidence (volatility_analyzer.py)
+// ---------------------------------------------------------------------------
+SQUEEZE_BAND_WIDTH_RATIO = 0.02
+bandWidthRatio = bbBasis != 0 ? (bbUpper - bbLower) / bbBasis : na
+
+// VolatilityState weight: stable=1.0, squeeze/near_upper/near_lower/unavailable=0.5
+volatilityWeight = na(bandWidthRatio) ? 0.5 :
+     bandWidthRatio < SQUEEZE_BAND_WIDTH_RATIO ? 0.5 :
+     close >= bbUpper ? 0.5 :
+     close <= bbLower ? 0.5 : 1.0
+
+VOLATILITY_MAX = 10.0
+volatilityScore = volatilityWeight * VOLATILITY_MAX
+
+// ---------------------------------------------------------------------------
+// Support/Resistance evidence (support_resistance_analyzer.py) - simplified:
+// swing highs/lows (fractal pivots) + prior D/W/M range + a magnitude-aware
+// round-number level, same four sources the backend combines, minus its
+// exact 5-level ranking (only nearest support/resistance affects the score).
+// ---------------------------------------------------------------------------
+pivotHigh = ta.pivothigh(high, swingLookback, swingLookback)
+pivotLow = ta.pivotlow(low, swingLookback, swingLookback)
+var float lastSwingHigh = na
+var float lastSwingLow = na
+if not na(pivotHigh)
+    lastSwingHigh := pivotHigh
+if not na(pivotLow)
+    lastSwingLow := pivotLow
+
+[dailyHigh, dailyLow] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_off)
+[weeklyHigh, weeklyLow] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_off)
+[monthlyHigh, monthlyLow] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead = barmerge.lookahead_off)
+
+// ADR-029 magnitude-aware round-number step, e.g. ~0.005 for a ~1.10 forex
+// pair, ~100 for a ~2400 gold/index price.
+magnitude = close > 0 ? math.floor(math.log10(close)) : 0.0
+roundStep = close > 0 ? math.pow(10, magnitude) / 20 : na
+roundLower = (not na(roundStep) and roundStep > 0) ? math.floor(close / roundStep) * roundStep : na
+roundUpper = (not na(roundLower)) ? roundLower + roundStep : na
+
+candidateResistances = array.new_float(0)
+candidateSupports = array.new_float(0)
+
+addLevel(arr, price, isResistance) =>
+    if not na(price)
+        if isResistance and price > close
+            array.push(arr, price)
+        if not isResistance and price < close
+            array.push(arr, price)
+
+addLevel(candidateResistances, dailyHigh, true)
+addLevel(candidateResistances, weeklyHigh, true)
+addLevel(candidateResistances, monthlyHigh, true)
+addLevel(candidateResistances, lastSwingHigh, true)
+addLevel(candidateResistances, roundUpper, true)
+addLevel(candidateResistances, roundLower, true)
+
+addLevel(candidateSupports, dailyLow, false)
+addLevel(candidateSupports, weeklyLow, false)
+addLevel(candidateSupports, monthlyLow, false)
+addLevel(candidateSupports, lastSwingLow, false)
+addLevel(candidateSupports, roundUpper, false)
+addLevel(candidateSupports, roundLower, false)
+
+// Only presence (not the actual nearest price) feeds the score, matching
+// support_resistance_analyzer.py's scoring input.
+hasResistance = array.size(candidateResistances) > 0
+hasSupport = array.size(candidateSupports) > 0
+
+SUPPORT_RESISTANCE_MAX = 5.0
+supportResistanceScore = hasSupport and hasResistance ? SUPPORT_RESISTANCE_MAX :
+     (hasSupport or hasResistance) ? SUPPORT_RESISTANCE_MAX * 0.5 : 0.0
+
+// ---------------------------------------------------------------------------
+// Conflict detection (conflict_analyzer.py) - same six checks, -10 each
+// ---------------------------------------------------------------------------
+CONFLICT_PENALTY = 10.0
+trendWeak = trendDirection != 0 and strengthWeight == 0.0
+
+conflictCount = 0
+conflictCount += (trendDirection == 1 and macdBullish == false) ? 1 : 0
+conflictCount += (trendDirection == -1 and macdBullish == true) ? 1 : 0
+conflictCount += trendWeak ? 1 : 0
+conflictCount += (trendDirection == 1 and rsiOverbought) ? 1 : 0
+conflictCount += (trendDirection == -1 and rsiOversold) ? 1 : 0
+conflictCount += (trendDirection == 1 and priceAboveVwap == false) ? 1 : 0
+conflictCount += (trendDirection == -1 and priceAboveVwap == true) ? 1 : 0
+
+penaltyScore = -CONFLICT_PENALTY * conflictCount
+
+// ---------------------------------------------------------------------------
+// Total (ScoreBreakdown.total - clamped to [0, 100])
+// ---------------------------------------------------------------------------
+rawScore = trendScore + momentumScore + oscillatorScore + volumeScore + volatilityScore + supportResistanceScore + penaltyScore
+totalScore = math.max(0.0, math.min(100.0, rawScore))
+
+// ---------------------------------------------------------------------------
+// Plots
+// ---------------------------------------------------------------------------
+scoreColor = totalScore >= bullishThreshold ? color.new(color.teal, 0) :
+     totalScore <= bearishThreshold ? color.new(color.red, 0) : color.new(color.gray, 0)
+
+plot(totalScore, title = "Technical Score", color = scoreColor, linewidth = 2)
+hline(bullishThreshold, title = "Bullish Threshold", color = color.new(color.teal, 60), linestyle = hline.style_dashed)
+hline(bearishThreshold, title = "Bearish Threshold", color = color.new(color.red, 60), linestyle = hline.style_dashed)
+hline(50, title = "Midline", color = color.new(color.gray, 80), linestyle = hline.style_dotted)
+
+bgcolor(trendDirection == 1 ? color.new(color.teal, 92) : trendDirection == -1 ? color.new(color.red, 92) : color(na))
+
+// ---------------------------------------------------------------------------
+// Alerts - native TradingView alertcondition()s; a future backend webhook
+// receiver can subscribe to these once one exists (see pinescript/README.md)
+// ---------------------------------------------------------------------------
+bullishSignal = ta.crossover(totalScore, bullishThreshold) and trendDirection == 1
+bearishSignal = ta.crossunder(totalScore, bearishThreshold) and trendDirection == -1
+
+alertcondition(bullishSignal, title = "ClaudeTrading Bullish Signal",
+     message = '{"symbol":"{{ticker}}","exchange":"{{exchange}}","timeframe":"{{interval}}","direction":"bullish","score":{{plot("Technical Score")}},"price":{{close}},"time":"{{timenow}}"}')
+
+alertcondition(bearishSignal, title = "ClaudeTrading Bearish Signal",
+     message = '{"symbol":"{{ticker}}","exchange":"{{exchange}}","timeframe":"{{interval}}","direction":"bearish","score":{{plot("Technical Score")}},"price":{{close}},"time":"{{timenow}}"}')

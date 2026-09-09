@@ -3,7 +3,6 @@ import type {
   Asset,
   AssetListResponse,
   CandleListResponse,
-  IndicatorListResponse,
   LatestCandleResponse,
   MarketType,
   Timeframe,
@@ -44,17 +43,5 @@ export function getCandles(
   return apiGet<CandleListResponse>(`/market/${symbol}/candles`, {
     timeframe,
     limit: (params?.limit ?? 300).toString(),
-  });
-}
-
-export function getIndicators(
-  symbol: string,
-  timeframe: Timeframe,
-  params?: { indicator?: string; limit?: number },
-): Promise<IndicatorListResponse> {
-  return apiGet<IndicatorListResponse>(`/market/${symbol}/indicators`, {
-    timeframe,
-    indicator: params?.indicator,
-    limit: (params?.limit ?? 20).toString(),
   });
 }

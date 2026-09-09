@@ -3,7 +3,6 @@ import type {
   EconomicEventCategory,
   EconomicEventImportance,
   EconomicEventListResponse,
-  EconomicEventResponse,
   EconomicEventUpcomingResponse,
 } from "@/services/types";
 
@@ -25,10 +24,6 @@ export function listCalendarEvents(params: {
     category: params.category,
     range: params.range,
   });
-}
-
-export function getCalendarEvent(id: string): Promise<EconomicEventResponse> {
-  return apiGet<EconomicEventResponse>(`/calendar/${id}`);
 }
 
 export function getUpcomingEvents(): Promise<EconomicEventUpcomingResponse> {

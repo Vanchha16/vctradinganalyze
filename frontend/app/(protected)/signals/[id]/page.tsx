@@ -21,6 +21,7 @@ import { useSignal } from "@/hooks/use-signal";
 import { useSmcAnalysis } from "@/hooks/use-smc-analysis";
 import { recommendationVariant, signalStatusVariant } from "@/lib/badge-variants";
 import { formatEnumLabel, formatPrice } from "@/lib/format";
+import { buildSignalLifecycleMarkers } from "@/lib/signal-lifecycle-markers";
 import { buildSmcOverlays, DEFAULT_SMC_OVERLAYS, type SmcOverlayKind } from "@/lib/smc-overlays";
 import type { Timeframe } from "@/services/types";
 
@@ -62,6 +63,10 @@ export default function SignalDetailPage() {
 
   const signal = signalQuery.data;
   const smcOverlays = buildSmcOverlays(smcQuery.data, enabledOverlays);
+  //: This signal's own lifecycle (created / entry confirmed / closed),
+  //: shown alongside the market-structure markers rather than replacing
+  //: them - they answer different questions.
+  const lifecycleMarkers = buildSignalLifecycleMarkers(signal, candlesQuery.data?.items ?? []);
   const chartOverlays = [
     { price: Number(signal.entry_price), color: "#3B82F6", title: "Entry" },
     { price: Number(signal.stop_loss), color: "#EF4444", title: "Stop Loss" },
@@ -142,7 +147,7 @@ export default function SignalDetailPage() {
                   candles={candlesQuery.data?.items ?? []}
                   overlays={chartOverlays}
                   zones={smcOverlays.zones}
-                  markers={smcOverlays.markers}
+                  markers={[...smcOverlays.markers, ...lifecycleMarkers]}
                   timeframe={effectiveTimeframe}
                   onTimeframeChange={setChartTimeframe}
                   isLoading={candlesQuery.isLoading}

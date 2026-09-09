@@ -572,6 +572,9 @@ export interface SignalResponse {
   take_profit: string;
   risk_reward: number;
   confidence: number;
+  /** ADR-147: which strategy the analysis ranked first. null when every
+   *  strategy was rejected, or for signals created before this existed. */
+  strategy: string | null;
   status: SignalStatus;
   triggered_at: string | null;
   closed_at: string | null;

@@ -197,7 +197,12 @@ def test_render_risk_management_handles_missing_values() -> None:
 
     text = render_risk_management(signal, analysis)
 
-    assert text.count("Not Available") == 2
+    # Asserts *which* fields degrade, not just how many - a bare count
+    # silently accepts the wrong field going missing, and broke when
+    # ADR-147 added a third degradable field (Strategy).
+    assert "📌 Recommended Position : Not Available" in text
+    assert "⚠️ Max Drawdown Risk : Not Available" in text
+    assert "🧭 Strategy : Not Available" in text
 
 
 def test_render_timestamp_format() -> None:
@@ -298,3 +303,17 @@ def test_compose_signal_triggered_message_matches_expected_layout() -> None:
     assert "🛑 Stop Loss : 64112\\.13" in text
     assert "💰 Take Profit : 63249\\.24" in text
     assert text.rstrip().endswith("09:00 UTC")
+
+
+def test_render_risk_management_shows_the_strategy_that_analysed_the_signal() -> None:
+    """ADR-147: a delivered signal states how it was analysed. The stored
+    value is the raw `StrategyName` (`"smc"`, `"trend_following"`); the
+    message renders it human-readably."""
+    asset = _make_asset()
+    analysis = _make_analysis(asset_id=asset.id)
+    signal = _make_signal(analysis_id=analysis.id, asset_id=asset.id)
+    signal.strategy = "trend_following"
+
+    text = render_risk_management(signal, analysis)
+
+    assert "🧭 Strategy : Trend Following" in text

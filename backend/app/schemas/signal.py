@@ -25,6 +25,7 @@ class SignalResponse(BaseModel):
                 "take_profit": 1.18150,
                 "risk_reward": 1.45,
                 "confidence": 87.0,
+                "strategy": "smc",
                 "status": "active",
                 "triggered_at": None,
                 "closed_at": None,
@@ -44,6 +45,10 @@ class SignalResponse(BaseModel):
     take_profit: Decimal
     risk_reward: float
     confidence: float
+    #: ADR-147 - which strategy the analysis ranked first.
+    #: `None` when every strategy was rejected, or for signals
+    #: created before this was recorded.
+    strategy: str | None = None
     status: SignalStatus
     triggered_at: datetime | None
     closed_at: datetime | None

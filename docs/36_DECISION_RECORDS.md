@@ -8492,6 +8492,80 @@ allow a proper HMAC signature over the body.
 
 ---
 
+# ADR-147
+
+Title
+
+Record and Display Which Strategy Produced Each Signal
+
+Status
+
+Accepted
+
+Context
+
+Operator request: a delivered signal should say which strategy was used
+to analyse it. The immediate motivation is BBMA (docs/61) - once a
+seventh strategy exists, a reader needs to know whether a given call
+came from it or from one of the six that already exist.
+
+`StrategyEngine` (Phase 5D, ADR-069..076) has ranked a `primary_strategy`
+for every analysis since it was built - one of `trend_following`, `smc`,
+`breakout`, `pullback`, `mean_reversion`, `scalping`. `ContextBuilder`
+computes it, `AIOrchestratorEngine` reads the surrounding context, and
+then the value is **discarded**: it is not on `AIAnalysisResult`, not on
+`signals`, not in the API, not in the UI, and not in Telegram. The
+information a signal needs in order to explain itself was already being
+produced and thrown away.
+
+Decision
+
+Carry `primary_strategy` through to the signal and surface it.
+
+- `AIAnalysisResult.strategy: StrategyName | None` - populated from
+  `context.strategy.primary_strategy`, which the engine already holds.
+- `signals.strategy` (migration `e91b47c26fa8`), a nullable
+  **`String(32)`, deliberately not a native enum**: BBMA is planned as a
+  seventh strategy and adding one must not require an enum migration.
+  This diverges from the `SignalType`/`SignalStatus` precedent on the
+  same table, and does so on purpose.
+- Surfaced in `SignalResponse`, on the signal card as an outline badge,
+  on the signal detail panel, and in the Telegram message as
+  `🧭 Strategy`.
+
+`None` is preserved end to end rather than defaulted. An analysis where
+every strategy was rejected genuinely has none, and every signal created
+before this migration has none. Telegram renders "Not Available",
+matching how Recommended Position and Max Drawdown Risk already report
+absence; the card omits the badge entirely (a badge reading "Unknown" on
+every historical signal is noise, not information); the detail panel says
+"Not recorded".
+
+Consequences
+
+A signal now states its own provenance. When BBMA lands as a seventh
+`StrategyName`, the note reads "Bbma" with no further work in the
+delivery path.
+
+Scope is deliberately the **signal**, not the analysis: the operator
+asked about delivered signals. `ai_analysis` still does not store the
+strategy, so the AI Analysis page cannot show it - a reasonable
+follow-up, not done here.
+
+`test_render_risk_management_handles_missing_values` asserted a bare
+count of "Not Available" occurrences and broke when a third degradable
+field appeared. Rewritten to assert *which* fields degrade - the count
+form silently accepted the wrong field going missing, so this was a weak
+test independent of this change.
+
+Future Review
+
+Revisit if `ai_analysis` should carry the strategy too, and if the
+`String` vs native-enum split on `signals` becomes confusing once the
+strategy set stops changing.
+
+---
+
 # Review Policy
 
 Review ADRs:

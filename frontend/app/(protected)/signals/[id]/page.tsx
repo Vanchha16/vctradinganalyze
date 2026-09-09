@@ -116,6 +116,14 @@ export default function SignalDetailPage() {
                     <dt className="text-xs text-muted-foreground">Take Profit</dt>
                     <dd className="font-medium tabular-nums">{formatPrice(signal.take_profit)}</dd>
                   </div>
+                  {/* ADR-147: how this signal was analysed. Spans both
+                      columns so the label is not mistaken for a price. */}
+                  <div className="col-span-2">
+                    <dt className="text-xs text-muted-foreground">Strategy</dt>
+                    <dd className="font-medium">
+                      {signal.strategy ? formatEnumLabel(signal.strategy) : "Not recorded"}
+                    </dd>
+                  </div>
                 </dl>
                 <div className="border-t border-border pt-4">
                   <SignalStatusTimeline signal={signal} />

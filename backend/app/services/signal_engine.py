@@ -97,6 +97,10 @@ class SignalEngine:
             take_profit=result.take_profit,
             risk_reward=rr.risk_reward,
             confidence=result.confidence_score,
+            #: ADR-147: the "how was this analysed" note. `None` when
+            #: every strategy was rejected - recorded honestly rather
+            #: than defaulted to a plausible-looking label.
+            strategy=result.strategy.value if result.strategy is not None else None,
         )
         self._signal_repository.create(signal)
         self._signal_repository.commit()

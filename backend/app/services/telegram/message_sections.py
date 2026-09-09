@@ -110,6 +110,15 @@ def render_risk_management(signal: Signal, analysis: AIAnalysis) -> str:
         _field("⚖️ Expected RR", f"1 : {signal.risk_reward:.1f}"),
         "",
         _field("⚠️ Max Drawdown Risk", risk_label),
+        "",
+        # ADR-147 - the operator asked that a delivered signal say which
+        # strategy analysed it. "Not Available" when every strategy was
+        # rejected, matching how position/risk already report absence,
+        # rather than inventing a plausible-looking label.
+        _field(
+            "🧭 Strategy",
+            _title_case(signal.strategy) if signal.strategy else "Not Available",
+        ),
     ]
     return "\n".join(lines)
 

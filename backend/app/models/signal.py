@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, Uuid
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Uuid
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,6 +41,13 @@ class Signal(Base, UUIDMixin, CreatedAtMixin):
     take_profit: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
     risk_reward: Mapped[float] = mapped_column(nullable=False)
     confidence: Mapped[float] = mapped_column(nullable=False)
+    #: ADR-147: which `StrategyName` ranked first for the analysis behind
+    #: this signal - the "note" telling a reader *how* it was analysed.
+    #: Nullable: signals created before this column existed have no
+    #: recorded strategy, and an analysis where every strategy was
+    #: rejected legitimately has none. A `String`, not a native enum, so
+    #: adding a strategy (BBMA is planned) needs no enum migration.
+    strategy: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[SignalStatus] = mapped_column(
         SAEnum(SignalStatus, name="signal_status", native_enum=True),
         default=SignalStatus.ACTIVE,

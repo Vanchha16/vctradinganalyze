@@ -19,7 +19,7 @@ from app.services.analysis_confidence.types import ConfidenceResult
 from app.services.economic_calendar.types import EconomicCalendarResult
 from app.services.news_sentiment.types import NewsSentimentResult
 from app.services.risk_management.types import RiskEvaluation, TradeDirection
-from app.services.strategy.types import StrategyEvaluation
+from app.services.strategy.types import StrategyEvaluation, StrategyName
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +85,11 @@ class AIAnalysisResult:
     prompt_version: str
     ai_available: bool
     calculated_at: datetime
+    #: Which strategy `StrategyEngine` ranked first for this analysis
+    #: (ADR-147). `None` when every strategy was rejected - the analysis
+    #: still exists, it simply has no strategy behind it, and a signal
+    #: derived from it must say so rather than guessing a label.
+    strategy: StrategyName | None = None
     supporting_evidence: list[str] = field(default_factory=list)
     conflicting_evidence: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)

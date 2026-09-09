@@ -55,6 +55,14 @@ export function SignalCard({ signal }: { signal: SignalResponse }) {
                   P/L {formatPrice(signal.profit_loss)}
                 </Badge>
               ) : null}
+              {/* ADR-147: which strategy analysed this signal. Rendered as
+                  an outline badge so it reads as provenance rather than as
+                  another status. Omitted entirely when null - an absent
+                  strategy is real information, but a badge saying
+                  "Unknown" would be noise on every older signal. */}
+              {signal.strategy ? (
+                <Badge variant="outline">{formatEnumLabel(signal.strategy)}</Badge>
+              ) : null}
             </div>
             <ConfidenceGauge score={signal.confidence} size="sm" />
           </div>

@@ -97,6 +97,10 @@ class AIOrchestratorEngine:
             id=row.id,
             symbol=asset.symbol,
             timeframe=timeframe,
+            #: ADR-147: carried through so a persisted `Signal` can record
+            #: which strategy produced it. Already computed by
+            #: `ContextBuilder`; it was simply discarded here before.
+            strategy=context.strategy.primary_strategy,
             recommendation=decision.recommendation,
             confidence_score=context.confidence.overall_confidence,
             confidence_level=confidence_level,

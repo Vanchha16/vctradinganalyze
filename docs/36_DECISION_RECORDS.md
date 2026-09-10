@@ -9395,6 +9395,93 @@ If a fifth integration is added, `credential_resolver.FALLBACK_SETTING`
 is the single place that changes. If multiple operators ever need to
 rotate keys, revisit the super-admin restriction.
 
+# ADR-157
+
+Title
+
+Give the Narration Model the Evidence, Not Just the Conclusions
+
+Status
+
+Accepted
+
+Context
+
+Asked which model the project runs, the answer was `gpt-4o-mini` -
+confirmed by 123 production analyses. The follow-up question was whether
+a better model would help. Measured against the actual prompt, the answer
+was no: the limit was not the model, it was what the model could see.
+
+The prompt sent each engine's **verdict** and almost none of its
+**evidence**:
+
+- Technical: `trend`, `strength`, `score`. All fifteen computed
+  indicators discarded, along with the support and resistance *prices*.
+- SMC: `structure` and `score`. Every order block, fair value gap,
+  liquidity zone and the premium/discount position discarded.
+- Economic events: name and currency only - not importance, not timing,
+  not forecast against previous.
+- News: headlines only - not the sentiment or importance the scorer had
+  already assigned.
+- Strategy: the winner's name, without its score or the runner-up.
+
+A model given `trend=bullish, score=78` can only restate it. Every field
+above was already computed for the deterministic scoring and thrown away
+one function before the prompt.
+
+Decision
+
+Pass the evidence. Prices, indicator values, event details, sentiment
+labels, strategy scores.
+
+**SMC zones are ranked by distance from the candidate entry**, not by the
+engine's own order. XAUUSD routinely carries 40+ order blocks; the first
+three were ~300 points from price - true, and useless to a reader
+deciding on a setup here and now. The count is stated alongside ("41
+total") so "nearest" is not mistaken for "all".
+
+**A curated indicator subset, not the whole dict.** RSI, CCI and ATR
+frame overbought/oversold and how much room a stop has; OBV and stddev
+say little to a reader and would spend tokens saying it.
+
+Nothing about the decision path changed. The recommendation, confidence,
+prices and risk verdict are still computed before the model is called
+(ADR-078/079); this only widens what the narration may draw on, and the
+system prompt's "never reference facts not given to you" rule is what
+makes more context safe rather than riskier.
+
+Consequences
+
+The narration can cite levels and values instead of paraphrasing labels -
+"resistance at 4423 with RSI 63" rather than "the trend is bullish".
+
+Prompt size roughly doubles. At ~20 cents a month for all analyses
+(ADR-149) the cost is immaterial, and `input_tokens` now records the real
+figure, so the change is measurable rather than assumed - the token
+recording built two days earlier is what makes this checkable.
+
+**A caching defect was found and fixed on the way.**
+`credential_resolver` (ADR-156) cached the *resolved value*, which pinned
+the `.env` fallback as well as the stored key - so an environment change
+could be served stale for up to 30 seconds, and monkeypatched settings
+leaked between tests. It now caches the **database lookup** (the stored
+value, or `None` for "no row") and reads the environment live on every
+call. Thirteen tests failed on the full suite while passing individually,
+which is what surfaced it.
+
+**BBMA is still not described to the model.** `StrategyEvaluation`
+carries the winning strategy's name and score but not the BBMA setup
+itself - its Extreme, marked level, or retest. So the model can say
+"strategy fit: bbma (91/100)" and nothing about why. Fixing that means
+plumbing `BBMAResult` through `StrategyEvaluation`, which is a wider
+change than this one.
+
+Future Review
+
+Compare `input_tokens` and narration quality against the pre-change
+baseline once a few days have accumulated. If the answer is still thin,
+BBMA detail is the next gap - not a bigger model.
+
 ---
 
 # Review Policy

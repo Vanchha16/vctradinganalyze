@@ -105,7 +105,10 @@ def make_technical_result(
         ),
         support_levels=[],
         resistance_levels=[],
-        indicators={},
+        # A realistic subset, not an empty dict: `prompt_builder` reads
+        # these (ADR-157), and a fixture with none would let a regression
+        # that drops them from the prompt pass unnoticed.
+        indicators={"rsi_14": 58.2, "cci_20": 74.5, "atr_14": 0.0021},
         warnings=warnings or [],
         calculated_at=calculated_at,
         trend_evidence=TrendEvidence(

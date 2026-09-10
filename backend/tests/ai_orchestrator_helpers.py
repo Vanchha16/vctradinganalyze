@@ -94,8 +94,12 @@ def make_news_result(*, symbol: str = "EURUSD") -> NewsSentimentResult:
     )
 
 
-def make_economic_result() -> EconomicCalendarResult:
-    return EconomicCalendarResult(calculated_at=_CALCULATED_AT, events=[], warnings=[])
+def make_economic_result(
+    *, events: list[EconomicEventEvidence] | None = None
+) -> EconomicCalendarResult:
+    return EconomicCalendarResult(
+        calculated_at=_CALCULATED_AT, events=events or [], warnings=[]
+    )
 
 
 def make_strategy_evaluation(
@@ -132,13 +136,14 @@ def make_analysis_context(
     candidate_setup: CandidateSetup | None = None,
     risk: RiskEvaluation | None = None,
     focus_event: EconomicEventEvidence | None = None,
+    economic_events: list[EconomicEventEvidence] | None = None,
 ) -> AnalysisContext:
     return AnalysisContext(
         asset=make_asset(),
         timeframe=Timeframe.H1,
         confidence=confidence if confidence is not None else make_confidence_result(),
         news=make_news_result(),
-        economic=make_economic_result(),
+        economic=make_economic_result(events=economic_events),
         strategy=strategy if strategy is not None else make_strategy_evaluation(),
         candidate_setup=candidate_setup,
         risk=risk,

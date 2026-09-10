@@ -133,3 +133,79 @@ def test_a_released_event_reports_its_actual() -> None:
     prompt = prompt_builder.build_user_prompt(context, Recommendation.SELL, [], [], [], [])
 
     assert "actual 0.6%" in prompt
+
+
+def test_technical_section_carries_the_numbers_not_just_the_verdict() -> None:
+    """ADR-157 - "trend=bullish, score=78" gives the model nothing to
+    write about beyond restating it. Fifteen indicators were already
+    computed and thrown away before the prompt."""
+    context = make_analysis_context()
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.BUY, [], [], [], [])
+
+    assert "ADX" in prompt
+    assert "DI+" in prompt
+    assert "RSI(14)" in prompt
+    assert "EMA alignment" in prompt
+
+
+def test_support_and_resistance_reach_the_model_as_prices() -> None:
+    """A reader wants the level, not the fact that one exists."""
+    context = make_analysis_context()
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.BUY, [], [], [], [])
+
+    assert "Support " in prompt
+    assert "Resistance " in prompt
+
+
+def test_economic_events_carry_importance_and_timing() -> None:
+    """"CPI m/m (USD)" and "CPI m/m (USD, critical), in 2 hours, forecast
+    0.4% vs 0.1% prev" support very different sentences, and every one of
+    those fields was already on the object."""
+    event = make_economic_event_evidence(
+        event_name="CPI m/m", release_time=datetime(2026, 1, 1, 2, tzinfo=UTC)
+    )
+    context = make_analysis_context(economic_events=[event])
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.BUY, [], [], [], [])
+
+    assert "CPI m/m (USD, critical)" in prompt
+    assert "forecast 0.4% vs 0.1% prev" in prompt
+
+
+def test_strategy_line_reports_the_score_and_the_runner_up() -> None:
+    """A narrow win means conditions suit two approaches - worth saying
+    rather than presenting the winner as obvious."""
+    context = make_analysis_context()
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.BUY, [], [], [], [])
+
+    assert "/100)" in prompt
+
+
+def test_smc_zones_are_ranked_by_distance_from_price() -> None:
+    """XAUUSD routinely has 40+ order blocks. Listing the engine's first
+    three put zones 300 points away in front of the model - technically
+    true, useless for a setup here and now."""
+    from decimal import Decimal
+
+    from app.services.ai_orchestrator.prompt_builder import _nearest
+
+    zones = [(Decimal("100"), Decimal("110")), (Decimal("400"), Decimal("410"))]
+
+    ordered = _nearest(zones, Decimal("405"), lambda z: z)
+
+    assert ordered[0] == (Decimal("400"), Decimal("410"))
+
+
+def test_zone_ranking_without_a_reference_price_keeps_engine_order() -> None:
+    """No price means no basis for "nearest" - keep the engine's order
+    rather than inventing one."""
+    from decimal import Decimal
+
+    from app.services.ai_orchestrator.prompt_builder import _nearest
+
+    zones = [(Decimal("100"), Decimal("110")), (Decimal("400"), Decimal("410"))]
+
+    assert _nearest(zones, None, lambda z: z) == zones

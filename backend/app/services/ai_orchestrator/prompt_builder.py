@@ -3,10 +3,14 @@ skeleton with concrete content). The model is given the already-decided
 recommendation/confidence/risk/prices and asked only to narrate them -
 never to decide anything (ADR-078/079)."""
 
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
 
 from app.models.enums import Recommendation
+from app.services.economic_calendar.types import EconomicEventEvidence
+from app.services.smc.types import SMCAnalysisResult
+from app.services.technical_analysis.types import TechnicalAnalysisResult
 from app.utils.time import as_aware_utc
 
 from .types import AnalysisContext
@@ -84,28 +88,34 @@ def build_user_prompt(
         )
 
     if context.confidence.technical is not None:
-        lines.append(
-            f"Technical Analysis: trend={context.confidence.technical.trend.value}, "
-            f"strength={context.confidence.technical.strength.value}, "
-            f"score={context.confidence.technical.technical_score:.0f}"
-        )
+        lines.extend(_technical_lines(context.confidence.technical))
     if context.confidence.smc is not None:
-        lines.append(
-            f"SMC: structure={context.confidence.smc.market_structure.state.value}, "
-            f"score={context.confidence.smc.smc_score:.0f}"
+        reference_price = (
+            context.candidate_setup.entry_price if context.candidate_setup is not None else None
         )
+        lines.extend(_smc_lines(context.confidence.smc, reference_price))
     if context.confidence.market_regime is not None:
         lines.append(f"Market Regime: {context.confidence.market_regime.regime.value}")
 
     if context.news.articles:
-        headlines = "; ".join(a.headline for a in context.news.articles[:5])
-        lines.append(f"Recent news headlines: {headlines}")
+        lines.append("Recent news:")
+        # Sentiment and importance, not just the headline: a bearish
+        # headline the scorer rated low-importance means something
+        # different from a high-importance one, and the model cannot
+        # tell them apart from the text alone.
+        lines.extend(
+            f"  - [{a.sentiment.value}/{a.importance.value}] {a.headline}"
+            for a in context.news.articles[:5]
+        )
     else:
         lines.append("Recent news: none available.")
 
     if context.economic.events:
-        events = "; ".join(f"{e.event_name} ({e.currency})" for e in context.economic.events[:5])
-        lines.append(f"Upcoming/recent economic events: {events}")
+        lines.append("Economic events in window:")
+        lines.extend(
+            f"  - {_event_summary(e, context.economic.calculated_at)}"
+            for e in context.economic.events[:6]
+        )
     else:
         lines.append("Economic events: none in the current window.")
 
@@ -118,7 +128,16 @@ def build_user_prompt(
         lines.append(f"The reader is asking specifically about: {_focus_event_line(context)}")
 
     if context.strategy.primary_strategy is not None:
-        lines.append(f"Strategy fit: {context.strategy.primary_strategy.value}")
+        strategy_line = f"Strategy fit: {context.strategy.primary_strategy.value}"
+        if context.strategy.strategy_score is not None:
+            strategy_line += f" (score {context.strategy.strategy_score:.0f}/100)"
+        # The runner-up matters: a narrow win means conditions suit two
+        # approaches, which is worth saying out loud rather than
+        # presenting the winner as obvious.
+        if context.strategy.alternative_strategies:
+            runner_up = context.strategy.alternative_strategies[0]
+            strategy_line += f"; next best {runner_up.strategy.value} ({runner_up.score:.0f})"
+        lines.append(strategy_line)
     else:
         lines.append("Strategy fit: no viable strategy for current conditions.")
 
@@ -127,6 +146,124 @@ def build_user_prompt(
     lines.append(f"Risks: {'; '.join(risks) or 'none'}")
 
     return "\n".join(lines)
+
+
+def _technical_lines(technical: TechnicalAnalysisResult) -> list[str]:
+    """Conclusions AND the numbers behind them (ADR-157).
+
+    `trend=bullish, score=78` gives the model nothing to write about
+    beyond restating it. RSI, ADX and the actual support/resistance
+    prices are what let it say *why*, and they were already computed -
+    fifteen indicators, discarded before the prompt.
+    """
+    lines = [
+        f"Technical: trend={technical.trend.value}, strength={technical.strength.value}, "
+        f"score={technical.technical_score:.0f}/100"
+    ]
+
+    evidence = technical.trend_evidence
+    moving_average = evidence.moving_average
+    if moving_average.bullish_alignment:
+        alignment = "bullish"
+    elif moving_average.bearish_alignment:
+        alignment = "bearish"
+    else:
+        alignment = "mixed"
+    lines.append(
+        f"  ADX {evidence.adx:.0f} (DI+ {evidence.di_plus:.0f} / DI- {evidence.di_minus:.0f}); "
+        f"EMA alignment {alignment}"
+    )
+
+    # A curated few, not the whole dict: OBV and stddev say little to a
+    # reader, while RSI and ATR frame overbought/oversold and how much
+    # room the stop actually has.
+    for key, label in (("rsi_14", "RSI(14)"), ("cci_20", "CCI(20)"), ("atr_14", "ATR(14)")):
+        value = technical.indicators.get(key)
+        if value is not None:
+            lines.append(f"  {label} {value:.2f}")
+
+    if technical.support is not None:
+        lines.append(f"  Support {technical.support.price} ({technical.support.source})")
+    if technical.resistance is not None:
+        lines.append(f"  Resistance {technical.resistance.price} ({technical.resistance.source})")
+
+    return lines
+
+
+def _smc_lines(smc: SMCAnalysisResult, reference_price: Decimal | None) -> list[str]:
+    """SMC's zones carry prices; the state alone does not.
+
+    Previously only `structure` and `score` reached the model, so it
+    could never mention where an order block actually sits - the one
+    thing an SMC reader wants.
+
+    Zones are ranked by distance from the current price, not by the
+    engine's own order. XAUUSD routinely has 40+ order blocks and the
+    first three were 300 points away - technically true, useless to a
+    reader deciding on a setup here and now.
+    """
+    lines = [
+        f"SMC: structure={smc.market_structure.state.value}, score={smc.smc_score:.0f}/100"
+    ]
+
+    premium = smc.premium_discount
+    lines.append(
+        f"  Price is in {premium.position.value} of the "
+        f"{premium.range_low}-{premium.range_high} range"
+    )
+
+    nearest_blocks = _nearest(
+        smc.order_blocks, reference_price, lambda b: (b.zone_low, b.zone_high)
+    )
+    if nearest_blocks:
+        blocks = "; ".join(
+            f"{b.direction.value} {b.zone_low}-{b.zone_high}" for b in nearest_blocks[:3]
+        )
+        lines.append(f"  Nearest order blocks ({len(smc.order_blocks)} total): {blocks}")
+
+    nearest_gaps = _nearest(smc.fair_value_gaps, reference_price, lambda g: (g.gap_low, g.gap_high))
+    if nearest_gaps:
+        gaps = "; ".join(
+            f"{g.direction.value} {g.gap_low}-{g.gap_high}" for g in nearest_gaps[:2]
+        )
+        lines.append(f"  Nearest fair value gaps: {gaps}")
+    if smc.liquidity_sweeps:
+        lines.append(f"  Liquidity sweeps detected: {len(smc.liquidity_sweeps)}")
+
+    return lines
+
+
+def _nearest[T](
+    zones: list[T], reference_price: Decimal | None, bounds: Callable[[T], tuple[Decimal, Decimal]]
+) -> list[T]:
+    """Closest-first by midpoint distance. With no reference price the
+    engine's own order is kept rather than inventing one."""
+    if reference_price is None:
+        return list(zones)
+    def distance(zone: T) -> Decimal:
+        low, high = bounds(zone)
+        return abs(((low + high) / 2) - reference_price)
+
+    return sorted(zones, key=distance)
+
+
+def _event_summary(event: EconomicEventEvidence, now: datetime) -> str:
+    """Importance and timing, not just a name.
+
+    "CPI m/m (USD)" and "CPI m/m (USD, critical, in 2 hours, forecast
+    0.4% vs 0.1% previous)" support very different sentences, and every
+    one of those fields was already on the object.
+    """
+    parts = [f"{event.event_name} ({event.currency}, {event.importance.value})"]
+    parts.append(_relative_release(event.release_time, now))
+    if event.forecast is not None:
+        figure = f"forecast {_number(event.forecast)}{event.unit or ''}"
+        if event.previous is not None:
+            figure += f" vs {_number(event.previous)}{event.unit or ''} prev"
+        parts.append(figure)
+    if event.actual is not None:
+        parts.append(f"actual {_number(event.actual)}{event.unit or ''}")
+    return ", ".join(parts)
 
 
 def _focus_event_line(context: AnalysisContext) -> str:

@@ -47,7 +47,12 @@ FALLBACK_SETTING: dict[CredentialName, str] = {
 #: enough that "I pasted a new key" feels immediate.
 _CACHE_TTL_SECONDS = 30.0
 
-_cache: dict[str, tuple[str, float]] = {}
+#: Caches the DATABASE LOOKUP - the stored value, or `None` for "no row" -
+#: never the resolved answer. Caching the answer would pin the `.env`
+#: fallback too, so a change to the environment could be served stale for
+#: up to the TTL. It also leaked between tests that monkeypatch a settings
+#: key, which is how the distinction was found.
+_cache: dict[str, tuple[str | None, float]] = {}
 
 
 def resolve(name: CredentialName) -> str:
@@ -58,6 +63,8 @@ def resolve(name: CredentialName) -> str:
     an empty key as "provider not configured" and that behaviour is
     unchanged.
     """
+    # Read live on every call: it is a dict lookup, and caching it is what
+    # made a monkeypatched or edited environment value go stale.
     env_value = str(getattr(settings, FALLBACK_SETTING[name], "") or "")
 
     if not credential_crypto.is_configured():
@@ -65,12 +72,12 @@ def resolve(name: CredentialName) -> str:
 
     cached = _cache.get(name)
     if cached is not None and cached[1] > time.monotonic():
-        return cached[0]
+        stored = cached[0]
+    else:
+        stored = _read_stored(name)
+        _cache[name] = (stored, time.monotonic() + _CACHE_TTL_SECONDS)
 
-    stored = _read_stored(name)
-    value = stored if stored is not None else env_value
-    _cache[name] = (value, time.monotonic() + _CACHE_TTL_SECONDS)
-    return value
+    return stored if stored is not None else env_value
 
 
 def invalidate(name: CredentialName | None = None) -> None:

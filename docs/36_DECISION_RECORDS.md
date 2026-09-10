@@ -9482,6 +9482,89 @@ Compare `input_tokens` and narration quality against the pre-change
 baseline once a few days have accumulated. If the answer is still thin,
 BBMA detail is the next gap - not a bigger model.
 
+# ADR-158
+
+Title
+
+Carry the BBMA Result Through StrategyEvaluation So the Narration Can
+Explain It
+
+Status
+
+Accepted
+
+Context
+
+ADR-157 widened the prompt so the model could see each engine's
+evidence. One gap was left open and named there: BBMA.
+
+`StrategyEngine.evaluate()` already ran BBMA detection and put the result
+in its evidence bundle, but `StrategyEvaluation` - the only thing that
+leaves the engine - carried the winning strategy's *name* and *score* and
+nothing else. So the prompt said:
+
+    Strategy fit: bbma (score 91/100)
+
+and the model could write "the strategy is bbma", which tells a reader
+nothing they cannot see on the card. Meanwhile BBMA was frequently the
+*winning* strategy, so the one thing actually driving the signal was the
+one thing the narration could not describe.
+
+Decision
+
+`StrategyEvaluation` gains `bbma: BBMAResult | None`, populated from the
+value the engine already computed. Nothing new is calculated; a result
+that was being discarded now survives one more hop.
+
+The prompt renders the completed setup - kind, direction, entry, stop,
+target, marked level - plus the detector's own notes and the supporting
+conditions.
+
+**BBMA's vocabulary is kept verbatim**: "Extreme", "marked level", "CS
+Reverse", "CS Retest", "trend major", "CSK", "ZZL". An operator reading
+BBMA expects those words, and translating them into generic language
+would make the narration harder to check against a chart, not easier.
+
+**Included whether or not BBMA won.** A detected Extreme is context for
+the `technical` section even when another strategy scored higher, and
+suppressing it would make the narration inconsistent between runs for no
+reason a reader could see.
+
+`None` (no candles) renders no BBMA section at all, rather than an empty
+heading - "BBMA:" with nothing under it implies the detector ran and
+found nothing, which is a different claim from having no data.
+
+Consequences
+
+The model can now explain a BBMA signal: which setup fired, where the
+level sits, whether the reverse and retest were confirmed, and whether
+the trend major agrees. Against live data the section renders as
+
+    BBMA:
+      extreme buy setup - entry 4333.75 (MA5/10 band), stop 4323.45,
+      target 4339.28; marked level 4326.96
+      Extreme buy at bar 146
+      CS Reverse at bar 146 (body level 4326.95620)
+      CS Retest at bar 154
+      Trend major buy; Bollinger Bands expanding; CSK, ZZL present
+
+This is additive and changes no decision: `bbma` defaults to `None`, and
+ranking, scoring and the recommendation are untouched. ADR-070 still
+holds - nothing here is persisted.
+
+The prompt grows by roughly 60-80 tokens when a setup exists. At the
+measured spend (ADR-149) that is immaterial.
+
+**BBMA remains uncalibrated** (ADR-148): six invented constants, no
+backtesting, no win rate. Explaining a setup clearly is not evidence the
+setup is correct, and a fluent BBMA paragraph should not be read as
+validation.
+
+Future Review
+
+Multi-timeframe BBMA (TF1/TF2/TF3) and the MHV and Re-entry setups are
+still undetected, so the narration can only ever describe an Extreme.
+
 ---
 
 # Review Policy

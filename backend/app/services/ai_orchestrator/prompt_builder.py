@@ -8,6 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.models.enums import Recommendation
+from app.services.bbma.types import BBMAResult
 from app.services.economic_calendar.types import EconomicEventEvidence
 from app.services.smc.types import SMCAnalysisResult
 from app.services.technical_analysis.types import TechnicalAnalysisResult
@@ -141,11 +142,74 @@ def build_user_prompt(
     else:
         lines.append("Strategy fit: no viable strategy for current conditions.")
 
+    # ADR-158. BBMA is frequently the winning strategy, and until now the
+    # model was told its name and score and nothing else - it could not
+    # say why BBMA fired. Included whether or not BBMA won: a detected
+    # setup is context even when another strategy scored higher.
+    lines.extend(_bbma_lines(context.strategy.bbma))
+
     lines.append(f"Supporting evidence: {'; '.join(supporting_evidence) or 'none'}")
     lines.append(f"Conflicting evidence: {'; '.join(conflicting_evidence) or 'none'}")
     lines.append(f"Risks: {'; '.join(risks) or 'none'}")
 
     return "\n".join(lines)
+
+
+def _bbma_lines(bbma: BBMAResult | None) -> list[str]:
+    """BBMA structure in BBMA's own vocabulary (docs/61, ADR-158).
+
+    The terms matter: an operator who reads BBMA expects "Extreme",
+    "marked level", "retest", "trend major". Translating them into
+    generic language would make the narration harder to check against a
+    chart, not easier.
+    """
+    if bbma is None:
+        return []
+
+    setup = bbma.latest
+    conditions = bbma.conditions
+    if setup is None and conditions is None:
+        return []
+
+    lines = ["BBMA:"]
+
+    if setup is not None:
+        detail = (
+            f"  {setup.kind.value} {setup.direction.value} setup - "
+            f"entry {setup.entry_price:.2f} (MA5/10 band), "
+            f"stop {setup.stop_loss:.2f}, target {setup.take_profit:.2f}"
+        )
+        if setup.marked_level is not None:
+            detail += f"; marked level {setup.marked_level:.2f}"
+        lines.append(detail)
+        # The notes are what record that a reverse candle and a retest
+        # were actually found - the difference between a real setup and
+        # a shape that merely resembles one.
+        lines.extend(f"  {note}" for note in setup.notes[:3])
+    else:
+        lines.append("  No completed setup - structure only.")
+
+    if conditions is not None:
+        flags = [
+            name
+            for name, present in (
+                ("CSM", conditions.csm),
+                ("CSAK", conditions.csak),
+                ("CSK", conditions.csk),
+                ("ZZL", conditions.zzl),
+            )
+            if present
+        ]
+        trend_major = (
+            conditions.trend_major.value if conditions.trend_major is not None else "unknown"
+        )
+        band = "expanding" if conditions.bb_expanding else "flat"
+        condition_line = f"  Trend major {trend_major}; Bollinger Bands {band}"
+        if flags:
+            condition_line += f"; {', '.join(flags)} present"
+        lines.append(condition_line)
+
+    return lines
 
 
 def _technical_lines(technical: TechnicalAnalysisResult) -> list[str]:

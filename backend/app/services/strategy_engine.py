@@ -117,6 +117,7 @@ class StrategyEngine:
             alternative_strategies=alternatives,
             rejected_strategies=rejected,
             warnings=warnings,
+            bbma=bbma_result,
         )
 
     def _bbma_for(self, asset: Asset, timeframe: Timeframe) -> BBMAResult | None:

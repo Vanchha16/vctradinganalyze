@@ -2,7 +2,13 @@
 Strategy Engine unit tests - reuses `analysis_confidence_helpers`'s
 `make_technical_result`/`make_smc_result`/`make_regime_result`."""
 
-from app.services.bbma.types import BBMAResult
+from app.services.bbma.types import (
+    BBMAConditions,
+    BBMADirection,
+    BBMAResult,
+    BBMASetup,
+    BBMASetupKind,
+)
 from app.services.market_regime.types import MarketRegimeResult
 from app.services.risk_management.economic_filter import EconomicFilterResult
 from app.services.risk_management.types import LiquidityClassification, MarketSession
@@ -48,4 +54,45 @@ def make_evidence_bundle(
         session=session,
         liquidity=liquidity,
         economic=economic,
+    )
+
+
+def make_bbma_result(
+    *,
+    kind: BBMASetupKind = BBMASetupKind.EXTREME,
+    direction: BBMADirection = BBMADirection.BUY,
+    with_setup: bool = True,
+) -> BBMAResult:
+    """A completed Extreme with its reverse and retest (ADR-158).
+
+    Notes are included because they are what record that a CS Reverse and
+    CS Retest were actually found - the difference between a real setup
+    and a shape that resembles one.
+    """
+    setup = (
+        BBMASetup(
+            kind=kind,
+            direction=direction,
+            entry_index=146,
+            marked_level=4326.95,
+            entry_price=4333.75,
+            stop_loss=4323.45,
+            take_profit=4339.28,
+            notes=["Extreme buy at bar 146", "CS Reverse at bar 146", "CS Retest at bar 154"],
+        )
+        if with_setup
+        else None
+    )
+    return BBMAResult(
+        symbol="XAUUSD",
+        timeframe="h1",
+        setups=[setup] if setup is not None else [],
+        conditions=BBMAConditions(
+            csm=False,
+            csak=False,
+            csk=True,
+            zzl=True,
+            trend_major=direction,
+            bb_expanding=True,
+        ),
     )

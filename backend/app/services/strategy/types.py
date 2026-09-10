@@ -146,3 +146,10 @@ class StrategyEvaluation:
     alternative_strategies: list[RankedStrategy] = field(default_factory=list)
     rejected_strategies: list[RejectedStrategy] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    #: ADR-158. Carried through so the narration can explain a BBMA
+    #: signal rather than only naming it: the prompt previously received
+    #: "strategy fit: bbma (91/100)" and nothing about the Extreme, the
+    #: marked level, or the retest that produced it. Present regardless
+    #: of which strategy won - a losing BBMA read is still context for
+    #: the `technical` section. `None` when there were no candles.
+    bbma: BBMAResult | None = None

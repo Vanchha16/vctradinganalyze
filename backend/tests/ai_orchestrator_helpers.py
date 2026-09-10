@@ -103,7 +103,9 @@ def make_economic_result(
 
 
 def make_strategy_evaluation(
-    *, primary_strategy: StrategyName | None = StrategyName.TREND_FOLLOWING
+    *,
+    primary_strategy: StrategyName | None = StrategyName.TREND_FOLLOWING,
+    bbma: object | None = None,
 ) -> StrategyEvaluation:
     breakdown = (
         StrategyBreakdown(
@@ -126,6 +128,7 @@ def make_strategy_evaluation(
         alternative_strategies=[],
         rejected_strategies=[],
         warnings=[],
+        bbma=bbma,  # type: ignore[arg-type]
     )
 
 
@@ -137,6 +140,7 @@ def make_analysis_context(
     risk: RiskEvaluation | None = None,
     focus_event: EconomicEventEvidence | None = None,
     economic_events: list[EconomicEventEvidence] | None = None,
+    bbma: object | None = None,
 ) -> AnalysisContext:
     return AnalysisContext(
         asset=make_asset(),
@@ -144,7 +148,7 @@ def make_analysis_context(
         confidence=confidence if confidence is not None else make_confidence_result(),
         news=make_news_result(),
         economic=make_economic_result(events=economic_events),
-        strategy=strategy if strategy is not None else make_strategy_evaluation(),
+        strategy=strategy if strategy is not None else make_strategy_evaluation(bbma=bbma),
         candidate_setup=candidate_setup,
         risk=risk,
         focus_event=focus_event,

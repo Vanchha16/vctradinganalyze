@@ -209,3 +209,42 @@ def test_zone_ranking_without_a_reference_price_keeps_engine_order() -> None:
     zones = [(Decimal("100"), Decimal("110")), (Decimal("400"), Decimal("410"))]
 
     assert _nearest(zones, None, lambda z: z) == zones
+
+
+def test_bbma_structure_reaches_the_model() -> None:
+    """ADR-158 - BBMA frequently wins strategy selection, and the prompt
+    previously carried only its name and score. The model could say
+    "strategy fit: bbma (91/100)" and nothing about why it fired."""
+    from tests.strategy_helpers import make_bbma_result
+
+    context = make_analysis_context(bbma=make_bbma_result())
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.BUY, [], [], [], [])
+
+    assert "BBMA:" in prompt
+    assert "extreme" in prompt
+    assert "marked level" in prompt
+
+
+def test_bbma_conditions_use_bbma_vocabulary() -> None:
+    """An operator who reads BBMA expects "trend major", "CSK", "ZZL".
+    Translating those into generic language would make the narration
+    harder to check against a chart, not easier."""
+    from tests.strategy_helpers import make_bbma_result
+
+    context = make_analysis_context(bbma=make_bbma_result())
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.BUY, [], [], [], [])
+
+    assert "Trend major" in prompt
+    assert "Bollinger Bands" in prompt
+
+
+def test_no_bbma_section_when_there_is_no_bbma_data() -> None:
+    """`None` means there were no candles. An empty "BBMA:" heading would
+    imply the detector ran and found nothing, which is a different claim."""
+    context = make_analysis_context()
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.BUY, [], [], [], [])
+
+    assert "BBMA:" not in prompt

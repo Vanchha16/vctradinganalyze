@@ -184,6 +184,12 @@ class Settings(BaseSettings):
     # a substitute.
     metrics_auth_token: str = ""
 
+    # ADR-156: master key for encrypting API credentials stored in the
+    # database and edited from the admin UI. Empty = credential storage is
+    # disabled and every key falls back to its own env var below, which is
+    # the pre-ADR-156 behaviour. Generate with `Fernet.generate_key()`.
+    credential_encryption_key: str = ""
+
     # Phase 11 (EA Bot, .claude/specs/phase-11-ea-bot-exness-mt5-execution.md
     # §0.6/§0.9) - hard kill switch for real order placement. Default
     # `False` in every environment including production; only the operator

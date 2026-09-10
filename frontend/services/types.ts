@@ -740,6 +740,31 @@ export interface EconomicEventUpcomingResponse {
   items: EconomicEventResponse[];
 }
 
+// ---- Admin API Credentials (ADR-156) ----
+
+/** Note what is absent: the key itself. `hint` is the last four
+ *  characters - enough to tell two keys apart, not enough to be one. */
+export interface ApiCredentialResponse {
+  name: string;
+  description: string;
+  /** True when a usable key exists from EITHER source, so a working
+   *  integration reads as working even if the value lives in .env. */
+  is_set: boolean;
+  /** Which source is live. Without this, a key working fine from .env
+   *  would look identical to a stored one. */
+  source: "database" | "environment" | "unset";
+  hint: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export interface ApiCredentialListResponse {
+  /** False when CREDENTIAL_ENCRYPTION_KEY is unset on the server: there
+   *  is nothing to encrypt with, so editing is impossible. */
+  storage_enabled: boolean;
+  items: ApiCredentialResponse[];
+}
+
 // ---- Admin API Usage (docs/04 §Admin, ADR-144) ----
 
 export interface ApiUsageRouteResponse {

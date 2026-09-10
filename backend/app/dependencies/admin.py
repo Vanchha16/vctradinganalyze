@@ -7,6 +7,7 @@ from app.dependencies.database import get_db
 from app.dependencies.economic_calendar import get_economic_calendar_providers
 from app.dependencies.news import get_news_providers
 from app.repositories.ai_analysis_repository import AIAnalysisRepository
+from app.repositories.api_credential_repository import ApiCredentialRepository
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.broker_order_repository import BrokerOrderRepository
@@ -19,6 +20,7 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.user_session_repository import UserSessionRepository
 from app.services.admin_asset_service import AdminAssetService
 from app.services.admin_audit_log_service import AdminAuditLogService
+from app.services.admin_credential_service import AdminCredentialService
 from app.services.admin_system_service import AdminSystemService
 from app.services.admin_user_service import AdminUserService
 from app.services.economic_calendar_ingestion_pipeline import EconomicCalendarIngestionPipeline
@@ -34,6 +36,15 @@ def get_admin_user_service(db: Annotated[Session, Depends(get_db)]) -> AdminUser
         user_session_repository=UserSessionRepository(db),
         audit_log_repository=AuditLogRepository(db),
         user_service=UserService(user_repository),
+    )
+
+
+def get_admin_credential_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminCredentialService:
+    return AdminCredentialService(
+        credential_repository=ApiCredentialRepository(db),
+        audit_log_repository=AuditLogRepository(db),
     )
 
 

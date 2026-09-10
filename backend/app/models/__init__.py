@@ -1,4 +1,5 @@
 from app.models.ai_analysis import AIAnalysis
+from app.models.api_credential import ApiCredential
 from app.models.asset import Asset
 from app.models.audit_log import AuditLog
 from app.models.broker_order import BrokerOrder
@@ -40,6 +41,7 @@ from app.models.watchlist_item import WatchlistItem
 
 __all__ = [
     "AIAnalysis",
+    "ApiCredential",
     "Asset",
     "AuditLog",
     "BrokerOrder",

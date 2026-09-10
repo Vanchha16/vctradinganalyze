@@ -5,6 +5,7 @@ import {
   Calculator,
   CalendarClock,
   Coins,
+  KeyRound,
   FileClock,
   Gauge,
   LayoutDashboard,
@@ -90,6 +91,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Audit Logs", href: "/admin/audit-logs", icon: FileClock },
       { label: "System Health", href: "/admin/system-health", icon: Server },
       { label: "API Usage", href: "/admin/api-usage", icon: Terminal },
+      { label: "API Keys", href: "/admin/credentials", icon: KeyRound },
     ],
   },
 ];

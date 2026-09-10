@@ -1,6 +1,8 @@
-import { apiDelete, apiGet, apiPatch, apiPost } from "@/services/api-client";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/services/api-client";
 import type {
   AdminApiUsageResponse,
+  ApiCredentialListResponse,
+  ApiCredentialResponse,
   AdminAssetCreateRequest,
   AdminAssetUpdateRequest,
   AdminAuditLogListResponse,
@@ -116,6 +118,25 @@ export function listAdminLogs(params: ListAdminLogsParams): Promise<AdminAuditLo
  */
 export function getAdminApiUsage(): Promise<AdminApiUsageResponse> {
   return apiGet<AdminApiUsageResponse>("/admin/api-usage");
+}
+
+/** ADR-156 - API keys, editable by a super admin. No function here can
+ *  read a stored key back; the API has no such route. */
+export function listApiCredentials(): Promise<ApiCredentialListResponse> {
+  return apiGet<ApiCredentialListResponse>("/admin/credentials");
+}
+
+export function setApiCredential(
+  name: string,
+  value: string,
+): Promise<ApiCredentialResponse> {
+  return apiPut<ApiCredentialResponse>(`/admin/credentials/${name}`, { value });
+}
+
+/** Removes the stored override so the key falls back to the server's
+ *  .env value - not the same as saving an empty string. */
+export function clearApiCredential(name: string): Promise<ApiCredentialResponse> {
+  return apiDelete<ApiCredentialResponse>(`/admin/credentials/${name}`);
 }
 
 export function getAdminSystemStatus(): Promise<AdminSystemStatusResponse> {

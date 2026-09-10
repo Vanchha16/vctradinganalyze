@@ -13,6 +13,7 @@ from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
 from app.repositories.system_setting_repository import SystemSettingRepository
 from app.repositories.telegram_account_repository import TelegramAccountRepository
+from app.services import credential_resolver
 from app.services.telegram.chart_renderer import (
     format_current_price_caption,
     render_candlestick_chart,
@@ -57,7 +58,7 @@ def poll_updates_task() -> None:
     supports (docs/57 §3/§7, extended by §13's menu buttons) - a Celery
     Beat task, not a public webhook (ADR-112). Silently no-ops if
     Telegram isn't configured yet."""
-    if not settings.telegram_bot_token:
+    if not credential_resolver.resolve("telegram_bot"):
         return
 
     session = SessionLocal()

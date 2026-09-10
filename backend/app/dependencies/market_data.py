@@ -9,6 +9,7 @@ from app.dependencies.database import get_db
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.indicator_result_repository import IndicatorResultRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
+from app.services import credential_resolver
 from app.services.market_data.candle_validator import CandleValidator
 from app.services.market_data.exceptions import ProviderConfigurationError
 from app.services.market_data.providers.base import MarketDataProvider
@@ -19,13 +20,14 @@ from app.services.market_data_service import MarketDataService
 
 
 def _build_twelve_data_provider() -> MarketDataProvider:
-    if not settings.twelve_data_api_key:
+    api_key = credential_resolver.resolve("twelve_data")
+    if not api_key:
         raise ProviderConfigurationError(
             "twelve_data is configured in market_data_providers but "
             "TWELVE_DATA_API_KEY is not set (docs/40 §8)"
         )
     return TwelveDataProvider(
-        api_key=settings.twelve_data_api_key,
+        api_key=api_key,
         base_url=settings.twelve_data_base_url,
         timeout=settings.twelve_data_timeout_seconds,
     )

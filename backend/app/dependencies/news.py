@@ -10,6 +10,7 @@ from app.repositories.asset_repository import AssetRepository
 from app.repositories.news_article_repository import NewsArticleRepository
 from app.repositories.news_sentiment_repository import NewsSentimentRepository
 from app.repositories.news_source_repository import NewsSourceRepository
+from app.services import credential_resolver
 from app.services.news.providers.base import NewsProvider
 from app.services.news.providers.exceptions import NewsProviderConfigurationError
 from app.services.news.providers.mock import MockNewsProvider
@@ -20,12 +21,13 @@ from app.services.news_sentiment_engine import NewsSentimentEngine
 
 
 def _build_newsapi_provider() -> NewsProvider:
-    if not settings.news_api_key:
+    api_key = credential_resolver.resolve("news_api")
+    if not api_key:
         raise NewsProviderConfigurationError(
             "newsapi is configured in news_providers but NEWS_API_KEY is not set"
         )
     return NewsApiProvider(
-        api_key=settings.news_api_key,
+        api_key=api_key,
         base_url=settings.news_api_base_url,
         timeout=settings.news_api_timeout_seconds,
     )

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.dependencies.database import get_db
 from app.repositories.telegram_account_repository import TelegramAccountRepository
+from app.services import credential_resolver
 from app.services.telegram.providers.base import TelegramProvider
 from app.services.telegram.providers.bot_api import BotApiProvider
 from app.services.telegram.providers.exceptions import TelegramProviderConfigurationError
@@ -15,12 +16,13 @@ from app.services.telegram_service import TelegramService
 
 
 def _build_bot_api_provider() -> TelegramProvider:
-    if not settings.telegram_bot_token:
+    bot_token = credential_resolver.resolve("telegram_bot")
+    if not bot_token:
         raise TelegramProviderConfigurationError(
             "bot_api is configured in telegram_providers but TELEGRAM_BOT_TOKEN is not set"
         )
     return BotApiProvider(
-        bot_token=settings.telegram_bot_token,
+        bot_token=bot_token,
         base_url=settings.telegram_base_url,
         timeout=settings.telegram_timeout_seconds,
     )

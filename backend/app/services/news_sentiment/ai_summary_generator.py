@@ -15,6 +15,7 @@ import logging
 import httpx
 
 from app.config import settings
+from app.services import credential_resolver
 from app.services.news.providers.base import RawNewsArticle
 from app.services.news_sentiment.types import RawArticleClassification
 
@@ -44,7 +45,7 @@ class AISummaryGenerator:
         article: RawNewsArticle,
         classification: RawArticleClassification,
     ) -> str | None:
-        if not settings.openai_api_key:
+        if not credential_resolver.resolve("openai"):
             return None
 
         user_prompt = (
@@ -61,7 +62,7 @@ class AISummaryGenerator:
             with httpx.Client(
                 base_url=settings.openai_base_url,
                 timeout=settings.openai_timeout_seconds,
-                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+                headers={"Authorization": f"Bearer {credential_resolver.resolve("openai")}"},
                 transport=self._transport,
             ) as client:
                 response = client.post(

@@ -15,6 +15,7 @@ settings, same error handling, two request shapes (ADR-092)."""
 import httpx
 
 from app.config import settings
+from app.services import credential_resolver
 
 from .base import AIGenerationRequest, AIGenerationResponse
 from .exceptions import (
@@ -70,7 +71,7 @@ class OpenAIProvider:
         max_tokens: int,
         response_format: dict[str, object] | None,
     ) -> dict[str, object]:
-        if not settings.openai_api_key:
+        if not credential_resolver.resolve("openai"):
             raise AIProviderConfigurationError(
                 "openai is configured as an AI provider but OPENAI_API_KEY is not set"
             )
@@ -88,7 +89,7 @@ class OpenAIProvider:
             with httpx.Client(
                 base_url=settings.openai_base_url,
                 timeout=settings.openai_timeout_seconds,
-                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+                headers={"Authorization": f"Bearer {credential_resolver.resolve("openai")}"},
                 transport=self._transport,
             ) as client:
                 response = client.post("/chat/completions", json=payload)
@@ -124,7 +125,7 @@ class OpenAIProvider:
         return content
 
     def health_check(self) -> bool:
-        return bool(settings.openai_api_key)
+        return bool(credential_resolver.resolve("openai"))
 
 
 def _as_int(value: object) -> int | None:

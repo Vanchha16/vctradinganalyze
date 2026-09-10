@@ -9067,6 +9067,84 @@ Future Review
 If the button is extended beyond XAUUSD/H1, the dialog needs a symbol in
 its header - it currently states the pair as a constant.
 
+# ADR-154
+
+Title
+
+Remove the Admin Settings Placeholder Rather Than Build CRUD Over an
+Unread Table
+
+Status
+
+Accepted
+
+Context
+
+`/admin/settings` had been a placeholder since Phase 8D, showing "Admin
+settings not yet available - the underlying SystemSetting table already
+exists, but no admin-facing CRUD endpoint has been built on top of it."
+
+Investigating what it would take to finish it showed the premise was
+wrong. `system_settings` is a real table with a repository, but in
+production it holds **exactly one row**, and that row is not a setting:
+
+    key: telegram_last_update_id    value: 90754547
+
+That is the Telegram bot's polling cursor - internal bookkeeping written
+by the beat task so it does not re-read the same messages. It is the
+only thing that has ever used the table. Outside its own definition,
+`SystemSettingRepository` appears in exactly one file in the whole
+backend: `workers/telegram_tasks.py`.
+
+**Every real setting in this project lives in `.env`** and is read
+through `app/config/settings.py` at process start - calendar providers,
+the OpenAI model, polling intervals, quota limits, CORS, risk
+thresholds.
+
+Decision
+
+Delete the page, the nav entry, and `AdminComingSoon` (the placeholder
+component, whose only remaining consumer was this page).
+
+**Keep the table, the model, the repository and the migration.** The
+Telegram cursor depends on them; deleting them would break message
+polling. The table is not unused, it is simply not a settings store.
+
+CRUD over that table was rejected: it would write rows no code path
+consults, producing a page full of controls that look functional and
+change nothing. That is worse than an honest empty state, because it
+invites the operator to believe a change took effect.
+
+For it to be real, each setting would need its consumer changed to read
+DB-first with `.env` as fallback, and the Celery workers cache config at
+import, so they would need a refresh path or a restart before any change
+applied. That work was not justified at one active symbol with a
+one-command redeploy, and it introduces a second source of truth for
+configuration - a genuinely nasty class of bug when the database and
+`.env` disagree.
+
+Consequences
+
+The admin nav is down to seven pages that all do something. Follows the
+same reasoning as ADR-142 (Signal Statistics, Broker Orders) and ADR-143
+(AI Chat): a placeholder for a feature with no consumer is a dead end,
+not a roadmap.
+
+Telegram polling is unaffected - verified that its cursor row and code
+path are untouched.
+
+If runtime-editable configuration is ever wanted, the single setting
+worth arguing for first is the **AI model**, since that is the one an
+operator would flip back and forth while comparing narration quality
+(ADR-149). It would still need the DB-first consumer change described
+above.
+
+Future Review
+
+Revisit if the deployment story changes - a fleet, or multiple operators
+who cannot redeploy, would justify runtime config in a way one symbol on
+one box does not.
+
 ---
 
 # Review Policy

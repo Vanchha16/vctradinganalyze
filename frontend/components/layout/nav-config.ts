@@ -92,7 +92,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "System Health", href: "/admin/system-health", icon: Server },
       { label: "API Usage", href: "/admin/api-usage", icon: Terminal },
       { label: "TradingView Alerts", href: "/admin/tradingview-alerts", icon: Radio },
-      { label: "Admin Settings", href: "/admin/settings", icon: SettingsIcon },
     ],
   },
 ];

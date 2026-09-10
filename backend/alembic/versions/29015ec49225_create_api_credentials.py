@@ -8,12 +8,20 @@ ADR-156: API keys editable from the admin UI, encrypted at rest.
 
 **Hand-corrected after autogenerate.** `--autogenerate` also emitted
 `drop_constraint` for `uq_telegram_accounts_link_code` and
-`uq_telegram_accounts_user_id`. Those were removed: the constraints exist
-in production Postgres and are declared on `TelegramAccount`. The
-"difference" is an artifact of the local SQLite dev database, where an
-earlier `batch_alter_table` rebuild lost the constraint *names*. Applying
-them would have silently dropped real uniqueness guarantees - letting one
-user link two Telegram accounts, or two users share a link code.
+`uq_telegram_accounts_user_id`. Both were removed.
+
+Checked against production rather than assumed: uniqueness there is
+enforced by unique *indexes* - `ix_telegram_accounts_link_code` and
+`ix_telegram_accounts_user_id`, which is what SQLAlchemy renders for
+`unique=True, index=True` on the column. No constraint by either `uq_`
+name exists. Those names come from the local SQLite dev database, where
+an earlier `batch_alter_table` rebuild materialised the same uniqueness
+as named constraints; autogenerate diffed that against the model and
+proposed dropping them.
+
+So the failure mode was a `DROP CONSTRAINT` on something that does not
+exist - an error that aborts the migration mid-deploy - not a silent loss
+of uniqueness. Either way it had no business in this migration.
 """
 
 from collections.abc import Sequence

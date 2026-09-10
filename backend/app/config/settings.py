@@ -109,6 +109,11 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
     openai_timeout_seconds: float = 15.0
+    # ADR-160: omitted from the request when None, which is the only
+    # setting every current model accepts - gpt-6-astra and the other
+    # newer families reject any explicit value ("Only the default (1) is
+    # supported"). Set a float here to pin it on a model that allows one.
+    openai_temperature: float | None = None
 
     ai_orchestrator_providers: list[str] = ["openai"]
     ai_retry_max_attempts: int = 2

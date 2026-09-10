@@ -79,9 +79,18 @@ class OpenAIProvider:
         payload: dict[str, object] = {
             "model": settings.openai_model,
             "messages": messages,
-            "temperature": 0.2,
-            "max_tokens": max_tokens,
+            # ADR-160: `max_completion_tokens`, not `max_tokens`. The newer
+            # model families reject the old name outright ("Unsupported
+            # parameter: 'max_tokens' is not supported with this model"),
+            # and every model this project can reach accepts the new one -
+            # verified against gpt-4o-mini, gpt-5.4-mini and gpt-6-astra.
+            "max_completion_tokens": max_tokens,
         }
+        # Omitted by default: the newer families accept only the default
+        # temperature and 400 on any explicit value. A pinned value is
+        # opt-in for models that still allow one.
+        if settings.openai_temperature is not None:
+            payload["temperature"] = settings.openai_temperature
         if response_format is not None:
             payload["response_format"] = response_format
 

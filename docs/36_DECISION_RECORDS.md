@@ -9644,6 +9644,80 @@ If a public marketing page or a third-party integration ever needs read
 access, the seam is one line per router - but prefer a scoped token over
 reopening a router wholesale.
 
+# ADR-160
+
+Title
+
+Send `max_completion_tokens` and Omit `temperature` so Any Current
+OpenAI Model Works
+
+Status
+
+Accepted
+
+Context
+
+The operator chose `gpt-6-astra` after a head-to-head comparison against
+the real production prompt - it was the only candidate that used the
+BBMA evidence (ADR-158) and the only one that flagged a contradiction in
+the project's own regime classification.
+
+Setting `OPENAI_MODEL=gpt-6-astra` produced a 400 on every analysis:
+
+    Unsupported parameter: 'max_tokens' is not supported with this
+    model. Use 'max_completion_tokens' instead.
+
+and, once that was found, a second one:
+
+    Unsupported value: 'temperature' does not support 0.2 with this
+    model. Only the default (1) value is supported.
+
+`OpenAIProvider` had sent `max_tokens` and a hardcoded `temperature:
+0.2` since it was written. Both are fine on `gpt-4o-mini` and rejected by
+the newer families.
+
+**No test caught this**, because every provider test asserted the
+*response* handling and none asserted the *request payload*. The
+comparison script that picked the model happened to use
+`max_completion_tokens` and so never hit it - the bug was reachable only
+through the application path.
+
+Decision
+
+Send `max_completion_tokens` always. Verified against `gpt-4o-mini`,
+`gpt-5.4-mini` and `gpt-6-astra` - all three accept it, so no per-model
+branching is needed and none is added.
+
+`temperature` becomes `openai_temperature: float | None = None` and is
+**omitted from the request when None**, which is now the default.
+Omitting it is the only setting every current model accepts. A float can
+still be configured for a model that allows pinning one.
+
+Dropping the hardcoded 0.2 makes narration slightly more varied on
+`gpt-4o-mini`. That is acceptable: the recommendation, confidence and
+prices are deterministic regardless (ADR-078/079), the JSON schema
+constrains the shape, and the system prompt constrains the content -
+temperature only affected phrasing.
+
+Three tests now assert the payload shape itself, which is the gap that
+let this reach production.
+
+Consequences
+
+Any model on the account can be selected by changing one `.env` value.
+
+**The failure was survivable, which is worth recording.** While the
+provider was 400ing, `ai_available` went false and analyses fell back to
+the deterministic template with a warning - signals still generated,
+with identical entries and stops. ADR-081 behaved exactly as designed
+under a real provider outage rather than a simulated one.
+
+Future Review
+
+Any future provider parameter should be added with a payload-shape test
+in the same commit. Response-shape tests do not catch a request the API
+rejects.
+
 ---
 
 # Review Policy

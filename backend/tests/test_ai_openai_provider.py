@@ -186,3 +186,48 @@ def test_generate_ignores_a_malformed_usage_block(monkeypatch: pytest.MonkeyPatc
     assert response.raw_content == json.dumps({"summary": "ok"})
     assert response.input_tokens is None
     assert response.output_tokens is None
+
+
+def _captured_payload(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Runs one generate() and returns the JSON body actually sent."""
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    sent: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps({"summary": "ok"})}}]}
+        )
+
+    OpenAIProvider(transport=httpx.MockTransport(handler)).generate(_REQUEST)
+    return sent
+
+
+def test_the_output_cap_is_sent_as_max_completion_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-160 - this reached production. `max_tokens` is rejected
+    outright by the newer model families ("Unsupported parameter"), and
+    no test asserted the payload shape, so switching the model produced a
+    400 on every analysis with nothing failing beforehand."""
+    payload = _captured_payload(monkeypatch)
+
+    assert "max_completion_tokens" in payload
+    assert "max_tokens" not in payload
+
+
+def test_temperature_is_omitted_unless_explicitly_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The newer families accept only the default and 400 on any explicit
+    value, so sending nothing is the only setting that works everywhere."""
+    monkeypatch.setattr(settings, "openai_temperature", None)
+
+    assert "temperature" not in _captured_payload(monkeypatch)
+
+
+def test_a_configured_temperature_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Still available for a model that allows pinning it."""
+    monkeypatch.setattr(settings, "openai_temperature", 0.2)
+
+    assert _captured_payload(monkeypatch)["temperature"] == 0.2

@@ -19,7 +19,6 @@ import type {
   MaintenanceAction,
   MaintenanceActionResponse,
   NewsRefreshResponse,
-  TradingViewAlertListResponse,
 } from "@/services/types";
 
 /**
@@ -117,29 +116,6 @@ export function listAdminLogs(params: ListAdminLogsParams): Promise<AdminAuditLo
  */
 export function getAdminApiUsage(): Promise<AdminApiUsageResponse> {
   return apiGet<AdminApiUsageResponse>("/admin/api-usage");
-}
-
-export interface ListTradingViewAlertsParams {
-  symbol?: string;
-  direction?: string;
-  page?: number;
-  limit?: number;
-}
-
-/**
- * ADR-146 - inbound TradingView webhook alerts. These are NOT signals:
- * they come from an external Pine indicator, carry no stop or target,
- * and never reach the trade-execution path.
- */
-export function listTradingViewAlerts(
-  params: ListTradingViewAlertsParams,
-): Promise<TradingViewAlertListResponse> {
-  return apiGet<TradingViewAlertListResponse>("/admin/tradingview-alerts", {
-    symbol: params.symbol,
-    direction: params.direction,
-    page: params.page ? String(params.page) : undefined,
-    limit: params.limit ? String(params.limit) : undefined,
-  });
 }
 
 export function getAdminSystemStatus(): Promise<AdminSystemStatusResponse> {

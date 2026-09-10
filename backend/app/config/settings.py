@@ -184,13 +184,6 @@ class Settings(BaseSettings):
     # a substitute.
     metrics_auth_token: str = ""
 
-    # ADR-146: shared secret for the inbound TradingView webhook, sent as
-    # a URL path segment because TradingView cannot set request headers.
-    # Empty by default = the webhook is not enabled and the route 404s,
-    # same fail-closed posture as `metrics_auth_token`. Treat it as a
-    # bearer credential: anyone holding the URL can post alerts.
-    tradingview_webhook_secret: str = ""
-
     # Phase 11 (EA Bot, .claude/specs/phase-11-ea-bot-exness-mt5-execution.md
     # §0.6/§0.9) - hard kill switch for real order placement. Default
     # `False` in every environment including production; only the operator

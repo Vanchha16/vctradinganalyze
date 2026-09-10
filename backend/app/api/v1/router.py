@@ -21,7 +21,6 @@ from app.api.v1.routes import (
     technical_analysis,
     telegram,
     watchlists,
-    webhooks,
     ws,
 )
 from app.config import settings
@@ -60,7 +59,6 @@ api_router.include_router(ws.router)
 #: secret in the path instead of a user session, but a rate limit still
 #: matters here: without one, the URL - which is bearer-equivalent - could
 #: be brute-forced or an obtained URL used to flood the table.
-api_router.include_router(webhooks.router, dependencies=[_data_rate_limit])
 api_router.include_router(admin_users.router)
 api_router.include_router(admin_assets.router)
 api_router.include_router(admin_logs.router)

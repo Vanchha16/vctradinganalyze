@@ -11,7 +11,6 @@ import {
   LineChart,
   Newspaper,
   PieChart,
-  Radio,
   Server,
   Settings as SettingsIcon,
   ShieldCheck,
@@ -91,7 +90,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Audit Logs", href: "/admin/audit-logs", icon: FileClock },
       { label: "System Health", href: "/admin/system-health", icon: Server },
       { label: "API Usage", href: "/admin/api-usage", icon: Terminal },
-      { label: "TradingView Alerts", href: "/admin/tradingview-alerts", icon: Radio },
     ],
   },
 ];

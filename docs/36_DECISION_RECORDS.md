@@ -8389,7 +8389,11 @@ Table, Not a Signal
 
 Status
 
-Accepted
+**Superseded by ADR-154 (2026-09-10)** - the feature is removed. It was
+never enabled: `TRADINGVIEW_WEBHOOK_SECRET` was never set in production,
+so the route fail-closed to 404 for its entire life and the table ended
+with zero rows. The reasoning below still stands should an inbound
+webhook ever be reintroduced.
 
 Context
 
@@ -9071,8 +9075,8 @@ its header - it currently states the pair as a constant.
 
 Title
 
-Remove the Admin Settings Placeholder Rather Than Build CRUD Over an
-Unread Table
+Remove Two Admin Pages That Lead Nowhere: Admin Settings, and the
+Never-Enabled TradingView Webhook
 
 Status
 
@@ -9139,11 +9143,55 @@ operator would flip back and forth while comparing narration quality
 (ADR-149). It would still need the DB-first consumer change described
 above.
 
+---
+
+## Part 2: the TradingView webhook
+
+Same page, same day, same conclusion by a different route.
+
+`/admin/tradingview-alerts` was empty for a concrete reason:
+`TRADINGVIEW_WEBHOOK_SECRET` was never set in production. The route
+fail-closes to 404 without it (ADR-146), so no alert could ever arrive.
+The feature was fully built - webhook route, model, table, repository,
+admin read endpoint, Telegram delivery task, page - and shipped switched
+off. It ended its life with **zero rows**.
+
+Unlike Admin Settings, this one worked; it only needed configuration. The
+operator was given the choice to enable it and chose removal, on two
+grounds worth recording:
+
+1. **TradingView webhooks require a paid TradingView plan.** On the free
+   plan an alert can pop on screen and email, but cannot POST to a URL.
+   Enabling the endpoint would not have filled the page by itself.
+2. **The alerts were weak evidence.** By ADR-146's own design they carry
+   no stop loss or take profit, create no `Signal`, and never reach trade
+   execution - recorded and forwarded to Telegram only. A second opinion
+   sitting beside the AI signals rather than feeding them.
+
+Removed: the webhook route, `webhook_auth` dependency,
+`GET /admin/tradingview-alerts`, the model, repository, schemas, the
+Telegram message composer and delivery task, the settings key, the page,
+its table component and hook, the nav entry, and the tests. The table is
+dropped by migration `a7c4e2b91d38`, whose `downgrade` copies
+`d5a2f61c983b`'s definition verbatim rather than reconstructing it.
+
+**Kept:** the Pine scripts in `pinescript/`. They are ordinary TradingView
+indicators that still work on a chart - only the backend that could
+receive their alerts is gone, and the README now says so. Also kept: every
+`TradingView` mention in `chart_renderer.py` and `price-chart.tsx`, which
+refer to TradingView's *visual style*, not this feature.
+
+ADR-146 is marked superseded rather than deleted: its trust-boundary
+reasoning stands if an inbound webhook is ever reintroduced, and that
+would need its own ADR.
+
 Future Review
 
 Revisit if the deployment story changes - a fleet, or multiple operators
 who cannot redeploy, would justify runtime config in a way one symbol on
 one box does not.
+
+Reintroducing an inbound webhook is a new trust boundary, not a revert.
 
 ---
 

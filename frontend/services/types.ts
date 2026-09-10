@@ -740,33 +740,6 @@ export interface EconomicEventUpcomingResponse {
   items: EconomicEventResponse[];
 }
 
-// ---- TradingView Alerts (docs/04 §Webhooks, ADR-146) ----
-
-export interface TradingViewAlertResponse {
-  id: string;
-  symbol: string;
-  exchange: string | null;
-  /** TradingView's own interval string ("60", "15", "1D") - deliberately
-   *  not this project's Timeframe enum. */
-  timeframe: string | null;
-  direction: string;
-  score: number | null;
-  entry_price: string | null;
-  alert_time: string | null;
-  source: string | null;
-  /** null = the Telegram notification never went out (no linked accounts,
-   *  or delivery failed). Delivery is best-effort. */
-  delivered_at: string | null;
-  created_at: string;
-}
-
-export interface TradingViewAlertListResponse {
-  items: TradingViewAlertResponse[];
-  page: number;
-  limit: number;
-  total: number;
-}
-
 // ---- Admin API Usage (docs/04 §Admin, ADR-144) ----
 
 export interface ApiUsageRouteResponse {

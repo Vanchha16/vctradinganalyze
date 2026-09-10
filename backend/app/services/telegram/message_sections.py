@@ -16,7 +16,6 @@ from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
 from app.models.enums import MarketType, SignalStatus, SignalType
 from app.models.signal import Signal
-from app.models.tradingview_alert import TradingViewAlert
 
 _SEPARATOR = "━━━━━━━━━━━━━━━━━━"
 
@@ -230,47 +229,3 @@ __all__ = [
     "render_triggered_body",
     "render_triggered_header",
 ]
-
-
-def compose_tradingview_alert_message(alert: TradingViewAlert, *, now: datetime) -> str:
-    """ADR-146: an inbound TradingView alert, rendered so it can never be
-    mistaken for one of this project's own AI signals.
-
-    The header says TRADINGVIEW ALERT, not BUY/SELL, and the footer
-    states in words that this is an external indicator with no stop or
-    target and that nothing was traded. That labelling is the whole point
-    of the format: the same Telegram chat now carries two sources with
-    different provenance and different reliability, and the Pine scripts'
-    own README says their output will *not* agree with the backend.
-    """
-    direction = alert.direction.upper()
-    emoji = "🟢" if alert.direction == "buy" else "🔴"
-    symbol = escape_markdown_v2(alert.symbol)
-
-    lines = [
-        f"{_SEPARATOR}\n📡 TRADINGVIEW ALERT\n{_SEPARATOR}",
-        f"{emoji} {escape_markdown_v2(direction)} • {symbol}",
-    ]
-
-    details: list[str] = []
-    if alert.timeframe:
-        details.append(f"⏰ Timeframe : {escape_markdown_v2(alert.timeframe)}")
-    if alert.entry_price is not None:
-        details.append(f"🎯 Price : {escape_markdown_v2(str(alert.entry_price))}")
-    if alert.score is not None:
-        details.append(f"📊 Score : {escape_markdown_v2(f'{alert.score:.1f}')}")
-    if alert.exchange:
-        details.append(f"🏦 Exchange : {escape_markdown_v2(alert.exchange)}")
-    if alert.source:
-        details.append(f"🔖 Source : {escape_markdown_v2(alert.source)}")
-    if details:
-        lines.append("\n".join(details))
-
-    lines.append(
-        escape_markdown_v2(
-            "⚠️ External TradingView indicator - not this bot's AI analysis. "
-            "No stop loss or take profit, and no trade was placed."
-        )
-    )
-    lines.append(render_timestamp(now))
-    return "\n\n".join(lines)

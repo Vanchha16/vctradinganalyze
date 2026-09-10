@@ -33,16 +33,19 @@ right-click the chart → Add Alert → Condition → pick one of the two, set
 webhook URL under Notifications if you want TradingView to POST it
 somewhere.
 
-**Update (2026-09-09, ADR-146): the webhook receiver now exists.**
-`POST /webhooks/tradingview/{token}` accepts these alerts, stores them in
-`tradingview_alerts`, and forwards them to Telegram. It is disabled by
-default - set `TRADINGVIEW_WEBHOOK_SECRET` in `backend/.env` and point the
-alert's webhook URL at `https://<host>/api/v1/webhooks/tradingview/<secret>`.
-Until that secret is set the route returns 404.
+**Update (2026-09-10, ADR-154): there is no webhook receiver.** One was
+built (ADR-146) and removed without ever being switched on -
+`TRADINGVIEW_WEBHOOK_SECRET` was never set in production, so the route
+fail-closed to 404 for its whole life and its table ended with zero rows.
+The operator chose removal over enabling it, since TradingView webhooks
+need a paid TradingView plan and these alerts carried no stop or target,
+created no signals and never reached execution.
 
-An accepted alert is **recorded and notified, never traded**: it does not
-create a `Signal` and cannot place a broker order. See ADR-146 for the
-trust-boundary reasoning, including why the secret travels in the URL.
+**The Pine scripts themselves are unaffected** - they are ordinary
+TradingView indicators and still work on a chart. Only the backend
+endpoint that could receive their alerts is gone. Pointing an alert's
+webhook URL at this project will now get a 404 from a route that does not
+exist.
 
 The paragraph below described the state before that endpoint existed and is
 kept for context:

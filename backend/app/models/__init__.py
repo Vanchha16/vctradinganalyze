@@ -33,7 +33,6 @@ from app.models.smc_event import SMCEvent
 from app.models.smc_processing_state import SMCProcessingState
 from app.models.system_setting import SystemSetting
 from app.models.telegram_account import TelegramAccount
-from app.models.tradingview_alert import TradingViewAlert
 from app.models.user import User
 from app.models.user_session import UserSession
 from app.models.watchlist import Watchlist
@@ -71,7 +70,6 @@ __all__ = [
     "SignalType",
     "SystemSetting",
     "TelegramAccount",
-    "TradingViewAlert",
     "Timeframe",
     "User",
     "UserRole",

@@ -16,6 +16,7 @@ from app.models.enums import MarketType, Timeframe
 from app.models.indicator_result import IndicatorResult
 from app.models.price_candle import PriceCandle
 from app.models.smc_event import SMCEvent
+from tests.auth_overrides import override_authenticated_user
 
 _TABLES = [Asset.__table__, PriceCandle.__table__, IndicatorResult.__table__, SMCEvent.__table__]
 
@@ -39,6 +40,8 @@ def client(session_engine: object) -> Generator[TestClient, None, None]:
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    # ADR-159: these routers now require a login.
+    override_authenticated_user()
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -158,17 +161,20 @@ def test_get_technical_analysis_rejects_invalid_timeframe(
     assert response.json()["error"] == "validation_error"
 
 
-def test_get_technical_analysis_requires_no_authentication(
+def test_get_technical_analysis_requires_authentication(
     client: TestClient, session: Session
 ) -> None:
-    asset = _make_asset(session)
-    _seed_trending_candles(session, asset, Timeframe.M1, 260, direction=1)
+    """ADR-159 - this route used to return 200 to anyone with the URL.
+    The `client` fixture is authenticated, so the anonymous case is
+    asserted by clearing the override rather than by a second fixture."""
+    from app.dependencies.auth import get_current_user
+    from app.main import app
 
-    response = client.get(f"/api/v1/analysis/technical/{asset.symbol}", params={"timeframe": "m1"})
+    app.dependency_overrides.pop(get_current_user, None)
 
-    assert response.status_code == 200  # no Authorization header supplied
+    response = client.get("/api/v1/analysis/technical/XAUUSD", params={"timeframe": "m1"})
 
-
+    assert response.status_code == 401
 def test_get_multi_timeframe_analysis_returns_combined_verdict(
     client: TestClient, session: Session
 ) -> None:

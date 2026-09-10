@@ -21,6 +21,7 @@ from app.models.enums import (
 from app.models.news_article import NewsArticle
 from app.models.news_sentiment import NewsSentiment
 from app.models.news_source import NewsSource
+from tests.auth_overrides import override_authenticated_user
 
 _TABLES = [
     Asset.__table__,
@@ -50,6 +51,8 @@ def client(session_engine: object) -> Generator[TestClient, None, None]:
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    # ADR-159: these routers now require a login.
+    override_authenticated_user()
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -197,9 +200,15 @@ def test_get_news_sentiment_invalid_since_is_422(client: TestClient, session: Se
     assert response.status_code == 422
 
 
-def test_news_routes_require_no_authentication(client: TestClient, session: Session) -> None:
-    _seed(session)
+def test_news_routes_require_authentication(client: TestClient, session: Session) -> None:
+    """ADR-159 - this route used to return 200 to anyone with the URL.
+    The `client` fixture is authenticated, so the anonymous case is
+    asserted by clearing the override rather than by a second fixture."""
+    from app.dependencies.auth import get_current_user
+    from app.main import app
+
+    app.dependency_overrides.pop(get_current_user, None)
 
     response = client.get("/api/v1/news")
 
-    assert response.status_code == 200
+    assert response.status_code == 401

@@ -9565,6 +9565,85 @@ Future Review
 Multi-timeframe BBMA (TF1/TF2/TF3) and the MHV and Re-entry setups are
 still undetected, so the narration can only ever describe an Extreme.
 
+# ADR-159
+
+Title
+
+Require Authentication on the Market Data and Analysis Routers
+
+Status
+
+Accepted
+
+Context
+
+Nine routers answered anyone with the URL. Demonstrated against
+production from outside the server, with no account and no token:
+
+    GET /api/v1/analysis/technical/XAUUSD?timeframe=h1  ->  200
+    GET /api/v1/analysis/smc/XAUUSD?timeframe=h1        ->  200
+    GET /api/v1/calendar                                ->  200
+    GET /api/v1/market/XAUUSD/latest                    ->  200
+
+Signals, AI analyses, watchlists, Telegram and admin were already
+protected (401), so this was never a route to anything the operator owns
+- but the analysis those signals are built from was readable by anyone
+who knew the domain and the URL shape, it consumed the Twelve Data daily
+budget (~750 of 800, ADR-140), and it spent CPU on a 909MB box.
+
+Decision
+
+Apply `Depends(get_current_user)` at router-include time to
+`market_data`, `technical_analysis`, `smc`, `market_regime`,
+`analysis_confidence`, `news`, `economic_calendar`, `risk_management`
+and `strategy`.
+
+**At include time, not per handler**, for the same reason the per-IP
+rate limits already live there (ADR-132): one line per router beats
+editing ~30 handlers, and a handler added later is covered automatically
+rather than being public until someone notices.
+
+**Deliberately still open:** `health` (uptime probes must not need
+credentials), `auth` (login itself), `metrics` (its own token guard,
+ADR-136) and `ws` - which was never actually public; it authenticates on
+a token query parameter because browsers cannot set WebSocket headers.
+
+**The per-IP rate limits are kept.** They are no longer "public route"
+protection, but they bound damage from a single leaked or shared session
+in a way a per-user quota does not.
+
+Checked before changing anything, because the frontend consumes these:
+`api-client.ts` attaches `Authorization: Bearer` whenever a session
+exists, and no page outside `(protected)` fetches API data - the auth
+pages only call `/auth/*`. So no logged-out screen depended on them.
+
+Consequences
+
+The analysis is no longer free to read, and outside traffic can no longer
+consume the Twelve Data budget.
+
+**77 tests failed on the first run** - every route test called these
+endpoints anonymously. That was the correct signal, not a defect. They
+now use a shared `override_authenticated_user` helper rather than nine
+copies of a stub user.
+
+**Eight tests asserted the opposite of this decision** - names like
+`test_get_technical_analysis_requires_no_authentication`, asserting 200
+without an Authorization header. Left alone they would have passed
+against an authenticated fixture while claiming the routes were public.
+Each was inverted to assert 401, so the suite now defends this decision
+instead of the one it replaced.
+
+Verified end to end against a real browser: the locked routes return 401
+with no token, and a logged-in session still renders 25 calendar rows and
+loads every page.
+
+Future Review
+
+If a public marketing page or a third-party integration ever needs read
+access, the seam is one line per router - but prefer a scoped token over
+reopening a router wholesale.
+
 ---
 
 # Review Policy

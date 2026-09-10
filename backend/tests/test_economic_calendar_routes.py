@@ -14,6 +14,7 @@ from app.dependencies import get_db
 from app.main import app
 from app.models.economic_event import EconomicEvent
 from app.models.enums import EconomicEventCategory, EconomicEventImportance, EconomicEventStatus
+from tests.auth_overrides import override_authenticated_user
 
 _TABLES = [EconomicEvent.__table__]
 
@@ -37,6 +38,8 @@ def client(session_engine: object) -> Generator[TestClient, None, None]:
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    # ADR-159: these routers now require a login.
+    override_authenticated_user()
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -171,14 +174,18 @@ def test_get_upcoming_only_returns_critical_and_high(client: TestClient, session
     assert items[0]["event_name"] == "GDP q/q"
 
 
-def test_calendar_routes_require_no_authentication(client: TestClient, session: Session) -> None:
-    _seed(session)
+def test_calendar_routes_require_authentication(client: TestClient, session: Session) -> None:
+    """ADR-159 - this route used to return 200 to anyone with the URL.
+    The `client` fixture is authenticated, so the anonymous case is
+    asserted by clearing the override rather than by a second fixture."""
+    from app.dependencies.auth import get_current_user
+    from app.main import app
+
+    app.dependency_overrides.pop(get_current_user, None)
 
     response = client.get("/api/v1/calendar")
 
-    assert response.status_code == 200
-
-
+    assert response.status_code == 401
 def test_upcoming_route_is_not_shadowed_by_id_route(client: TestClient, session: Session) -> None:
     """`/calendar/upcoming` must resolve to the dedicated route, not be
     parsed as a UUID path parameter for `/calendar/{event_id}`."""

@@ -16,6 +16,7 @@ from app.models.enums import MarketType, Timeframe
 from app.models.indicator_result import IndicatorResult
 from app.models.price_candle import PriceCandle
 from app.models.smc_event import SMCEvent
+from tests.auth_overrides import override_authenticated_user
 
 _TABLES = [Asset.__table__, PriceCandle.__table__, IndicatorResult.__table__, SMCEvent.__table__]
 
@@ -39,6 +40,8 @@ def client(session_engine: object) -> Generator[TestClient, None, None]:
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    # ADR-159: these routers now require a login.
+    override_authenticated_user()
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

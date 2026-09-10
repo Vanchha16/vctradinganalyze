@@ -9193,6 +9193,98 @@ one box does not.
 
 Reintroducing an inbound webhook is a new trust boundary, not a revert.
 
+# ADR-155
+
+Title
+
+Fix the Shared Dialog's Off-Centre Entrance, and Give the Calendar's
+Answer a Reveal
+
+Status
+
+Accepted
+
+Context
+
+The operator asked for a better entrance on the calendar's analysis
+dialog (ADR-153), describing what they saw as the panel "rotating in from
+the left", and later sent a screen recording.
+
+Extracting the recording frame by frame showed a real defect, not a taste
+problem: the panel appeared **small and offset down-right**, then slid
+up-left into place as it grew.
+
+The cause was in the **shared** `components/ui/dialog.tsx`, and it
+affected every dialog in the app. `DialogContent` is centred with
+`-translate-x-1/2 -translate-y-1/2` and animated with `zoom-in-95`.
+`tailwindcss-animate` compiles that zoom into
+
+    transform: translate3d(var(--tw-enter-translate-x, 0), ...) scale3d(...)
+
+which **replaces** the element's own centering transform for the duration
+of the animation. With the translate variables unset they default to 0,
+so the panel is not centred while animating - it sits offset by half its
+size and snaps into place when the animation ends.
+
+shadcn ships four compensation classes for exactly this; this project's
+copy of the component was missing them.
+
+Decision
+
+Add `slide-in-from-left-1/2` / `slide-in-from-top-[48%]` (and their
+`slide-out-*` counterparts) to `DialogContent`. Despite the names these
+are **not a slide effect** - they set the enter/exit translate variables
+so the keyframe's transform re-applies the centering. A comment in the
+file says so, because the names invite exactly the wrong edit later.
+
+**Every motion for this dialog runs on a wrapper INSIDE `DialogContent`,
+never on `DialogContent` itself.** A competing transform on the centred
+element is the bug above. An earlier attempt at a rise used
+`slide-in-from-bottom-3` directly on it and made the problem worse before
+the root cause was understood.
+
+On top of the fix, the operator asked for a "surprise" reveal:
+
+- The panel bursts in from 72% scale, tilted, overshooting to ~104%
+  before settling (spring, low damping).
+- The verdict badge (BUY/SELL) explodes from `scale: 0` on a very loose
+  spring - the one element allowed to look excited, because it is the
+  answer to the question that was asked.
+- Levels and paragraphs cascade behind it, ~80ms apart.
+- A `SurpriseBurst` fires across the viewport: 28 confetti particles plus
+  an expanding ring and radial glow.
+
+`SurpriseBurst` is portalled to `document.body`. Rendered inside the
+panel it would be positioned against the panel (transformed ancestor =
+containing block for `position: fixed`) and then clipped by
+`overflow-y-auto` - a small effect inside a box, not across the screen.
+Particle travel is a fraction of the viewport's half-diagonal, not a
+fixed pixel count, so it reads the same on a laptop and a wide monitor.
+Colours are theme tokens, so it follows light/dark.
+
+Consequences
+
+Every dialog in the app now enters centred - admin user dialogs,
+watchlist dialogs, confirm dialogs, not just this one. Verified by
+sampling the panel's bounding box each frame through the entrance:
+**0px horizontal drift**, against a visible off-centre swing before.
+
+The burst fires on **open**, so it plays while the analysis is still
+loading - it celebrates the question, not the answer, and looks the same
+whether the verdict is BUY, WAIT, or high risk. Firing it on arrival
+instead would make it a reveal; that was offered and not taken up, and
+remains a one-line change.
+
+`prefers-reduced-motion` collapses all of it - panel spring, stagger and
+burst - to a plain fade, matching the guard already in `globals.css`.
+
+Future Review
+
+Tunables are `stiffness` (speed) and `damping` (bounce) per variant, and
+`PARTICLE_COUNT`. If the effect ever feels excessive on a losing trade,
+the honest fix is to fire it on arrival and vary it by recommendation,
+not to remove it.
+
 ---
 
 # Review Policy

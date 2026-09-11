@@ -29,6 +29,10 @@ backend/celerybeat-schedule
 backend/celerybeat-schedule-shm
 backend/celerybeat-schedule-wal
 
+# MQL5 build output (compiled locally in MetaEditor)
+mql5/*.ex5
+mql5/*.log
+
 # Tooling
 .coverage
 backend/.coverage

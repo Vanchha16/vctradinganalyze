@@ -42,6 +42,17 @@ class InvalidAccessTokenException(AuthenticationException):
         super().__init__(message)
 
 
+class InvalidEaTokenException(AuthenticationException):
+    """Raised when an Expert Advisor's `X-EA-Token` is missing, unknown, revoked, or
+    belongs to a user no longer allowed to use one (ADR-161). Deliberately one
+    exception for all of those, so the response does not say which."""
+
+    error_code = "invalid_ea_token"
+
+    def __init__(self, message: str = "Invalid or revoked EA token.") -> None:
+        super().__init__(message)
+
+
 class DuplicateUserException(BusinessException):
     """Raised when registration is attempted with an email or username already in use."""
 

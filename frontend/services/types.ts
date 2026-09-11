@@ -838,3 +838,22 @@ export interface TelegramStatusResponse {
   linked: boolean;
   linked_at: string | null;
 }
+
+// ---- MT5 Expert Advisor tokens (ADR-161) ----
+
+export interface EaTokenResponse {
+  id: string;
+  name: string;
+  hint: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+/** Returned once, by the create call only - `token` is never listed. */
+export interface EaTokenCreatedResponse extends EaTokenResponse {
+  token: string;
+}
+
+export interface EaTokenListResponse {
+  items: EaTokenResponse[];
+}

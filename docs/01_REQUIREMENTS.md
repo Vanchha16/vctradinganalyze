@@ -19,9 +19,9 @@ The platform combines:
 - AI Reasoning
 - Risk Management
 
-The platform DOES NOT execute trades.
+The platform does not place trades itself and never holds broker credentials.
 
-Its purpose is to help users make informed trading decisions.
+Its purpose is to help users make informed trading decisions. Executing those decisions is optional and happens in the trader's own MetaTrader 5 terminal, through an Expert Advisor that reads the signal feed (ADR-161).
 
 ---
 
@@ -51,7 +51,7 @@ The system shall:
 
 The system will NOT:
 
-❌ Execute trades automatically
+❌ Place trades from the server (optional execution runs only in the trader's own MT5 terminal - ADR-161)
 
 ❌ Manage user brokerage accounts
 

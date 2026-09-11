@@ -11,9 +11,11 @@ ClaudeTrading AI is an AI-powered trading analysis platform that helps traders m
 - Financial news sentiment
 - Artificial Intelligence reasoning
 
-The platform does NOT execute trades.
+The platform does not place trades itself and never holds broker credentials.
 
-Instead, it provides professional Buy / Sell / Wait recommendations with transparent explanations and confidence scores.
+Execution is optional: an Expert Advisor running in the trader's own MetaTrader 5 terminal can read the signal feed and trade it there (ADR-161).
+
+At its core, it provides professional Buy / Sell / Wait recommendations with transparent explanations and confidence scores.
 
 ---
 

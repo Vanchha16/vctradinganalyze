@@ -59,6 +59,24 @@ class SignalRepository(BaseRepository[Signal]):
             query = query.where(Signal.status == status)
         return self._count(query)
 
+    def find_open_for_asset(
+        self, asset_id: uuid.UUID, *, created_since: datetime
+    ) -> Sequence[Signal]:
+        """Stored ACTIVE/TRIGGERED signals for one asset, newest first -
+        the MT5 EA feed's candidates (ADR-161). Stored status only: the
+        caller still applies `status_resolver.effective_status`, since an
+        ACTIVE row can already be EXPIRED at read time (ADR-088)."""
+        query = (
+            select(Signal)
+            .where(
+                Signal.asset_id == asset_id,
+                Signal.status.in_([SignalStatus.ACTIVE, SignalStatus.TRIGGERED]),
+                Signal.created_at >= created_since,
+            )
+            .order_by(Signal.created_at.desc())
+        )
+        return self.session.execute(query).scalars().all()
+
     def count_since(self, since: datetime) -> int:
         """Today's "signals generated" count (docs/58 §3.2, `GET
         /admin/system`)."""

@@ -3,6 +3,7 @@ from app.models.api_credential import ApiCredential
 from app.models.asset import Asset
 from app.models.audit_log import AuditLog
 from app.models.broker_order import BrokerOrder
+from app.models.ea_token import EaToken
 from app.models.economic_event import EconomicEvent
 from app.models.enums import (
     EconomicEventCategory,
@@ -45,6 +46,7 @@ __all__ = [
     "Asset",
     "AuditLog",
     "BrokerOrder",
+    "EaToken",
     "EconomicEvent",
     "EconomicEventCategory",
     "EconomicEventImportance",

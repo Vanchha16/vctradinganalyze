@@ -9718,6 +9718,139 @@ Any future provider parameter should be added with a payload-shape test
 in the same commit. Response-shape tests do not catch a request the API
 rejects.
 
+# ADR-161
+
+Title
+
+Execute Signals Through an MT5 Expert Advisor on the Operator's Own
+Terminal
+
+Status
+
+Accepted
+
+Context
+
+docs/00 and docs/01 both state "the platform does NOT execute trades".
+**That was already untrue in the code.** Commit `f05dcd9` (2026-08-13,
+"EA Bot", Phase 11) added a server-side executor that places real limit
+orders on an Exness MT5 account through MetaApi.cloud. It shipped with no
+ADR, its spec (`.claude/specs/phase-11-ea-bot-exness-mt5-execution.md`) is
+not in the repository, and it has never been switched on
+(`EXECUTION_ENABLED=false`). Reviewing it on 2026-09-11 found:
+
+- **No way to cancel an order.** `OrderExecutionProvider` can place but
+  not cancel, so an unfilled limit order outlives its signal's 24h TTL
+  and can fill days later on a dead setup.
+- **No UI and no switch** - `/admin/orders` was removed (ADR-142); turning
+  it on means editing `.env` on the server.
+- **3% of balance risked per trade**, on signals with no track record.
+- **The broker login lives at MetaApi**, a paid third party.
+
+The operator asked for a bot that trades the signals on their own account
+and chose (2026-09-11):
+
+- an **Expert Advisor running in their own MetaTrader 5** terminal (PC or
+  VPS), not the MetaApi executor;
+- **dry-run first**;
+- **follow the signal's entry, stop and target** with a **fixed lot size
+  the operator sets** in the EA, not percentage-risk sizing.
+
+Decision
+
+**1. Scope.** The platform publishes signals. Executing them is optional
+and happens only inside the operator's own MT5 terminal, through an EA
+that reads a signal feed. The server never holds broker credentials and
+has no code path from this feature that places, modifies or cancels an
+order. docs/00 and docs/01 are amended to say exactly that, replacing an
+absolute statement the code had already broken.
+
+**2. EA tokens** (`ea_tokens`). A session JWT cannot serve an EA: it
+expires in 15 minutes, and one long-lived enough to survive weeks
+unattended would also be a full session able to reach every route.
+Instead:
+
+- Created from Settings, shown **once**, stored as SHA-256
+  (`hash_token`, exact-match lookup, same reasoning as ADR-023), with a
+  four-character hint.
+- Prefixed `vcea_` so a leaked one is recognisable and a stray JWT is
+  rejected without a lookup.
+- **Super admin only**, and the role is re-checked on **every** request,
+  so demoting or deactivating a user disables their EAs immediately.
+- At most 5 per user. Creation and revocation are audit-logged without
+  the token.
+- Revocation deletes the row; the next poll is a 401.
+
+**3. The feed** - `GET /ea/signals?symbol=XAUUSD`, header `X-EA-Token`.
+
+- A dedicated header, not `Authorization: Bearer`, so an EA token and a
+  session token can never be accepted in each other's place. Both
+  directions are tested.
+- Returns signals whose **read-time** status (ADR-088/137) is `active` or
+  `triggered`, newest first, each with `expires_at` = `created_at` +
+  `SIGNAL_TTL_HOURS`.
+- Timestamps are **Unix epoch seconds**: an MQL5 `datetime` is epoch
+  seconds, and MQL5's `StringToTime` misreads ISO-8601 instead of failing.
+- Per-IP rate limit (`EA_FEED_RATE_LIMIT`, 30/min), resolved **before**
+  the token check so token guessing is limited too.
+- Every authentication failure is the same 401 `invalid_ea_token`.
+
+**4. The contract the EA must honour** (Phase B builds it):
+
+- Open an order only for an `active` signal, and at most once per signal
+  id - surviving a terminal restart.
+- Cancel its unfilled order when the signal leaves the feed or
+  `expires_at` passes. Also set the broker-side expiry to `expires_at`, so
+  the order dies even if the EA is not running.
+- **Never cancel because a request failed.** Only a successful response
+  that omits a signal means "gone".
+- Never modify or close a filled position: the broker-side stop and
+  target manage it, exactly as the signal specified.
+- Dry-run by default: log the exact order, validated with `OrderCheck`,
+  without sending it.
+
+**5. The MetaApi executor stays dormant, not removed.** It must never be
+enabled against the same account an EA trades - both would act on every
+signal and double the position. Removing it is a separate decision.
+
+Alternatives Considered
+
+- **Finish the MetaApi executor.** About 70% built and runs without the
+  operator's PC. Rejected by the operator: paid, holds the broker login,
+  and still needed cancellation, a UI and a switch.
+- **Reuse session JWTs for the EA.** Rejected - see 2.
+- **Accept EA tokens as `Authorization: Bearer`.** Rejected: one header
+  meaning two credential types invites a future dependency accepting the
+  wrong one.
+- **ISO-8601 timestamps.** Rejected - see 3.
+
+Consequences
+
+A leaked EA token exposes the XAUUSD signal list, which any logged-in
+user can already read. It cannot place a trade, read an account, or reach
+any other route.
+
+**Execution depends on the operator's terminal** being online with
+AutoTrading enabled. A PC that sleeps misses signals; that is the price of
+keeping broker access off the server. A VPS removes it.
+
+**Signal prices and broker prices differ.** Signals are built from
+Twelve Data candles; the order fills at the broker's bid/ask (XAUUSDc
+spread observed at 0.26). A limit may fill slightly differently, or not
+at all, while the platform marks the signal `triggered` from its own
+candles. Statuses on the website describe the signal, not the account.
+
+**The platform cannot see what the EA did.** Until an EA report-back
+exists (Phase C), orders and fills are visible only in MT5 itself.
+
+Future Review
+
+- When the EA report-back (Phase C) is built.
+- Before letting any role other than super admin hold a token. That is a
+  user-account execution feature and needs its own decision against
+  docs/01's "does not manage user brokerage accounts".
+- If the MetaApi executor is ever wanted again, or removed.
+
 ---
 
 # Review Policy

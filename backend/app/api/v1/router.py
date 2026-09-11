@@ -9,6 +9,7 @@ from app.api.v1.routes import (
     ai_analysis,
     analysis_confidence,
     auth,
+    ea,
     economic_calendar,
     health,
     market_data,
@@ -96,5 +97,9 @@ api_router.include_router(risk_management.router, dependencies=[_engine_rate_lim
 api_router.include_router(strategy.router, dependencies=[_engine_rate_limit, _require_auth])
 api_router.include_router(ai_analysis.router)
 api_router.include_router(signals.router)
+#: ADR-161 - authenticates per route, not at include time: `/ea/tokens` is a
+#: browser session (super admin), `/ea/signals` is an `X-EA-Token` header
+#: from an MT5 terminal. One router-level gate cannot express both.
+api_router.include_router(ea.router)
 api_router.include_router(telegram.router)
 api_router.include_router(watchlists.router)

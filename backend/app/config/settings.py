@@ -169,6 +169,11 @@ class Settings(BaseSettings):
     public_rate_limit_engine_limit: int = 20
     public_rate_limit_data_limit: int = 100
     public_rate_limit_window_seconds: int = 60
+    # ADR-161 - per-IP limit on the MT5 Expert Advisor signal feed, per
+    # `public_rate_limit_window_seconds`. An EA polling every 5s makes 12
+    # requests a minute; 30 leaves room for a restart or a second terminal
+    # behind the same IP while still bounding token guessing.
+    ea_feed_rate_limit: int = 30
 
     # Phase 9B (ADR-133, docs/23 §17) - failed-login lockout. docs/23 §17
     # names the requirement ("Temporary Lock") with no threshold/duration;

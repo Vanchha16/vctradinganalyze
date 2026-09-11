@@ -815,6 +815,71 @@ Out of scope for Phase 6B: autonomous trading or broker execution; live price-mo
 
 ---
 
+# Expert Advisor (MT5)
+
+ADR-161. The feed an Expert Advisor in the trader's own MetaTrader 5 terminal polls to trade signals there. **Nothing in this section places an order** - execution happens entirely inside MT5.
+
+GET /ea/tokens
+
+Super admin session. The caller's EA tokens - never the token itself.
+
+Response
+
+{ "items": [ { "id": "…", "name": "Home PC", "hint": "x9Qe", "created_at": "2026-09-11T10:00:00Z", "last_used_at": "2026-09-11T10:05:00Z" } ] }
+
+---
+
+POST /ea/tokens
+
+Super admin session. Request `{ "name": "Home PC" }` (1-64 chars, not blank).
+
+Response `201` - the list item shape plus `"token": "vcea_…"`. **The only time the raw token is returned**; it is stored as a SHA-256 hash. 403 for any other role, 409 at 5 tokens, 422 for a blank name.
+
+---
+
+DELETE /ea/tokens/{id}
+
+Super admin session. `204`. The EA's next poll is a 401. 404 if the id is unknown or belongs to another user.
+
+---
+
+GET /ea/signals?symbol=XAUUSD
+
+**Header `X-EA-Token: vcea_…`** - not `Authorization`. A session token is not accepted here, and an EA token is not accepted anywhere else. Rate limited per IP (`EA_FEED_RATE_LIMIT`, default 30/min), checked before the token.
+
+`symbol` is the platform symbol, not the broker's (`XAUUSD`, not `XAUUSDc`).
+
+Response
+
+{
+  "server_time": 1789120800,
+  "symbol": "XAUUSD",
+  "signals": [
+    {
+      "id": "3f7e2b1a-9c4d-4e5f-8a6b-1d2c3e4f5a6b",
+      "symbol": "XAUUSD",
+      "timeframe": "h1",
+      "signal_type": "buy",
+      "entry_price": 4414.236,
+      "stop_loss": 4400.0,
+      "take_profit": 4440.0,
+      "confidence": 72.0,
+      "status": "active",
+      "created_at": 1789120500,
+      "triggered_at": null,
+      "expires_at": 1789206900
+    }
+  ]
+}
+
+All times are **Unix epoch seconds**. Only signals whose read-time status is `active` or `triggered` appear, newest first. `expires_at` is `created_at` + `SIGNAL_TTL_HOURS` - the end of the pending entry's life.
+
+How an EA reads it (ADR-161 §4): open an order only for `active`, once per `id`; cancel an unfilled order when its signal is no longer listed or `expires_at` passes; never treat a failed request as "no signals".
+
+401 `invalid_ea_token` for a missing, unknown or revoked token, or one whose owner is inactive or no longer a super admin - one response for all of them. 404 for an unknown symbol.
+
+---
+
 # AI Chat
 
 Phase 6C (docs/52_AI_CHAT_ARCHITECTURE.md, ADR-092 through ADR-098). `AIChatEngine` is a thin conversational/persistence layer over Phase 4-6B - it computes no new recommendation, confidence, or evidence of its own (ADR-093/094). **Requires authentication** on every route - conversations are private per-user data, and generating a reply calls the same metered LLM provider as Phase 6A (ADR-083's cost rationale extended here).

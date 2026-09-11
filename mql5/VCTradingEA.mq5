@@ -5,15 +5,20 @@
 //|  ADR-161. The website never places trades and never sees the     |
 //|  broker login: this EA reads GET /ea/signals and does all the    |
 //|  trading here. Dry run is the default.                           |
-//|  ADR-162. It reports what it did to POST /ea/events, so the      |
-//|  website's EA Activity page shows it without opening MT5.        |
+//|  ADR-162. It reports what it did to POST /ea/events.             |
+//|  ADR-163. Pause, dry run/live, lot size, max trades and slippage |
+//|  can be set from the website, within limits set HERE: the        |
+//|  website can never exceed MaxLotSize, and can only switch to     |
+//|  live when AllowWebsiteLive is true on this terminal.            |
 //+------------------------------------------------------------------+
 #property copyright   "VC Trading AI"
-#property version     "1.10"
+#property version     "1.20"
 #property description "Reads the VC Trading AI signal feed and trades it in this terminal."
 #property description "Dry run by default: every order is logged and checked, never sent."
 
 #include <Trade\Trade.mqh>
+
+#define EA_VERSION "1.20"
 
 //--- inputs -----------------------------------------------------------
 input group "Connection"
@@ -26,19 +31,24 @@ input group "Symbols"
 input string InpSignalSymbol = "XAUUSD";  // Symbol on the website
 input string InpBrokerSymbol = "XAUUSDc"; // Symbol in this terminal
 
-input group "Trading"
-input bool   InpDryRun          = true;     // Dry run: log and check orders, never send them
-input double InpLotSize         = 0.01;     // Fixed lot size for every signal
-input int    InpMaxOpenTrades   = 1;        // Max positions + pending orders from this EA
-input ulong  InpMagicNumber     = 16112026; // Magic number marking this EA's orders
-input int    InpDeviationPoints = 50;       // Max slippage on market entries (points)
+input group "Safety limits (the website can never override these)"
+input double InpMaxLotSize       = 0.10;  // Hard lot limit - no setting may exceed it
+input bool   InpAllowWebsiteLive = false; // Allow the website to switch this EA to LIVE
+
+input group "Trading (used until website settings arrive)"
+input bool   InpUseWebsiteSettings = true;     // Take settings from the website
+input bool   InpDryRun             = true;     // Dry run: log and check orders, never send them
+input double InpLotSize            = 0.01;     // Fixed lot size for every signal
+input int    InpMaxOpenTrades      = 1;        // Max positions + pending orders from this EA
+input int    InpDeviationPoints    = 50;       // Max slippage on market entries (points)
+input ulong  InpMagicNumber        = 16112026; // Magic number marking this EA's orders
 
 //--- constants ---------------------------------------------------------
 #define STATE_FOLDER   "VCTrading"
 #define COMMENT_PREFIX "VC "
 #define TOKEN_PREFIX   "vcea_"
 
-// What this EA did with a signal. Every signal is acted on at most once.
+// What this EA did with a signal. Every signal is acted on at most once per mode.
 #define KIND_DRY_RUN  0 // logged and checked only
 #define KIND_PENDING  1 // limit order sent
 #define KIND_MARKET   2 // market order sent (price had already reached entry)
@@ -74,18 +84,40 @@ struct HandledSignal
    ulong             orderTicket;    // order sent and not yet resolved (filled/cancelled); 0 when none
    ulong             positionId;     // position the order opened; 0 until filled
    int               closedReported; // 1 once that position's close was reported
+   int               live;           // 1 if acted on in live mode, 0 in dry run
+  };
+
+struct WebsiteSettings
+  {
+   bool              received;
+   long              version;
+   bool              paused;
+   bool              dryRun;
+   double            lot;
+   int               maxTrades;
+   int               deviation;
   };
 
 //--- state -------------------------------------------------------------
-CTrade        g_trade;
-HandledSignal g_handled[];
-string        g_events[];              // JSON objects waiting to be reported
-string        g_stateFile       = "";
-string        g_eventsFile      = "";
-long          g_clockDrift      = 0;   // website clock minus this PC's GMT clock, seconds
-string        g_status          = "waiting for first check";
-string        g_lastLogged      = "";
-int           g_openSignalCount = 0;
+CTrade          g_trade;
+HandledSignal   g_handled[];
+string          g_events[];            // JSON objects waiting to be reported
+WebsiteSettings g_web;                 // last settings received from the website
+string          g_stateFile       = "";
+string          g_eventsFile      = "";
+string          g_settingsFile    = "";
+long            g_clockDrift      = 0;   // website clock minus this PC's GMT clock, seconds
+string          g_status          = "waiting for first check";
+string          g_lastLogged      = "";
+int             g_openSignalCount = 0;
+
+// Effective settings: inputs or website settings, after this EA's own limits.
+bool   g_settingsApplied = false;
+bool   g_paused          = false;
+bool   g_dryRun          = true;
+double g_lotSize         = 0.01;
+int    g_maxTrades       = 1;
+int    g_deviation       = 50;
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -100,33 +132,32 @@ int OnInit()
       Alert("VC Trading EA: symbol '", InpBrokerSymbol, "' is not available in this terminal.");
       return(INIT_PARAMETERS_INCORRECT);
      }
-   if(InpLotSize <= 0.0 || InpMaxOpenTrades < 1)
+   if(InpLotSize <= 0.0 || InpMaxLotSize <= 0.0 || InpMaxOpenTrades < 1)
      {
-      Alert("VC Trading EA: LotSize must be above 0 and MaxOpenTrades at least 1.");
+      Alert("VC Trading EA: LotSize and MaxLotSize must be above 0, and MaxOpenTrades at least 1.");
       return(INIT_PARAMETERS_INCORRECT);
      }
 
    g_trade.SetExpertMagicNumber(InpMagicNumber);
-   g_trade.SetDeviationInPoints((ulong)MathMax(InpDeviationPoints, 0));
    g_trade.SetTypeFillingBySymbol(InpBrokerSymbol);
    g_trade.LogLevel(LOG_LEVEL_ERRORS);
 
-// Separate files for dry run and live, so switching to live does not
-// inherit "already handled" from signals that were only logged.
    FolderCreate(STATE_FOLDER);
-   string suffix = StringFormat("%I64d_%I64d_%s.txt", AccountInfoInteger(ACCOUNT_LOGIN),
-                                (long)InpMagicNumber, InpDryRun ? "dry" : "live");
-   g_stateFile  = STATE_FOLDER + "\\handled_" + suffix;
-   g_eventsFile = STATE_FOLDER + "\\reports_" + suffix;
-   LoadState();
-   LoadEvents();
+   string base    = StringFormat("%I64d_%I64d", AccountInfoInteger(ACCOUNT_LOGIN), (long)InpMagicNumber);
+   g_stateFile    = STATE_FOLDER + "\\handled_" + base + ".txt";
+   g_eventsFile   = STATE_FOLDER + "\\reports_" + base + ".txt";
+   g_settingsFile = STATE_FOLDER + "\\settings_" + base + ".txt";
+   LoadState(base);
+   LoadEvents(base);
+   LoadSettings();
+   ApplyEffectiveSettings();
 
    if(!EventSetTimer(MathMax(InpPollSeconds, 5)))
       return(INIT_FAILED);
 
-   PrintFormat("VC Trading EA 1.10 started - %s | %s -> %s | lot %.2f | max trades %d | reporting %s",
-               InpDryRun ? "DRY RUN (no orders are sent)" : "LIVE", InpSignalSymbol, InpBrokerSymbol,
-               InpLotSize, InpMaxOpenTrades, InpReportActivity ? "on" : "off");
+   PrintFormat("VC Trading EA %s started - %s | %s -> %s | max lot %.2f | website live switch %s | reporting %s",
+               EA_VERSION, ModeText(), InpSignalSymbol, InpBrokerSymbol, InpMaxLotSize,
+               InpAllowWebsiteLive ? "ALLOWED" : "not allowed", InpReportActivity ? "on" : "off");
    UpdatePanel();
    return(INIT_SUCCEEDED);
   }
@@ -150,10 +181,12 @@ void OnTimer()
    FeedSignal signals[];
    bool fetched = FetchFeed(signals);
 
-// Both use only this terminal's own clock and trade history, so they run
-// even when the website cannot be reached: an unfilled order must not
-// outlive its signal, and a fill is recorded (and queued) when it happens.
+// These use only this terminal's own clock, history and last-known
+// settings, so they run even when the website cannot be reached: an
+// unfilled order must not outlive its signal or a pause, and a fill is
+// recorded (and queued) when it happens.
    CancelExpiredOrders();
+   CancelOrdersWhilePaused();
    ReconcileTrades();
 
 // Everything below trusts the feed, so it runs only on a response that
@@ -171,13 +204,171 @@ void OnTimer()
   }
 
 //+------------------------------------------------------------------+
+//| Settings (ADR-163)                                               |
+//+------------------------------------------------------------------+
+//| Website settings win, except where this terminal's own limits say
+//| otherwise: the lot is capped at MaxLotSize, and live is honoured only
+//| with AllowWebsiteLive. Towards dry run the website always wins.
+void ApplyEffectiveSettings()
+  {
+   bool   paused    = false;
+   bool   dryRun    = InpDryRun;
+   double lot       = InpLotSize;
+   int    maxTrades = InpMaxOpenTrades;
+   int    deviation = InpDeviationPoints;
+
+   if(InpUseWebsiteSettings && g_web.received)
+     {
+      paused    = g_web.paused;
+      dryRun    = g_web.dryRun ? true : (InpAllowWebsiteLive ? false : InpDryRun);
+      lot       = g_web.lot;
+      maxTrades = g_web.maxTrades;
+      deviation = g_web.deviation;
+      if(!g_web.dryRun && !InpAllowWebsiteLive && InpDryRun)
+         Print("the website asked for LIVE, but AllowWebsiteLive is false on this EA - staying in dry run");
+     }
+   if(lot > InpMaxLotSize + 1e-9)
+     {
+      PrintFormat("lot %.2f is above MaxLotSize %.2f - using %.2f", lot, InpMaxLotSize, InpMaxLotSize);
+      lot = InpMaxLotSize;
+     }
+   if(maxTrades < 1)
+      maxTrades = 1;
+   if(maxTrades > 20)
+      maxTrades = 20;
+   if(deviation < 0)
+      deviation = 0;
+   if(deviation > 1000)
+      deviation = 1000;
+
+   bool changed = !g_settingsApplied || paused != g_paused || dryRun != g_dryRun ||
+                  MathAbs(lot - g_lotSize) > 1e-9 || maxTrades != g_maxTrades || deviation != g_deviation;
+   g_paused          = paused;
+   g_dryRun          = dryRun;
+   g_lotSize         = lot;
+   g_maxTrades       = maxTrades;
+   g_deviation       = deviation;
+   g_settingsApplied = true;
+   g_trade.SetDeviationInPoints((ulong)g_deviation);
+
+   if(changed)
+      PrintFormat("settings now: %s | lot %.2f (limit %.2f) | max trades %d | slippage %d | from %s", ModeText(),
+                  g_lotSize, InpMaxLotSize, g_maxTrades, g_deviation, SettingsSource());
+  }
+
+//+------------------------------------------------------------------+
+//| The feed's "settings" object has no nested objects, so it ends at the
+//| first closing brace after it starts.
+bool ParseSettings(const string json, WebsiteSettings &out)
+  {
+   ZeroMemory(out);
+   int start = StringFind(json, "\"settings\":{");
+   if(start < 0)
+      return(false);
+   int end = StringFind(json, "}", start);
+   if(end < 0)
+      return(false);
+   string obj = StringSubstr(json, start, end - start + 1);
+
+   string version, paused, dryRun, lot, maxTrades, deviation;
+   if(!JsonValue(obj, "version", version) || !JsonValue(obj, "paused", paused) ||
+      !JsonValue(obj, "dry_run", dryRun) || !JsonValue(obj, "lot_size", lot) ||
+      !JsonValue(obj, "max_open_trades", maxTrades) || !JsonValue(obj, "max_slippage_points", deviation))
+      return(false);
+   if((paused != "true" && paused != "false") || (dryRun != "true" && dryRun != "false"))
+      return(false);
+
+   out.version   = StringToInteger(version);
+   out.paused    = (paused == "true");
+   out.dryRun    = (dryRun == "true");
+   out.lot       = StringToDouble(lot);
+   out.maxTrades = (int)StringToInteger(maxTrades);
+   out.deviation = (int)StringToInteger(deviation);
+   out.received  = (out.version > 0 && out.lot > 0.0);
+   return(out.received);
+  }
+
+//+------------------------------------------------------------------+
+//| The last website settings are kept on disk, so a restart while the
+//| website is unreachable keeps them rather than reverting to inputs.
+void LoadSettings()
+  {
+   ZeroMemory(g_web);
+   if(!FileIsExist(g_settingsFile))
+      return;
+   int handle = FileOpen(g_settingsFile, FILE_READ | FILE_TXT | FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+      return;
+   string parts[];
+   int    fields = StringSplit(FileReadString(handle), ';', parts);
+   FileClose(handle);
+   if(fields != 6)
+      return;
+   g_web.version   = StringToInteger(parts[0]);
+   g_web.paused    = (parts[1] == "1");
+   g_web.dryRun    = (parts[2] == "1");
+   g_web.lot       = StringToDouble(parts[3]);
+   g_web.maxTrades = (int)StringToInteger(parts[4]);
+   g_web.deviation = (int)StringToInteger(parts[5]);
+   g_web.received  = (g_web.version > 0 && g_web.lot > 0.0);
+  }
+
+//+------------------------------------------------------------------+
+void SaveSettings()
+  {
+   int handle = FileOpen(g_settingsFile, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+     {
+      LogOnce(StringFormat("could not write %s (error %d)", g_settingsFile, GetLastError()));
+      return;
+     }
+   FileWriteString(handle, StringFormat("%I64d;%d;%d;%.2f;%d;%d\r\n", g_web.version, g_web.paused ? 1 : 0,
+                                        g_web.dryRun ? 1 : 0, g_web.lot, g_web.maxTrades, g_web.deviation));
+   FileClose(handle);
+  }
+
+//+------------------------------------------------------------------+
+bool SettingsDiffer(const WebsiteSettings &a, const WebsiteSettings &b)
+  {
+// By content, not just version: a replacement token starts again at
+// version 1, so its version number can equal one saved for the old token.
+   return(a.version != b.version || a.paused != b.paused || a.dryRun != b.dryRun ||
+          MathAbs(a.lot - b.lot) > 1e-9 || a.maxTrades != b.maxTrades || a.deviation != b.deviation);
+  }
+
+//+------------------------------------------------------------------+
+string ModeText()
+  {
+   if(g_paused)
+      return(g_dryRun ? "PAUSED (dry run)" : "PAUSED (live)");
+   return(g_dryRun ? "DRY RUN (no orders are sent)" : "LIVE");
+  }
+
+//+------------------------------------------------------------------+
+string SettingsSource()
+  {
+   return((InpUseWebsiteSettings && g_web.received) ? StringFormat("website v%I64d", g_web.version) : "EA inputs");
+  }
+
+//+------------------------------------------------------------------+
 //| Feed                                                             |
 //+------------------------------------------------------------------+
 bool FetchFeed(FeedSignal &signals[])
   {
    ArrayResize(signals, 0);
-   string url     = InpApiBaseUrl + "/ea/signals?symbol=" + InpSignalSymbol;
-   string headers = "X-EA-Token: " + InpEaToken + "\r\nAccept: application/json\r\n";
+   string url = InpApiBaseUrl + "/ea/signals?symbol=" + InpSignalSymbol;
+// Everything after the token is this terminal describing itself, so the
+// website can show whether its settings are applied and what the limits are.
+   string headers = "X-EA-Token: " + InpEaToken + "\r\nAccept: application/json\r\n" +
+                    "X-EA-Version: " + EA_VERSION + "\r\n" +
+                    "X-EA-Max-Lot: " + DoubleToString(InpMaxLotSize, 2) + "\r\n" +
+                    "X-EA-Allow-Live: " + (InpAllowWebsiteLive ? "1" : "0") + "\r\n" +
+                    // 0 when running on inputs - a version loaded from disk with
+                    // UseWebsiteSettings off would falsely read as "applied".
+                    "X-EA-Settings-Version: " +
+                    IntegerToString((InpUseWebsiteSettings && g_web.received) ? g_web.version : 0) + "\r\n" +
+                    "X-EA-Dry-Run: " + (g_dryRun ? "1" : "0") + "\r\n" +
+                    "X-EA-Paused: " + (g_paused ? "1" : "0") + "\r\n";
    char   body[];
    char   result[];
    string resultHeaders;
@@ -225,6 +416,18 @@ bool FetchFeed(FeedSignal &signals[])
       ArrayResize(signals, 0);
       SetStatus("unreadable signal list - nothing changed");
       return(false);
+     }
+
+// Applied before this poll's signals are handled, so a pause or a lot
+// change takes effect on the very next signal.
+   WebsiteSettings incoming;
+   if(InpUseWebsiteSettings && ParseSettings(text, incoming) &&
+      (!g_web.received || SettingsDiffer(incoming, g_web)))
+     {
+      g_web = incoming;
+      SaveSettings();
+      PrintFormat("received website settings v%I64d", g_web.version);
+      ApplyEffectiveSettings();
      }
 
    SetStatus("ok");
@@ -337,35 +540,41 @@ bool JsonValue(const string json, const string key, string &value)
 //+------------------------------------------------------------------+
 void HandleSignal(const FeedSignal &s)
   {
-   if(FindHandled(s.id) >= 0)
-      return; // acted on already - never twice
+   bool live = !g_dryRun;
+   if(FindHandled(s.id, live) >= 0)
+      return; // acted on already in this mode - never twice
    if(s.status != "active")
       return; // triggered: keep any order we have, open nothing new
+   if(g_paused)
+     {
+      LogOnce("paused from the website - not acting on new signals");
+      return; // not remembered - still considered after resuming, while active
+     }
    if((long)s.expiresAt - (long)WebsiteNow() < MIN_SECONDS_BEFORE_EXPIRY)
       return;
 
    string shortId = StringSubstr(s.id, 0, 8);
    string comment = COMMENT_PREFIX + shortId;
-   if(HasTradeWithComment(comment))
+   if(live && HasTradeWithComment(comment))
      {
       // The state file was lost but the order exists - adopt it, do not duplicate it.
       ulong pending = FindPendingTicket(comment);
       Remember(s.id, pending, KIND_PENDING, s.expiresAt, pending, FindPositionId(comment));
       return;
      }
-   if(CountOwnTrades() >= InpMaxOpenTrades)
+   if(CountOwnTrades() >= g_maxTrades)
      {
       LogOnce(StringFormat("signal %s waiting: %d of %d trades already open", shortId, CountOwnTrades(),
-                           InpMaxOpenTrades));
+                           g_maxTrades));
       return; // not remembered - reconsidered once a trade closes, while still active
      }
 
-   double volume = NormalizeVolume(InpLotSize);
+   double volume = NormalizeVolume(g_lotSize);
    if(volume <= 0.0)
      {
-      string why = StringFormat("LotSize %.2f is below %s's minimum lot", InpLotSize, InpBrokerSymbol);
+      string why = StringFormat("lot %.2f is below %s's minimum lot", g_lotSize, InpBrokerSymbol);
       Remember(s.id, 0, KIND_SKIPPED, s.expiresAt);
-      QueueEvent("skipped:" + s.id, "order_skipped", s.id, JS("message", why));
+      QueueEvent("skipped:" + s.id, "order_skipped", s.id, JS("message", why), live);
       PrintFormat("signal %s skipped: %s", shortId, why);
       return;
      }
@@ -385,7 +594,7 @@ void HandleSignal(const FeedSignal &s)
                                 PriceText(tick.bid), PriceText(tick.ask));
       Remember(s.id, 0, KIND_SKIPPED, s.expiresAt);
       QueueEvent("skipped:" + s.id, "order_skipped", s.id,
-                 JP("stop_loss", sl) + "," + JP("take_profit", tp) + "," + JS("message", why));
+                 JP("stop_loss", sl) + "," + JP("take_profit", tp) + "," + JS("message", why), live);
       PrintFormat("signal %s skipped: %s", shortId, why);
       return;
      }
@@ -414,7 +623,7 @@ void HandleSignal(const FeedSignal &s)
                                 EnumToString(type), InpBrokerSymbol, volume, PriceText(price),
                                 PriceText(sl), PriceText(tp), TimeToString(s.expiresAt), shortId);
 
-   if(InpDryRun)
+   if(!live)
      {
       MqlTradeRequest     request;
       MqlTradeCheckResult check;
@@ -427,7 +636,7 @@ void HandleSignal(const FeedSignal &s)
       request.price        = price;
       request.sl           = sl;
       request.tp           = tp;
-      request.deviation    = (ulong)MathMax(InpDeviationPoints, 0);
+      request.deviation    = (ulong)g_deviation;
       request.magic        = InpMagicNumber;
       request.comment      = comment;
       request.type_filling = FillingFor(InpBrokerSymbol);
@@ -441,7 +650,7 @@ void HandleSignal(const FeedSignal &s)
       PrintFormat("[DRY RUN] %s | broker check: %s", what, verdict);
       Remember(s.id, 0, KIND_DRY_RUN, s.expiresAt);
       QueueEvent("dry_run_checked:" + s.id, "dry_run_checked", s.id,
-                 fields + "," + JI("retcode", (long)check.retcode) + "," + JS("message", verdict));
+                 fields + "," + JI("retcode", (long)check.retcode) + "," + JS("message", verdict), false);
       return;
      }
 
@@ -465,7 +674,7 @@ void HandleSignal(const FeedSignal &s)
      {
       ulong orderTicket = g_trade.ResultOrder();
       Remember(s.id, market ? 0 : orderTicket, market ? KIND_MARKET : KIND_PENDING, s.expiresAt, orderTicket);
-      QueueEvent("placed:" + s.id, "order_placed", s.id, fields + "," + JI("order_ticket", (long)orderTicket));
+      QueueEvent("placed:" + s.id, "order_placed", s.id, fields + "," + JI("order_ticket", (long)orderTicket), true);
       PrintFormat("[LIVE] placed %s | ticket %I64u", what, orderTicket);
       return;
      }
@@ -482,7 +691,7 @@ void HandleSignal(const FeedSignal &s)
                 : g_trade.ResultRetcodeDescription();
    Remember(s.id, 0, KIND_REJECTED, s.expiresAt);
    QueueEvent("rejected:" + s.id, "order_rejected", s.id,
-              fields + "," + JI("retcode", (long)retcode) + "," + JS("message", why));
+              fields + "," + JI("retcode", (long)retcode) + "," + JS("message", why), true);
    PrintFormat("[LIVE] NOT placed, not retrying: %s | %u %s", what, retcode, why);
   }
 
@@ -527,6 +736,18 @@ void CancelExpiredOrders()
   }
 
 //+------------------------------------------------------------------+
+//| Paused means no exposure the EA has not already taken on: unfilled
+//| orders go, filled positions stay under their broker stop and target.
+void CancelOrdersWhilePaused()
+  {
+   if(!g_paused)
+      return;
+   for(int i = 0; i < ArraySize(g_handled); i++)
+      if(g_handled[i].ticket > 0 && IsOwnPendingOrder(g_handled[i].ticket))
+         CancelOrder(i, "trading is paused from the website");
+  }
+
+//+------------------------------------------------------------------+
 void CancelOrder(const int index, const string reason)
   {
    ulong ticket = g_handled[index].ticket;
@@ -535,7 +756,7 @@ void CancelOrder(const int index, const string reason)
       PrintFormat("[LIVE] cancelled pending order %I64u because %s [%s]", ticket, reason,
                   StringSubstr(g_handled[index].id, 0, 8));
       QueueEvent("cancelled:" + IntegerToString((long)ticket), "order_cancelled", g_handled[index].id,
-                 JI("order_ticket", (long)ticket) + "," + JS("message", reason));
+                 JI("order_ticket", (long)ticket) + "," + JS("message", reason), true);
       g_handled[index].ticket      = 0;
       g_handled[index].orderTicket = 0; // resolved - reconciliation must not report it again
       SaveState();
@@ -548,7 +769,9 @@ void CancelOrder(const int index, const string reason)
 //+------------------------------------------------------------------+
 //| Fills and closes, read from this terminal's own trade history rather
 //| than from trade events, so one that happened while the EA was not
-//| running is still found - and reported - the next time it is.
+//| running is still found - and reported - the next time it is. Runs
+//| over every record whatever the current mode, so a live position keeps
+//| being tracked after switching to dry run.
 void ReconcileTrades()
   {
    bool changed = false;
@@ -575,7 +798,7 @@ void ReconcileTrades()
                             : (state == ORDER_STATE_REJECTED) ? "rejected by the broker after it was placed"
                             : "cancelled outside the EA";
                QueueEvent("cancelled:" + IntegerToString((long)order), "order_cancelled", g_handled[i].id,
-                          JI("order_ticket", (long)order) + "," + JS("message", why));
+                          JI("order_ticket", (long)order) + "," + JS("message", why), true);
                PrintFormat("[LIVE] order %I64u %s [%s]", order, why, StringSubstr(g_handled[i].id, 0, 8));
                g_handled[i].ticket      = 0;
                g_handled[i].orderTicket = 0;
@@ -612,7 +835,7 @@ bool ReportOpened(const int index, const ulong positionId)
       QueueEvent("opened:" + IntegerToString((long)positionId), "position_opened", g_handled[index].id,
                  JS("order_type", side) + "," + JI("order_ticket", (long)g_handled[index].orderTicket) + "," +
                  JI("position_id", (long)positionId) + "," + JV("volume", lots) + "," + JP("price", price),
-                 ServerToWebsite((datetime)HistoryDealGetInteger(deal, DEAL_TIME)));
+                 true, ServerToWebsite((datetime)HistoryDealGetInteger(deal, DEAL_TIME)));
       PrintFormat("[LIVE] filled %s %.2f lots @ %s | position %I64u [%s]", side, lots, PriceText(price),
                   positionId, StringSubstr(g_handled[index].id, 0, 8));
       return(true);
@@ -662,7 +885,7 @@ bool ReportClosed(const int index)
    QueueEvent("closed:" + IntegerToString((long)positionId), "position_closed", g_handled[index].id,
               JI("position_id", (long)positionId) + "," + JV("volume", lots) + "," + JP("price", lastPrice) + "," +
               JM("profit", net) + "," + JS("currency", currency) + "," + JS("close_reason", reason),
-              ServerToWebsite(lastTime));
+              true, ServerToWebsite(lastTime));
    PrintFormat("[LIVE] closed position %I64u by %s | net %.2f %s [%s]", positionId, reason, net, currency,
                StringSubstr(g_handled[index].id, 0, 8));
    return(true);
@@ -849,18 +1072,18 @@ string BaseHost(const string url)
 //+------------------------------------------------------------------+
 //| Queues one report. The key names what happened, so the website stores
 //| it once however many times a lost response makes the EA re-send it.
-//| Prefixed with the account and mode so a dry-run "skipped" and a live
-//| "skipped" for the same signal are different events.
+//| Prefixed with the account and the mode the record was acted on in, so
+//| a dry-run "skipped" and a live "skipped" for one signal stay distinct.
 void QueueEvent(const string key, const string type, const string signalId, const string fields,
-                const datetime occurredAt = 0)
+                const bool live, const datetime occurredAt = 0)
   {
    if(!InpReportActivity)
       return;
    long     login   = AccountInfoInteger(ACCOUNT_LOGIN);
-   string   fullKey = StringFormat("%I64d:%s:%s", login, InpDryRun ? "dry" : "live", key);
+   string   fullKey = StringFormat("%I64d:%s:%s", login, live ? "live" : "dry", key);
    datetime when    = (occurredAt > 0) ? occurredAt : WebsiteNow();
    string   json    = "{" + JS("event_key", fullKey) + "," + JS("event_type", type) + "," +
-                      JS("signal_id", signalId) + ",\"dry_run\":" + (InpDryRun ? "true" : "false") + "," +
+                      JS("signal_id", signalId) + ",\"dry_run\":" + (live ? "false" : "true") + "," +
                       JI("occurred_at", (long)when) + "," + JS("account_login", IntegerToString(login)) + "," +
                       JS("broker_symbol", InpBrokerSymbol) + (StringLen(fields) > 0 ? "," + fields : "") + "}";
 
@@ -958,12 +1181,30 @@ string JsonEscape(string text)
   }
 
 //+------------------------------------------------------------------+
-void LoadEvents()
+//| One report file since 1.20 (reports carry their own mode). On first
+//| start, the 1.10 per-mode files are merged into it.
+void LoadEvents(const string base)
   {
    ArrayResize(g_events, 0);
-   if(!FileIsExist(g_eventsFile))
+   if(FileIsExist(g_eventsFile))
+      LoadEventsFile(g_eventsFile);
+   else
+     {
+      LoadEventsFile(STATE_FOLDER + "\\reports_" + base + "_dry.txt");
+      LoadEventsFile(STATE_FOLDER + "\\reports_" + base + "_live.txt");
+      if(ArraySize(g_events) > 0)
+         SaveEvents();
+     }
+   if(ArraySize(g_events) > 0)
+      PrintFormat("%d activity reports from last session are waiting to send", ArraySize(g_events));
+  }
+
+//+------------------------------------------------------------------+
+void LoadEventsFile(const string file)
+  {
+   if(!FileIsExist(file))
       return;
-   int handle = FileOpen(g_eventsFile, FILE_READ | FILE_TXT | FILE_ANSI);
+   int handle = FileOpen(file, FILE_READ | FILE_TXT | FILE_ANSI);
    if(handle == INVALID_HANDLE)
       return;
    while(!FileIsEnding(handle))
@@ -976,8 +1217,6 @@ void LoadEvents()
       g_events[n] = line;
      }
    FileClose(handle);
-   if(ArraySize(g_events) > 0)
-      PrintFormat("%d activity reports from last session are waiting to send", ArraySize(g_events));
   }
 
 //+------------------------------------------------------------------+
@@ -997,10 +1236,10 @@ void SaveEvents()
 //+------------------------------------------------------------------+
 //| State: which signals this EA has already acted on                |
 //+------------------------------------------------------------------+
-int FindHandled(const string id)
+int FindHandled(const string id, const bool live)
   {
    for(int i = 0; i < ArraySize(g_handled); i++)
-      if(g_handled[i].id == id)
+      if(g_handled[i].id == id && (g_handled[i].live == 1) == live)
          return(i);
    return(-1);
   }
@@ -1018,6 +1257,7 @@ void Remember(const string id, const ulong ticket, const int kind, const datetim
    g_handled[n].orderTicket    = orderTicket;
    g_handled[n].positionId     = positionId;
    g_handled[n].closedReported = 0;
+   g_handled[n].live           = g_dryRun ? 0 : 1;
    SaveState();
   }
 
@@ -1045,23 +1285,41 @@ void PruneState()
   }
 
 //+------------------------------------------------------------------+
-//| Reads both the 1.00 format (4 fields) and 1.10 (7 fields).
-void LoadState()
+//| One history file since 1.20, each record tagged with its mode, because
+//| the website can now switch mode while the EA runs. On first start the
+//| 1.00/1.10 per-mode files are merged in, tagged by which file they came from.
+void LoadState(const string base)
   {
    ArrayResize(g_handled, 0);
-   if(!FileIsExist(g_stateFile))
+   if(FileIsExist(g_stateFile))
+      LoadStateFile(g_stateFile, 0);
+   else
+     {
+      LoadStateFile(STATE_FOLDER + "\\handled_" + base + "_dry.txt", 0);
+      LoadStateFile(STATE_FOLDER + "\\handled_" + base + "_live.txt", 1);
+      if(ArraySize(g_handled) > 0)
+         SaveState();
+     }
+   PrintFormat("loaded %d handled signals from %s", ArraySize(g_handled), g_stateFile);
+  }
+
+//+------------------------------------------------------------------+
+//| Reads the 1.00 format (4 fields), 1.10 (7) and 1.20 (8, with mode).
+void LoadStateFile(const string file, const int defaultLive)
+  {
+   if(!FileIsExist(file))
       return;
-   int handle = FileOpen(g_stateFile, FILE_READ | FILE_TXT | FILE_ANSI);
+   int handle = FileOpen(file, FILE_READ | FILE_TXT | FILE_ANSI);
    if(handle == INVALID_HANDLE)
      {
-      PrintFormat("could not read %s (error %d) - starting with no history", g_stateFile, GetLastError());
+      PrintFormat("could not read %s (error %d)", file, GetLastError());
       return;
      }
    while(!FileIsEnding(handle))
      {
       string parts[];
       int    fields = StringSplit(FileReadString(handle), ';', parts);
-      if(fields != 4 && fields != 7)
+      if(fields != 4 && fields != 7 && fields != 8)
          continue;
       int n = ArraySize(g_handled);
       ArrayResize(g_handled, n + 1);
@@ -1069,12 +1327,12 @@ void LoadState()
       g_handled[n].ticket         = (ulong)StringToInteger(parts[1]);
       g_handled[n].kind           = (int)StringToInteger(parts[2]);
       g_handled[n].expiresAt      = (datetime)StringToInteger(parts[3]);
-      g_handled[n].orderTicket    = (fields == 7) ? (ulong)StringToInteger(parts[4]) : g_handled[n].ticket;
-      g_handled[n].positionId     = (fields == 7) ? (ulong)StringToInteger(parts[5]) : 0;
-      g_handled[n].closedReported = (fields == 7) ? (int)StringToInteger(parts[6]) : 0;
+      g_handled[n].orderTicket    = (fields >= 7) ? (ulong)StringToInteger(parts[4]) : g_handled[n].ticket;
+      g_handled[n].positionId     = (fields >= 7) ? (ulong)StringToInteger(parts[5]) : 0;
+      g_handled[n].closedReported = (fields >= 7) ? (int)StringToInteger(parts[6]) : 0;
+      g_handled[n].live           = (fields == 8) ? (int)StringToInteger(parts[7]) : defaultLive;
      }
    FileClose(handle);
-   PrintFormat("loaded %d handled signals from %s", ArraySize(g_handled), g_stateFile);
   }
 
 //+------------------------------------------------------------------+
@@ -1087,10 +1345,11 @@ void SaveState()
       return;
      }
    for(int i = 0; i < ArraySize(g_handled); i++)
-      FileWriteString(handle, StringFormat("%s;%I64u;%d;%I64d;%I64u;%I64u;%d\r\n", g_handled[i].id,
+      FileWriteString(handle, StringFormat("%s;%I64u;%d;%I64d;%I64u;%I64u;%d;%d\r\n", g_handled[i].id,
                                            g_handled[i].ticket, g_handled[i].kind,
                                            (long)g_handled[i].expiresAt, g_handled[i].orderTicket,
-                                           g_handled[i].positionId, g_handled[i].closedReported));
+                                           g_handled[i].positionId, g_handled[i].closedReported,
+                                           g_handled[i].live));
    FileClose(handle);
   }
 
@@ -1123,9 +1382,10 @@ void LogOnce(const string message)
 //+------------------------------------------------------------------+
 void UpdatePanel()
   {
-   Comment(StringFormat("VC Trading EA 1.10  -  %s\nFeed: %s  (checked %s)\nOpen signals: %d   EA trades: %d / %d\n%s -> %s   lot %.2f\nReports waiting: %d",
-                        InpDryRun ? "DRY RUN (no orders sent)" : "LIVE", g_status,
-                        TimeToString(TimeLocal(), TIME_SECONDS), g_openSignalCount, CountOwnTrades(),
-                        InpMaxOpenTrades, InpSignalSymbol, InpBrokerSymbol, InpLotSize, ArraySize(g_events)));
+   Comment(StringFormat("VC Trading EA %s  -  %s\nFeed: %s  (checked %s)\nOpen signals: %d   EA trades: %d / %d\n%s -> %s   lot %.2f (limit %.2f)\nSettings: %s   website live switch: %s\nReports waiting: %d",
+                        EA_VERSION, ModeText(), g_status, TimeToString(TimeLocal(), TIME_SECONDS),
+                        g_openSignalCount, CountOwnTrades(), g_maxTrades, InpSignalSymbol, InpBrokerSymbol,
+                        g_lotSize, InpMaxLotSize, SettingsSource(), InpAllowWebsiteLive ? "allowed" : "not allowed",
+                        ArraySize(g_events)));
   }
 //+------------------------------------------------------------------+

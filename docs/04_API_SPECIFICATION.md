@@ -825,7 +825,21 @@ Super admin session. The caller's EA tokens - never the token itself.
 
 Response
 
-{ "items": [ { "id": "…", "name": "Home PC", "hint": "x9Qe", "created_at": "2026-09-11T10:00:00Z", "last_used_at": "2026-09-11T10:05:00Z" } ] }
+{
+  "items": [
+    {
+      "id": "…",
+      "name": "Windows Server",
+      "hint": "x9Qe",
+      "created_at": "2026-09-11T10:00:00Z",
+      "last_used_at": "2026-09-11T10:05:00Z",
+      "settings": { "paused": false, "dry_run": true, "lot_size": 0.01, "max_open_trades": 1, "max_slippage_points": 50, "version": 3, "updated_at": "2026-09-11T10:04:00Z" },
+      "terminal": { "ea_version": "1.20", "max_lot": 0.1, "allow_remote_live": false, "applied_settings_version": 3, "dry_run": true, "paused": false }
+    }
+  ]
+}
+
+ADR-163: `settings` is what the website saved for this terminal. `terminal` is what the terminal last reported about itself in its feed poll headers: all null until an EA 1.20 or later has polled. `terminal.dry_run`/`paused` are what it is actually doing, which can differ from `settings` (for example live saved, but `allow_remote_live` false).
 
 ---
 
@@ -843,6 +857,20 @@ Super admin session. `204`. The EA's next poll is a 401. 404 if the id is unknow
 
 ---
 
+PUT /ea/tokens/{id}/settings
+
+ADR-163. Super admin session. Request
+
+{ "paused": false, "dry_run": true, "lot_size": 0.02, "max_open_trades": 1, "max_slippage_points": 50 }
+
+`lot_size` in steps of 0.01, above 0 and at most 100; `max_open_trades` 1-20; `max_slippage_points` 0-1000.
+
+Response: the token item, with `settings.version` bumped. It reaches the terminal on its next feed poll; `terminal.applied_settings_version` catches up once it has. Saving identical values changes nothing (no version bump, no audit row). Every change is audit-logged as `ea_settings_updated` with each field's old and new value and a `live_requested` flag.
+
+422 for an invalid value, **or a `lot_size` above the terminal's reported `max_lot`** (its `MaxLotSize` input), with a message saying so. `dry_run: false` is saved but only honoured by an EA whose `AllowWebsiteLive` input is true. Moving towards dry run is always honoured. 404 for an unknown token or another user's. An EA token cannot call this (401).
+
+---
+
 GET /ea/signals?symbol=XAUUSD
 
 **Header `X-EA-Token: vcea_…`** - not `Authorization`. A session token is not accepted here, and an EA token is not accepted anywhere else. Rate limited per IP (`EA_FEED_RATE_LIMIT`, default 30/min), checked before the token.
@@ -854,6 +882,7 @@ Response
 {
   "server_time": 1789120800,
   "symbol": "XAUUSD",
+  "settings": { "paused": false, "dry_run": true, "lot_size": 0.01, "max_open_trades": 1, "max_slippage_points": 50, "version": 3, "updated_at": "2026-09-11T10:04:00Z" },
   "signals": [
     {
       "id": "3f7e2b1a-9c4d-4e5f-8a6b-1d2c3e4f5a6b",
@@ -875,6 +904,17 @@ Response
 All times are **Unix epoch seconds**. Only signals whose read-time status is `active` or `triggered` appear, newest first. `expires_at` is `created_at` + `SIGNAL_TTL_HOURS` - the end of the pending entry's life.
 
 How an EA reads it (ADR-161 §4): open an order only for `active`, once per `id`; cancel an unfilled order when its signal is no longer listed or `expires_at` passes; never treat a failed request as "no signals".
+
+ADR-163: `settings` is this terminal's website settings, applied by the EA within its own limits (`MaxLotSize`, `AllowWebsiteLive`).
+
+The EA may describe itself in optional request headers:
+- `X-EA-Version`
+- `X-EA-Max-Lot`
+- `X-EA-Allow-Live` (`1`/`0`)
+- `X-EA-Settings-Version` (the version it applied)
+- `X-EA-Dry-Run` and `X-EA-Paused` (what it is actually doing)
+
+These are recorded on the token and shown on the website. A missing or unreadable header is ignored and never fails the request, and an absent header never clears an earlier report.
 
 401 `invalid_ea_token` for a missing, unknown or revoked token, or one whose owner is inactive or no longer a super admin - one response for all of them. 404 for an unknown symbol.
 

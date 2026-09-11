@@ -1,10 +1,16 @@
-import { apiDelete, apiGet, apiPost } from "@/services/api-client";
+import { apiDelete, apiGet, apiPost, apiPut } from "@/services/api-client";
 import type {
   EaEventListResponse,
   EaEventType,
+  EaSettings,
   EaTokenCreatedResponse,
   EaTokenListResponse,
+  EaTokenResponse,
 } from "@/services/types";
+
+export function updateEaSettings(id: string, settings: EaSettings): Promise<EaTokenResponse> {
+  return apiPut<EaTokenResponse>(`/ea/tokens/${id}/settings`, settings);
+}
 
 export function listEaTokens(): Promise<EaTokenListResponse> {
   return apiGet<EaTokenListResponse>("/ea/tokens");

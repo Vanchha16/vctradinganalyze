@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, KeyRound } from "lucide-react";
+import { Check, Copy, KeyRound, SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmActionDialog } from "@/features/admin/components/confirm-action-dialog";
+import { EaSettingsDialog, EaTerminalSummary } from "@/features/settings/components/ea-settings-dialog";
 import { useCreateEaToken, useEaTokens, useRevokeEaToken } from "@/hooks/use-ea-tokens";
 import { formatDateTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
@@ -27,6 +28,9 @@ export function EaSection() {
   const [name, setName] = useState("");
   const [created, setCreated] = useState<EaTokenCreatedResponse | null>(null);
   const [revoking, setRevoking] = useState<EaTokenResponse | null>(null);
+  // By id, so the dialog sees the latest refetched token (applied version,
+  // reported limits) rather than a snapshot from when it was opened.
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   async function handleCreate(event: React.FormEvent) {
     event.preventDefault();
@@ -86,10 +90,19 @@ export function EaSection() {
                     Created {formatDateTime(token.created_at)} · Last used{" "}
                     {token.last_used_at ? formatDateTime(token.last_used_at) : "never"}
                   </p>
+                  <div className="mt-1.5">
+                    <EaTerminalSummary token={token} />
+                  </div>
                 </div>
-                <Button variant="outline" size="sm" onClick={() => setRevoking(token)}>
-                  Revoke
-                </Button>
+                <div className="flex shrink-0 gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setEditingId(token.id)}>
+                    <SlidersHorizontal className="h-4 w-4" />
+                    Settings
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setRevoking(token)}>
+                    Revoke
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -110,6 +123,14 @@ export function EaSection() {
           </Button>
         </form>
       </CardContent>
+
+      <EaSettingsDialog
+        token={tokens.find((t) => t.id === editingId) ?? null}
+        open={editingId !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditingId(null);
+        }}
+      />
 
       <ConfirmActionDialog
         open={revoking !== null}

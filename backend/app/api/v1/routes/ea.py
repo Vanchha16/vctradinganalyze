@@ -24,11 +24,11 @@ from app.dependencies.ea import (
     get_ea_event_service,
     get_ea_principal,
     get_ea_service,
-    get_ea_user,
 )
 from app.dependencies.rate_limit import rate_limit_public
 from app.dependencies.rbac import require_super_admin
 from app.models.ea_execution_event import EaExecutionEvent
+from app.models.ea_token import EaToken
 from app.models.enums import SignalType
 from app.models.user import User
 from app.schemas.ea import (
@@ -38,8 +38,11 @@ from app.schemas.ea import (
     EaEventRejection,
     EaEventResponse,
     EaEventType,
+    EaSettings,
+    EaSettingsResponse,
     EaSignalFeedResponse,
     EaSignalResponse,
+    EaTerminalState,
     EaTokenCreatedResponse,
     EaTokenCreateRequest,
     EaTokenListResponse,
@@ -75,9 +78,7 @@ async def list_ea_tokens(
     actor: Annotated[User, Depends(require_super_admin)],
     service: _Service,
 ) -> EaTokenListResponse:
-    return EaTokenListResponse(
-        items=[EaTokenResponse.model_validate(t) for t in service.list_tokens(actor)]
-    )
+    return EaTokenListResponse(items=[_token_response(t) for t in service.list_tokens(actor)])
 
 
 @router.post("/tokens", response_model=EaTokenCreatedResponse, status_code=status.HTTP_201_CREATED)
@@ -88,14 +89,20 @@ async def create_ea_token(
 ) -> EaTokenCreatedResponse:
     """The response is the only place the raw token ever appears."""
     token, raw = service.create_token(actor, payload.name)
-    return EaTokenCreatedResponse(
-        id=token.id,
-        name=token.name,
-        hint=token.hint,
-        created_at=token.created_at,
-        last_used_at=token.last_used_at,
-        token=raw,
-    )
+    return EaTokenCreatedResponse(**_token_response(token).model_dump(), token=raw)
+
+
+@router.put("/tokens/{token_id}/settings", response_model=EaTokenResponse)
+async def update_ea_settings(
+    token_id: UUID,
+    payload: EaSettings,
+    actor: Annotated[User, Depends(require_super_admin)],
+    service: _Service,
+) -> EaTokenResponse:
+    """ADR-163 - reaches the terminal on its next feed poll. The response's
+    `terminal.applied_settings_version` catches up once it has."""
+    token = service.update_settings(actor, token_id, payload, datetime.now(UTC))
+    return _token_response(token)
 
 
 @router.delete("/tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -111,7 +118,7 @@ async def revoke_ea_token(
     "/signals", response_model=EaSignalFeedResponse, dependencies=[_feed_rate_limit]
 )
 async def ea_signal_feed(
-    _ea_user: Annotated[User, Depends(get_ea_user)],
+    principal: Annotated[EaPrincipal, Depends(get_ea_principal)],
     service: _Service,
     symbol: Annotated[str, Query(min_length=1, max_length=32)],
 ) -> EaSignalFeedResponse:
@@ -123,7 +130,41 @@ async def ea_signal_feed(
     return EaSignalFeedResponse(
         server_time=int(now.timestamp()),
         symbol=symbol.upper(),
+        settings=_settings_response(principal.token),
         signals=[_to_response(item, symbol.upper()) for item in feed],
+    )
+
+
+def _settings_response(token: EaToken) -> EaSettingsResponse:
+    return EaSettingsResponse(
+        paused=token.paused,
+        dry_run=token.dry_run,
+        lot_size=float(token.lot_size),
+        max_open_trades=token.max_open_trades,
+        max_slippage_points=token.max_slippage_points,
+        version=token.settings_version,
+        updated_at=(
+            as_aware_utc(token.settings_updated_at) if token.settings_updated_at else None
+        ),
+    )
+
+
+def _token_response(token: EaToken) -> EaTokenResponse:
+    return EaTokenResponse(
+        id=token.id,
+        name=token.name,
+        hint=token.hint,
+        created_at=token.created_at,
+        last_used_at=token.last_used_at,
+        settings=_settings_response(token),
+        terminal=EaTerminalState(
+            ea_version=token.ea_version,
+            max_lot=float(token.ea_max_lot) if token.ea_max_lot is not None else None,
+            allow_remote_live=token.ea_allow_remote_live,
+            applied_settings_version=token.applied_settings_version,
+            dry_run=token.effective_dry_run,
+            paused=token.effective_paused,
+        ),
     )
 
 

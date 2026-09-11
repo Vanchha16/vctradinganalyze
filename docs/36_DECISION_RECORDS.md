@@ -9957,6 +9957,119 @@ Future Review
 - If a P&L summary across events is wanted - it should read
   `position_closed` events, not signal P&L, for the reason in 2.
 
+# ADR-163
+
+Title
+
+Control Expert Advisor Settings From the Website, Within Limits Set on
+the Terminal
+
+Status
+
+Accepted
+
+Context
+
+Changing the EA's lot size or mode meant a Remote Desktop session to the
+Windows server, opening MT5, and editing the EA's inputs. The operator
+asked to do it from the website instead (2026-09-11) and chose:
+
+- the website may switch between dry run and **live**, but **only if the
+  EA on the server allows it**;
+- a **hard lot limit of 0.10** set in the EA, which the website can never
+  exceed;
+- website control of **pause/resume, lot size, max open trades and max
+  slippage**.
+
+The tension: every setting moved to the website is one a stolen website
+session can change. A dry-run bot with a small lot is harmless; a live
+bot with a large lot on a real account is not.
+
+Decision
+
+**1. Settings are per terminal, stored on `ea_tokens`.** One token is one
+terminal (a PC and a VPS can differ). Defaults equal the EA's own input
+defaults - dry run, 0.01 lot, 1 trade, 50 points, not paused - so a token
+never configured changes nothing. Every change bumps `settings_version`
+and writes an `ea_settings_updated` audit row listing each changed field,
+with `live_requested` called out so "who turned on real trading, and when"
+is one filter away. Re-saving identical values is a no-op.
+
+**2. The feed delivers them.** `GET /ea/signals` carries a `settings`
+object. No new request, and a change takes effect within one poll (about
+10 seconds).
+
+**3. The limits live on the terminal, not the website.** Two EA inputs
+the website can never override:
+- `MaxLotSize` (default 0.10) - the EA caps any lot at it.
+- `AllowWebsiteLive` (default **false**) - a website request for live is
+  ignored unless it is true. Requests towards dry run are always honoured.
+
+So turning real trading on, or raising the lot ceiling, still needs
+access to the terminal - a separate login on a separate machine. A
+compromised website session can pause the bot, lower its lot or switch
+it to dry run; it cannot make it riskier than the terminal allows.
+
+**4. The EA reports itself** in `X-EA-*` headers on each feed poll:
+version, `MaxLotSize`, `AllowWebsiteLive`, the settings version it applied,
+and what it is actually doing (dry run/paused). They are parsed
+leniently - a missing or garbled header is ignored and never fails the
+poll the EA trades from - and an absent header never clears an earlier
+report (event posts and EA 1.10 send none). With this the website can:
+- refuse a lot above the reported limit with a 422 that says why, instead
+  of the EA quietly clamping it;
+- show "Settings applied" versus "Waiting for EA";
+- say "Live not allowed on the server" when live is saved but not honoured.
+
+**5. Pause** means no new orders, and the EA cancels its own unfilled
+orders. Filled positions are untouched - their broker-side stop and target
+still close them. A signal not acted on while paused is still considered
+after resuming, if it is still active; an order cancelled by the pause is
+not re-placed.
+
+**6. Settings flow one way.** Only a super admin session can write them.
+An EA token cannot (tested) - a terminal that could write its own
+settings could lift the website-side view of its limits.
+
+**7. What stays in MT5 only:** token, API URL, magic number, symbols, the
+two safety limits, `UseWebsiteSettings`, `ReportActivity` and poll
+interval. Those identify the terminal and its orders, or bound what the
+website may do.
+
+**8. EA 1.20.** Keeps the last website settings on disk, so a restart
+while the website is down does not revert to the inputs. Mode can now
+change while running, so the history is one file with a mode per record -
+a live position keeps being tracked after switching to dry run. The 1.10
+per-mode files are merged into it on first start.
+
+Alternatives Considered
+
+- **Limits enforced only on the website.** Simpler, but a website
+  compromise would then be a trading compromise - rejected.
+- **A separate settings endpoint the EA polls.** An extra request per
+  poll for data that fits in the one the EA already makes.
+- **One settings row per user.** Two terminals could not differ, and there
+  is no clean answer to which terminal applied which version.
+
+Consequences
+
+- Lot, pause, max trades and slippage change from the website within
+  about 10 seconds.
+- Going live, or raising the lot ceiling, still needs a visit to the
+  terminal. That friction is the point of 3.
+- Revoking a token deletes its settings; a new token starts from the
+  defaults, i.e. dry run.
+- The website's view of the terminal is only as fresh as its last poll. A
+  terminal that is offline shows its last report, with `last_used_at` to
+  judge how old it is.
+
+Future Review
+
+- When a second symbol is traded: settings may need to become
+  per-symbol.
+- If pausing from Telegram is wanted - it would write the same `paused`
+  field through the same service method.
+
 ---
 
 # Review Policy

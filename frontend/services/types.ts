@@ -841,12 +841,39 @@ export interface TelegramStatusResponse {
 
 // ---- MT5 Expert Advisor tokens (ADR-161) ----
 
+/** ADR-163 - what the website controls on one terminal. */
+export interface EaSettings {
+  paused: boolean;
+  dry_run: boolean;
+  lot_size: number;
+  max_open_trades: number;
+  max_slippage_points: number;
+}
+
+export interface EaSettingsResponse extends EaSettings {
+  version: number;
+  updated_at: string | null;
+}
+
+/** What the terminal last reported about itself. All null until an EA 1.20+
+ * has polled. `dry_run`/`paused` are what it is actually doing. */
+export interface EaTerminalState {
+  ea_version: string | null;
+  max_lot: number | null;
+  allow_remote_live: boolean | null;
+  applied_settings_version: number | null;
+  dry_run: boolean | null;
+  paused: boolean | null;
+}
+
 export interface EaTokenResponse {
   id: string;
   name: string;
   hint: string;
   created_at: string;
   last_used_at: string | null;
+  settings: EaSettingsResponse;
+  terminal: EaTerminalState;
 }
 
 /** Returned once, by the create call only - `token` is never listed. */

@@ -11,20 +11,76 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.enums import SignalStatus, SignalType, Timeframe
 
+_LOT_STEP = 0.01
+
+
+class EaSettings(BaseModel):
+    """ADR-163 - what the website controls on one terminal.
+
+    Everything else - token, API URL, magic number, symbols - stays in MT5.
+    Those identify the terminal and its orders; changing them remotely
+    would make the EA lose track of what it already placed.
+    """
+
+    #: Kill switch: no new orders, and the EA cancels its own unfilled
+    #: ones. Filled positions keep their broker-side stop and target.
+    paused: bool
+    #: Towards dry run, always honoured. Towards live, honoured only when
+    #: the EA's own `AllowWebsiteLive` input is true - see
+    #: `EaTerminalState.allow_remote_live`.
+    dry_run: bool
+    #: The upper bound here is a sanity limit only. The real limit is the
+    #: EA's `MaxLotSize` input, enforced by the EA and checked against what
+    #: it reports.
+    lot_size: float = Field(gt=0, le=100)
+    max_open_trades: int = Field(ge=1, le=20)
+    max_slippage_points: int = Field(ge=0, le=1000)
+
+    @field_validator("lot_size")
+    @classmethod
+    def _in_lot_steps(cls, value: float) -> float:
+        rounded = round(value / _LOT_STEP) * _LOT_STEP
+        if abs(rounded - value) > 1e-9:
+            raise ValueError("lot size must be in steps of 0.01")
+        return round(rounded, 2)
+
+
+class EaSettingsResponse(EaSettings):
+    #: Bumped on every change and echoed back by the EA once applied - how
+    #: the website tells "saved" apart from "running on the terminal".
+    version: int
+    updated_at: datetime | None
+
+
+class EaTerminalState(BaseModel):
+    """What the terminal last reported about itself, in headers on its feed
+    requests. All null until an EA 1.20 or later has polled with this token."""
+
+    ea_version: str | None
+    #: The EA's hard `MaxLotSize`. The website refuses any lot above it.
+    max_lot: float | None
+    #: The EA's `AllowWebsiteLive` input.
+    allow_remote_live: bool | None
+    applied_settings_version: int | None
+    #: What the EA is actually doing after applying its own limits - can
+    #: differ from the saved settings (e.g. live requested, not allowed).
+    dry_run: bool | None
+    paused: bool | None
+
 
 class EaTokenResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: uuid.UUID
     name: str
     #: Last four characters of the token.
     hint: str
     created_at: datetime
     last_used_at: datetime | None
+    settings: EaSettingsResponse
+    terminal: EaTerminalState
 
 
 class EaTokenCreatedResponse(EaTokenResponse):
@@ -68,6 +124,9 @@ class EaSignalFeedResponse(BaseModel):
     #: Lets the EA measure its own clock drift instead of trusting the PC.
     server_time: int
     symbol: str
+    #: ADR-163 - this terminal's website settings, delivered on every poll
+    #: so a change takes effect within one poll and needs no extra request.
+    settings: EaSettingsResponse
     signals: list[EaSignalResponse]
 
 

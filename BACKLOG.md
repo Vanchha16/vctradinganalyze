@@ -363,8 +363,15 @@ Last updated: 2026-09-08 (ADR-141 signal monitoring range scan). Note: entries b
   3. an AI news reader for gold, shadow mode first.
 - **Upgrade 1 (built, ADR-165):** H1 analyses also run the confidence engine on H4 and D1, and the prompt states whether each higher timeframe agrees with, opposes, or is neutral to the setup. Decision unchanged; tested.
 - **Data note:** production has 734 H4 and only 35 D1 XAUUSD candles (2026-09-11). D1 lines may show partial data until history builds up; a one-off daily backfill is the fix if it stays thin.
-- **Upgrades 2 and 3 (not built):** each overturns part of ADR-078/079 or ADR-051 and needs its own ADR. Both start in shadow mode: the AI verdict is stored next to the signal or article and compared against real outcomes before it is allowed to act.
-- **Also pending, from the same session:** the operator chose "allow any new signal while one is open" (replacing the one-open-signal-per-asset gate), then paused it to ask questions. Not started; confirm before building. Since ADR-166 a DRAFT blocks too, so that decision now covers drafts as well.
+- **Upgrade 2 (built, ADR-167): AI risk review, shadow mode.**
+  - **When it runs:** a second gpt-6-astra call on every BUY/SELL (never WAIT), before the narration and on the same evidence.
+  - **What it returns:** approve or veto, 1-4 reasons, and the single biggest risk.
+  - **Storage and display:** stored on `ai_analysis` with its own token counts, and shown on the signal page and AI Analysis page.
+  - **Modes (`AI_RISK_REVIEW_MODE`):** `shadow` (default) changes nothing; `enforce` turns a veto into WAIT; `off` skips it.
+  - **Failure:** a failed review blocks nothing in any mode.
+  - **To do before enforce:** after two weeks of closed signals, compare outcomes for approved vs vetoed. That query is not built yet.
+- **Upgrade 3 (not built):** AI news reader for gold - overturns part of ADR-051, needs its own ADR, and starts in shadow mode.
+- **Decided, not built (2026-09-11): keep one open signal per asset.** The operator first chose "allow any new signal while one is open", paused to ask questions, then - with M15 confirmation (ADR-166) already filtering signals - chose to keep the one-at-a-time gate. Drafts count toward it. No code change.
 - **Signal confirmation (built, ADR-166).** The operator did not want a signal published on every hourly check, only once confirmed.
   - **Higher timeframes:** a setup whose H4 or D1 trend runs against it is WAIT.
   - **Drafts:** a passing BUY/SELL is saved as DRAFT (not published, not in the EA feed).

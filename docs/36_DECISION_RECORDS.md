@@ -10326,7 +10326,89 @@ Future Review
   the confirmed signals' win rate against the earlier signals', before
   tuning the window or the entry choice.
 - The pending "allow any new signal while one is open" decision must
-  account for drafts, which now block too.
+  account for drafts, which now block too. (Decided the same day: keep one
+  open signal per asset.)
+
+# ADR-167
+
+Title
+
+An AI Risk Review on Every BUY/SELL, in Shadow Mode Before It May Act
+
+Status
+
+Accepted
+
+Context
+
+Upgrade 2 of the three the operator chose for the AI budget (BACKLOG §43).
+Everything that decides a trade is deterministic (ADR-078/079), and the AI
+only explains it. That keeps trades testable, but it means nothing reads the
+whole picture the way a careful trader does before taking a position - a
+setup can pass every individual gate while the combination (a release in two
+hours, a stop sitting inside opposing structure, a thin higher-timeframe
+read) is one a trader would skip.
+
+The operator asked for an AI check that can say no. The risk is obvious: an
+AI allowed to block trades is untested judgement on real money. Hence shadow
+mode first.
+
+Decision
+
+**1. A second provider call on every BUY/SELL** - never on WAIT, so there is
+nothing to spend when there is nothing to veto. It runs **before** the
+narration, on the **same evidence** the narration receives (the narration
+prompt itself, higher timeframes included), with its own system prompt: a
+skeptical risk manager who may only answer **approve** or **veto**. It must
+give 1-4 reasons tied to the evidence and name the single biggest risk
+whatever its verdict. It is told not to veto merely because risk exists.
+
+**2. Its authority is capped by construction.** The strict JSON schema, and
+the parser behind it, accept only `verdict`, `reasons` and `key_risk` - no
+direction, price or confidence. It can downgrade a trade to WAIT; nothing in
+the code path can turn WAIT into a trade.
+
+**3. `AI_RISK_REVIEW_MODE`:**
+- `shadow` (default) - the verdict is stored and shown, and **nothing
+  changes**;
+- `enforce` - a veto turns the analysis into WAIT, with the reason "AI risk
+  review vetoed the setup: <key risk>", and the narration then explains that
+  WAIT;
+- `off` - no call. An unrecognised value is treated as `off`.
+
+**4. A failed or malformed review blocks nothing, in any mode.** It records
+no verdict and adds a warning, the same rule that keeps a narration failure
+from blocking an analysis (ADR-081). One attempt, no retry - a missing
+shadow verdict costs only that verdict.
+
+**5. Stored on `ai_analysis`:** verdict, mode, reasons, key risk, model and
+the review's own token counts, separate from the narration's, so its cost is
+visible on its own (ADR-149). A signal shows its analysis's review; so does
+the AI Analysis page, labelled "Shadow mode · not blocking" or "Enforced".
+
+**Relation to ADR-078.** In `shadow` and `off`, ADR-078 holds unchanged. In
+`enforce`, the AI gains a veto: the first place a non-deterministic call can
+change a trade decision. It is limited to the downgrade direction, and
+switching it on is an operator decision taken only after the shadow record
+supports it.
+
+Consequences
+
+- About one extra gpt-6-astra call per BUY/SELL analysis. With confirmation
+  (ADR-166) that is a handful a day.
+- With M15 confirmation, reviews are attached to drafts at creation. A draft
+  that is later cancelled keeps its review, which is still a data point.
+- Shadow vetoes can now be compared against how the signal actually ended.
+  That comparison is not built - it is a query over `ai_analysis` joined to
+  `signals`.
+
+Future Review
+
+- After enough closed signals (two weeks at least): compare stopped-out vs
+  successful rates for approved and vetoed signals. Enable `enforce` only if
+  vetoed signals clearly did worse.
+- If vetoes are frequent and uninformative, the system prompt's bar for a
+  veto is what to tune, not the mode.
 
 ---
 

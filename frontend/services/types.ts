@@ -516,6 +516,16 @@ export interface ReasoningResponse {
   conclusion: string;
 }
 
+/** ADR-167 - the AI risk manager's verdict on a BUY/SELL. In shadow mode it
+ * changed nothing; in enforce mode a veto made the analysis WAIT. */
+export interface RiskReviewResponse {
+  verdict: "approve" | "veto";
+  mode: "shadow" | "enforce";
+  reasons: string[];
+  key_risk: string;
+  model_name: string;
+}
+
 export interface AIAnalysisResponse {
   id: string;
   symbol: string;
@@ -538,6 +548,8 @@ export interface AIAnalysisResponse {
   ai_available: boolean;
   warnings: string[];
   calculated_at: string;
+  /** null for WAIT, when the review is off, or when it failed. */
+  risk_review: RiskReviewResponse | null;
 }
 
 export interface AIAnalysisListResponse {

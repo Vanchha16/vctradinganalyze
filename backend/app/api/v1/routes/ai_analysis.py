@@ -16,7 +16,12 @@ from app.models.enums import Timeframe
 from app.models.user import User
 from app.repositories.ai_analysis_repository import AIAnalysisRepository
 from app.repositories.asset_repository import AssetRepository
-from app.schemas.ai_analysis import AIAnalysisListResponse, AIAnalysisResponse, ReasoningResponse
+from app.schemas.ai_analysis import (
+    AIAnalysisListResponse,
+    AIAnalysisResponse,
+    ReasoningResponse,
+    RiskReviewResponse,
+)
 from app.services.ai_orchestrator.types import AIAnalysisResult
 from app.services.ai_orchestrator_engine import AIOrchestratorEngine
 
@@ -46,6 +51,19 @@ def _result_to_response(result: AIAnalysisResult) -> AIAnalysisResponse:
         ai_available=result.ai_available,
         warnings=result.warnings,
         calculated_at=result.calculated_at,
+        risk_review=(
+            RiskReviewResponse.model_validate(
+                {
+                    "verdict": result.risk_review.verdict.value,
+                    "mode": result.risk_review.mode.value,
+                    "reasons": result.risk_review.reasons,
+                    "key_risk": result.risk_review.key_risk,
+                    "model_name": result.risk_review.model_name,
+                }
+            )
+            if result.risk_review is not None
+            else None
+        ),
     )
 
 
@@ -72,6 +90,21 @@ def _row_to_response(row: AIAnalysis, symbol: str) -> AIAnalysisResponse:
         ai_available=row.ai_available,
         warnings=row.warnings,
         calculated_at=row.created_at,
+        risk_review=_row_risk_review(row),
+    )
+
+
+def _row_risk_review(row: AIAnalysis) -> RiskReviewResponse | None:
+    if row.risk_review_verdict is None or row.risk_review_mode is None:
+        return None
+    return RiskReviewResponse.model_validate(
+        {
+            "verdict": row.risk_review_verdict,
+            "mode": row.risk_review_mode,
+            "reasons": row.risk_review_reasons or [],
+            "key_risk": row.risk_review_key_risk or "",
+            "model_name": row.risk_review_model or "unknown",
+        }
     )
 
 

@@ -123,6 +123,11 @@ class Settings(BaseSettings):
     ai_orchestrator_providers: list[str] = ["openai"]
     ai_retry_max_attempts: int = 2
     ai_retry_backoff_seconds: float = 1.0
+    # ADR-167 - a second AI call on every BUY/SELL: approve or veto.
+    # "shadow" records the verdict and blocks nothing; "enforce" turns a veto
+    # into WAIT; "off" skips the call. Shadow until real outcomes show its
+    # vetoes are worth acting on.
+    ai_risk_review_mode: str = "shadow"
 
     signal_ttl_hours: int = 24
 

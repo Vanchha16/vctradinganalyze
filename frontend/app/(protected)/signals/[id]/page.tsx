@@ -13,6 +13,7 @@ import { BookmarkButton } from "@/features/signals/components/bookmark-button";
 import { SignalStatusTimeline } from "@/features/signals/components/signal-status-timeline";
 import { EvidenceList } from "@/features/ai-analysis/components/evidence-list";
 import { ReasoningSections } from "@/features/ai-analysis/components/reasoning-sections";
+import { RiskReviewCard } from "@/features/ai-analysis/components/risk-review-card";
 import { ErrorCard } from "@/features/dashboard/components/error-card";
 import { PageContainer } from "@/features/dashboard/components/page-container";
 import { SignalEaActivity } from "@/features/ea/components/signal-ea-activity";
@@ -149,6 +150,9 @@ export default function SignalDetailPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* ADR-167: the AI risk manager's verdict on this signal. */}
+          {analysisQuery.data?.risk_review ? <RiskReviewCard review={analysisQuery.data.risk_review} /> : null}
 
           {/* ADR-162: what the MT5 EA did with this signal. Only the super
               admin can hold an EA token, so only they see this card. */}

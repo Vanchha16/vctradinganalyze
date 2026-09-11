@@ -65,3 +65,16 @@ class AIAnalysis(Base, UUIDMixin, CreatedAtMixin):
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+
+    # --- ADR-167: AI risk review, recorded on BUY/SELL analyses only -------
+    #: "approve" or "veto"; `None` for WAIT, review off, or review failed.
+    risk_review_verdict: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    #: "shadow" or "enforce" - whether the verdict was allowed to act.
+    risk_review_mode: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    risk_review_reasons: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    risk_review_key_risk: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    risk_review_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    #: Its own token counts, separate from the narration's, so the review's
+    #: cost can be judged on its own (ADR-149's reasoning).
+    risk_review_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    risk_review_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

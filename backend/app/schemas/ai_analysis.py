@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,6 +21,18 @@ class ReasoningResponse(BaseModel):
     news: str
     risk: str
     conclusion: str
+
+
+class RiskReviewResponse(BaseModel):
+    """ADR-167 - the AI risk manager's verdict on a BUY/SELL. In `shadow`
+    mode it changed nothing; in `enforce` mode a veto made the analysis
+    WAIT."""
+
+    verdict: Literal["approve", "veto"]
+    mode: Literal["shadow", "enforce"]
+    reasons: list[str]
+    key_risk: str
+    model_name: str
 
 
 class AIAnalysisResponse(BaseModel):
@@ -87,6 +100,8 @@ class AIAnalysisResponse(BaseModel):
     ai_available: bool
     warnings: list[str]
     calculated_at: datetime
+    #: ADR-167 - `null` for WAIT, when the review is off, or when it failed.
+    risk_review: RiskReviewResponse | None = None
 
 
 class AIAnalysisListResponse(BaseModel):

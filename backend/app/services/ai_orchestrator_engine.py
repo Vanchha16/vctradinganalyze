@@ -27,6 +27,7 @@ from .ai_orchestrator import (
     invalidation_builder,
     prompt_builder,
     response_parser,
+    risk_review,
     summary_fallback,
 )
 from .ai_orchestrator import recommendation_decision as recommendation_decision_module
@@ -35,6 +36,7 @@ from .ai_orchestrator.evidence_extractor import ExtractedEvidence
 from .ai_orchestrator.providers.base import AIGenerationRequest, AIProvider
 from .ai_orchestrator.providers.exceptions import AIProviderError, TransientAIProviderError
 from .ai_orchestrator.recommendation_decision import RecommendationDecision
+from .ai_orchestrator.risk_review import RiskReview, RiskReviewMode, RiskReviewVerdict
 from .ai_orchestrator.types import AIAnalysisResult, AnalysisContext, ReasoningSections
 
 logger = logging.getLogger(__name__)
@@ -79,9 +81,24 @@ class AIOrchestratorEngine:
         context = self._context_builder.build(asset, timeframe, focus_event_id)
         decision = recommendation_decision_module.decide(context)
         extracted = evidence_extractor.extract(context)
+
+        # ADR-167. Reviewed before narrating, so an enforced veto is what the
+        # explanation then describes. A downgrade only - nothing here can turn
+        # WAIT into a trade.
+        review, review_warnings = self._review(context, decision, extracted)
+        if (
+            review is not None
+            and review.mode is RiskReviewMode.ENFORCE
+            and review.verdict is RiskReviewVerdict.VETO
+        ):
+            decision = RecommendationDecision(
+                recommendation=Recommendation.WAIT,
+                reasons=[f"AI risk review vetoed the setup: {review.key_risk}"],
+            )
         conditions = invalidation_builder.build(context, decision.recommendation)
 
         narration = self._narrate(context, decision, extracted)
+        warnings = [*narration.warnings, *review_warnings]
 
         latency_ms = round((time.monotonic() - start) * 1000)
 
@@ -115,7 +132,8 @@ class AIOrchestratorEngine:
             conflicting_evidence=extracted.conflicting_evidence,
             risks=extracted.risks,
             invalidation_conditions=conditions,
-            warnings=narration.warnings,
+            warnings=warnings,
+            risk_review=review,
         )
 
         return AIAnalysisResult(
@@ -143,7 +161,8 @@ class AIOrchestratorEngine:
             conflicting_evidence=extracted.conflicting_evidence,
             risks=extracted.risks,
             invalidation_conditions=conditions,
-            warnings=narration.warnings,
+            warnings=warnings,
+            risk_review=review,
         )
 
     def _narrate(
@@ -197,6 +216,61 @@ class AIOrchestratorEngine:
             reasoning=fallback, ai_available=False, model_name="none", warnings=warnings
         )
 
+    def _review(
+        self,
+        context: AnalysisContext,
+        decision: RecommendationDecision,
+        extracted: ExtractedEvidence,
+    ) -> tuple[RiskReview | None, list[str]]:
+        """ADR-167. One attempt, no retry: a missing verdict costs nothing
+        but the verdict, while a retry doubles the spend on the calls most
+        likely to fail again. Returns the review (or None) and any warning."""
+        try:
+            mode = RiskReviewMode(settings.ai_risk_review_mode.lower())
+        except ValueError:
+            logger.warning(
+                "ai_orchestrator.risk_review_mode_invalid",
+                extra={"value": settings.ai_risk_review_mode},
+            )
+            mode = RiskReviewMode.OFF
+
+        if mode is RiskReviewMode.OFF or decision.recommendation is Recommendation.WAIT:
+            return None, []
+
+        evidence = prompt_builder.build_user_prompt(
+            context,
+            decision.recommendation,
+            decision.reasons,
+            extracted.supporting_evidence,
+            extracted.conflicting_evidence,
+            extracted.risks,
+        )
+        request = AIGenerationRequest(
+            system_prompt=risk_review.SYSTEM_PROMPT,
+            user_prompt=risk_review.build_user_prompt(evidence),
+            json_schema=risk_review.json_schema(),
+            max_tokens=risk_review.MAX_TOKENS,
+        )
+        try:
+            response = self._provider.generate(request)
+            verdict, reasons, key_risk = risk_review.parse(response.raw_content)
+        except AIProviderError as exc:
+            logger.warning("ai_orchestrator.risk_review_unavailable", extra={"error": str(exc)})
+            return None, [f"AI risk review unavailable ({exc}) - no verdict recorded."]
+
+        return (
+            RiskReview(
+                verdict=verdict,
+                reasons=reasons,
+                key_risk=key_risk,
+                mode=mode,
+                model_name=response.model_name,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+            ),
+            [],
+        )
+
     def _persist(
         self,
         *,
@@ -221,6 +295,7 @@ class AIOrchestratorEngine:
         risks: list[str],
         invalidation_conditions: list[str],
         warnings: list[str],
+        risk_review: RiskReview | None,
     ) -> AIAnalysis:
         row = AIAnalysis(
             asset_id=asset.id,
@@ -253,6 +328,15 @@ class AIOrchestratorEngine:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             warnings=warnings,
+            risk_review_verdict=risk_review.verdict.value if risk_review is not None else None,
+            risk_review_mode=risk_review.mode.value if risk_review is not None else None,
+            risk_review_reasons=risk_review.reasons if risk_review is not None else None,
+            risk_review_key_risk=risk_review.key_risk if risk_review is not None else None,
+            risk_review_model=risk_review.model_name if risk_review is not None else None,
+            risk_review_input_tokens=risk_review.input_tokens if risk_review is not None else None,
+            risk_review_output_tokens=(
+                risk_review.output_tokens if risk_review is not None else None
+            ),
         )
         self._ai_analysis_repository.create(row)
         self._ai_analysis_repository.commit()

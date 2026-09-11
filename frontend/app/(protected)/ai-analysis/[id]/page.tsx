@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisSummary } from "@/features/ai-analysis/components/analysis-summary";
 import { EvidenceList } from "@/features/ai-analysis/components/evidence-list";
 import { ReasoningSections } from "@/features/ai-analysis/components/reasoning-sections";
+import { RiskReviewCard } from "@/features/ai-analysis/components/risk-review-card";
 import { ErrorCard } from "@/features/dashboard/components/error-card";
 import { PageContainer } from "@/features/dashboard/components/page-container";
 import { useAiAnalysis } from "@/hooks/use-ai-analysis";
@@ -62,6 +63,9 @@ export default function AiAnalysisDetailPage() {
       <PageContainer>
         <div className="flex flex-col gap-6">
           <AnalysisSummary analysis={analysis} />
+
+          {/* ADR-167: the AI risk manager's approve/veto on a BUY/SELL. */}
+          {analysis.risk_review ? <RiskReviewCard review={analysis.risk_review} /> : null}
 
           <Card>
             <CardContent className="flex flex-col gap-3 pt-4">

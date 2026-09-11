@@ -21,6 +21,8 @@ from app.services.news_sentiment.types import NewsSentimentResult
 from app.services.risk_management.types import RiskEvaluation, TradeDirection
 from app.services.strategy.types import StrategyEvaluation, StrategyName
 
+from .risk_review import RiskReview
+
 
 @dataclass(frozen=True, slots=True)
 class CandidateSetup:
@@ -107,3 +109,6 @@ class AIAnalysisResult:
     risks: list[str] = field(default_factory=list)
     invalidation_conditions: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    #: ADR-167 - the AI risk manager's verdict on a BUY/SELL. `None` for WAIT,
+    #: when the review is off, or when it failed.
+    risk_review: RiskReview | None = None

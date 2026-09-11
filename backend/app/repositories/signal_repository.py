@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from decimal import Decimal
 
@@ -58,6 +58,13 @@ class SignalRepository(BaseRepository[Signal]):
         if status is not None:
             query = query.where(Signal.status == status)
         return self._count(query)
+
+    def list_by_ids(self, signal_ids: Collection[uuid.UUID]) -> Sequence[Signal]:
+        """Batch lookup - one query for a page of EA events or a batch of
+        reports, instead of one per row (ADR-162)."""
+        if not signal_ids:
+            return []
+        return self.session.execute(select(Signal).where(Signal.id.in_(signal_ids))).scalars().all()
 
     def find_open_for_asset(
         self, asset_id: uuid.UUID, *, created_since: datetime

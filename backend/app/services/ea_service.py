@@ -63,6 +63,15 @@ class FeedSignal:
     expires_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class EaPrincipal:
+    """An authenticated EA: the user it acts for, and the token - i.e. the
+    terminal - it authenticated with. Event reports need both (ADR-162)."""
+
+    user: User
+    token: EaToken
+
+
 class EaService:
     def __init__(
         self,
@@ -120,7 +129,7 @@ class EaService:
         self._commit()
         logger.info("ea.token_revoked", user_id=str(user.id), token_id=str(token_id))
 
-    def authenticate(self, raw_token: str | None, now: datetime) -> User:
+    def authenticate(self, raw_token: str | None, now: datetime) -> EaPrincipal:
         """Every failure is the same 401, whether the token is malformed,
         unknown, or belongs to a user who is inactive or no longer allowed
         - a caller probing tokens learns nothing from the difference."""
@@ -146,7 +155,7 @@ class EaService:
         ):
             token.last_used_at = now
             self._commit()
-        return user
+        return EaPrincipal(user=user, token=token)
 
     def open_signals(self, symbol: str, now: datetime) -> list[FeedSignal]:
         """Signals an EA may still act on, newest first.
@@ -199,6 +208,7 @@ __all__ = [
     "ALLOWED_ROLES",
     "MAX_TOKENS_PER_USER",
     "TOKEN_PREFIX",
+    "EaPrincipal",
     "EaService",
     "FeedSignal",
 ]

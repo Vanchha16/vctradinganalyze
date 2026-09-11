@@ -13,17 +13,31 @@ MT5 terminal; the platform only publishes what the signals are.
 """
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
 from app.config import settings
-from app.dependencies.ea import get_ea_service, get_ea_user
+from app.dependencies.ea import (
+    get_ea_event_service,
+    get_ea_principal,
+    get_ea_service,
+    get_ea_user,
+)
 from app.dependencies.rate_limit import rate_limit_public
 from app.dependencies.rbac import require_super_admin
+from app.models.ea_execution_event import EaExecutionEvent
+from app.models.enums import SignalType
 from app.models.user import User
 from app.schemas.ea import (
+    EaEventBatchRequest,
+    EaEventBatchResponse,
+    EaEventListResponse,
+    EaEventRejection,
+    EaEventResponse,
+    EaEventType,
     EaSignalFeedResponse,
     EaSignalResponse,
     EaTokenCreatedResponse,
@@ -31,12 +45,21 @@ from app.schemas.ea import (
     EaTokenListResponse,
     EaTokenResponse,
 )
-from app.services.ea_service import EaService, FeedSignal
+from app.services.ea_event_service import EaEventService
+from app.services.ea_service import EaPrincipal, EaService, FeedSignal
 from app.utils.time import as_aware_utc
 
 router = APIRouter(prefix="/ea", tags=["expert-advisor"])
 
 _Service = Annotated[EaService, Depends(get_ea_service)]
+_EventService = Annotated[EaEventService, Depends(get_ea_event_service)]
+
+#: Same reasoning as `_feed_rate_limit` - resolved before the token check.
+_events_rate_limit = Depends(
+    rate_limit_public(
+        "ea_events", settings.ea_events_rate_limit, settings.public_rate_limit_window_seconds
+    )
+)
 
 #: Per-IP, and resolved before the token is checked (decorator
 #: dependencies run first), so guessing tokens is rate limited too.
@@ -102,6 +125,77 @@ async def ea_signal_feed(
         symbol=symbol.upper(),
         signals=[_to_response(item, symbol.upper()) for item in feed],
     )
+
+
+@router.post("/events", response_model=EaEventBatchResponse, dependencies=[_events_rate_limit])
+async def report_ea_events(
+    payload: EaEventBatchRequest,
+    principal: Annotated[EaPrincipal, Depends(get_ea_principal)],
+    service: _EventService,
+) -> EaEventBatchResponse:
+    """ADR-162: the EA's report of what it did. Idempotent per
+    `event_key` - re-sending a batch is safe and expected after a lost
+    response."""
+    result = service.ingest(principal, payload.events)
+    return EaEventBatchResponse(
+        accepted=result.accepted,
+        duplicates=result.duplicates,
+        rejected=[EaEventRejection(event_key=k, reason=r) for k, r in result.rejected],
+    )
+
+
+@router.get("/events", response_model=EaEventListResponse)
+async def list_ea_events(
+    actor: Annotated[User, Depends(require_super_admin)],
+    service: _EventService,
+    signal_id: Annotated[UUID | None, Query()] = None,
+    dry_run: Annotated[bool | None, Query()] = None,
+    event_type: Annotated[EaEventType | None, Query()] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> EaEventListResponse:
+    """The caller's EA activity, newest first. Session only - an EA token
+    can report events but cannot read them back."""
+    result = service.list_events(
+        actor, signal_id=signal_id, dry_run=dry_run, event_type=event_type, page=page, limit=limit
+    )
+    return EaEventListResponse(
+        items=[_event_to_response(e, result.signal_types.get(e.signal_id)) for e in result.items],
+        page=page,
+        limit=limit,
+        total=result.total,
+    )
+
+
+def _event_to_response(event: EaExecutionEvent, signal_type: SignalType | None) -> EaEventResponse:
+    return EaEventResponse(
+        id=event.id,
+        event_type=event.event_type,
+        signal_id=event.signal_id,
+        signal_type=signal_type,
+        dry_run=event.dry_run,
+        occurred_at=as_aware_utc(event.occurred_at),
+        token_name=event.token_name,
+        account_login=event.account_login,
+        broker_symbol=event.broker_symbol,
+        order_type=event.order_type,
+        order_ticket=event.order_ticket,
+        position_id=event.position_id,
+        volume=_float(event.volume),
+        price=_float(event.price),
+        stop_loss=_float(event.stop_loss),
+        take_profit=_float(event.take_profit),
+        profit=_float(event.profit),
+        currency=event.currency,
+        retcode=event.retcode,
+        close_reason=event.close_reason,
+        message=event.message,
+        created_at=as_aware_utc(event.created_at),
+    )
+
+
+def _float(value: Decimal | None) -> float | None:
+    return None if value is None else float(value)
 
 
 def _to_response(item: FeedSignal, symbol: str) -> EaSignalResponse:

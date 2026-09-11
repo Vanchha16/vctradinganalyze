@@ -15,7 +15,9 @@ import { EvidenceList } from "@/features/ai-analysis/components/evidence-list";
 import { ReasoningSections } from "@/features/ai-analysis/components/reasoning-sections";
 import { ErrorCard } from "@/features/dashboard/components/error-card";
 import { PageContainer } from "@/features/dashboard/components/page-container";
+import { SignalEaActivity } from "@/features/ea/components/signal-ea-activity";
 import { useAiAnalysis } from "@/hooks/use-ai-analysis";
+import { useAuth } from "@/hooks/use-auth";
 import { useCandles } from "@/hooks/use-candles";
 import { useSignal } from "@/hooks/use-signal";
 import { useSmcAnalysis } from "@/hooks/use-smc-analysis";
@@ -27,6 +29,7 @@ import type { Timeframe } from "@/services/types";
 
 export default function SignalDetailPage() {
   const params = useParams<{ id: string }>();
+  const { user } = useAuth();
   const signalQuery = useSignal(params.id);
   const analysisQuery = useAiAnalysis(signalQuery.data?.analysis_id ?? null);
   const [chartTimeframe, setChartTimeframe] = useState<Timeframe | null>(null);
@@ -146,6 +149,10 @@ export default function SignalDetailPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* ADR-162: what the MT5 EA did with this signal. Only the super
+              admin can hold an EA token, so only they see this card. */}
+          {user?.role === "super_admin" ? <SignalEaActivity signalId={signal.id} /> : null}
 
           <Card>
             <CardContent className="flex flex-col gap-3 pt-4">

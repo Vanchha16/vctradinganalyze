@@ -9851,6 +9851,112 @@ Future Review
   docs/01's "does not manage user brokerage accounts".
 - If the MetaApi executor is ever wanted again, or removed.
 
+# ADR-162
+
+Title
+
+Report Expert Advisor Activity Back to the Website
+
+Status
+
+Accepted
+
+Context
+
+After ADR-161 Phases A and B, the EA traded in the operator's terminal and
+the platform could not see any of it. Orders, fills and closes were only
+visible in MT5's own tabs, and a dry-run check - the thing the operator
+reviews before going live - lived only in the Experts log.
+
+The operator chose (2026-09-11) to see it on the website in two places:
+an **EA Activity** page, and a timeline on each **signal's page**. Website
+only - no Telegram messages for now.
+
+Decision
+
+**1. A separate table, `ea_execution_events` - not `broker_orders`.**
+`broker_orders` belongs to the dormant MetaApi executor, and
+`signal_monitoring_tasks` treats the mere existence of a row there as the
+switch into MetaApi reconciliation for that signal. EA rows written there
+would route monitoring through a provider that is not configured.
+
+**2. Events never change a signal.** The signal records what the analysis
+called and how price moved against it (Twelve Data candles); an event
+records what one account did. They legitimately disagree - a limit that
+never filled on a signal the website marks `successful`, for instance - and
+reconciling one into the other would falsify whichever was overwritten. A
+test pins that a `position_closed` report leaves the signal's status, close
+time and P&L untouched.
+
+**3. Append-only events with an idempotency key.** Seven types:
+`dry_run_checked`, `order_placed`, `order_skipped`, `order_rejected`,
+`order_cancelled`, `position_opened`, `position_closed`. The EA derives
+`event_key` from what happened - `closed:<position id>`,
+`cancelled:<order ticket>` - prefixed with the account login and mode.
+`(user_id, event_key)` is unique, so a batch re-sent after a lost response
+stores nothing new.
+
+**4. `POST /ea/events` (EA token) accepts partially.** Up to 50 events per
+request. A shape error is a 422 for the batch. An event that is well-formed
+but unstorable - an unknown `signal_id` - is listed in `rejected` while the
+rest are stored. The EA drops a batch on either 200 or 422, so failing a
+whole batch for one bad event would lose the good ones, and keeping a
+malformed batch would block its queue forever. An over-long `message` is
+truncated for the same reason.
+
+**5. `GET /ea/events` (session) reads.** Super admin only, matching who
+holds a token; only the caller's own events; filterable by signal, dry run
+and type. An EA token can report but cannot read back.
+
+**6. On the EA (version 1.10):**
+- Reports queue in `MQL5\Files\VCTrading\reports_<login>_<magic>_<mode>.txt`,
+  capped at 500 (oldest dropped), and are sent one batch per poll **only
+  after a successful feed check** - if the feed is unreachable, so is the
+  report endpoint, and trying doubles the failing requests.
+- **Fills and closes come from the terminal's trade history, not
+  `OnTradeTransaction`.** A transaction event is missed if MT5 was closed
+  when the broker filled or closed the position; history is not. Each poll
+  checks sent orders that are no longer pending (`HistoryOrderSelect` →
+  filled / cancelled / expired) and filled positions no longer open
+  (`HistorySelectByPosition` → close price, reason, net profit).
+- Profit is net of commission, swap and fees across every deal of the
+  position, in the account currency (USC on a cent account). Close reason
+  maps `DEAL_REASON` to `tp` / `sl` / `stop_out` / `manual` / `expert` /
+  `other`.
+- Deal times are broker server time and are converted to the website clock
+  before reporting.
+
+**7. History survives revocation.** `token_id` is SET NULL when a token is
+revoked, and `token_name` is stored on every event.
+
+Alternatives Considered
+
+- **Reuse `broker_orders`.** Rejected - see 1.
+- **`OnTradeTransaction` for fills and closes.** Simpler, but loses exactly
+  the events that matter most when the PC was off.
+- **Update the signal's status from EA fills.** Rejected - see 2.
+- **Telegram messages on live fills and closes.** Deferred by the operator;
+  the event table already holds everything a notifier would need.
+
+Consequences
+
+Dry-run checks are now reviewable on the website, which is where the
+operator decides whether to go live.
+
+`occurred_at` is when it happened, `created_at` when it arrived - they can
+be hours apart for a terminal that was offline, and the listing orders by
+`occurred_at`.
+
+A terminal offline long enough to queue more than 500 reports loses the
+oldest. At one signal an hour that is weeks of downtime, and every trade is
+still in MT5's own history.
+
+Future Review
+
+- If Telegram notification of live fills and closes is wanted.
+- If a P&L summary across events is wanted - it should read
+  `position_closed` events, not signal P&L, for the reason in 2.
+
 ---
 
 # Review Policy

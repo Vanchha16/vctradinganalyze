@@ -1,6 +1,7 @@
 import {
   BarChart3,
   BookMarked,
+  Bot,
   BrainCircuit,
   Calculator,
   CalendarClock,
@@ -73,6 +74,13 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Profit Split", href: "/tools/profit-split", icon: PieChart },
       { label: "Position Size", href: "/tools/position-size", icon: Calculator },
     ],
+  },
+  {
+    // ADR-162 - the MT5 Expert Advisor's own record. Super admin only,
+    // matching who can hold an EA token (ADR-161).
+    group: "Automation",
+    roles: ["super_admin"],
+    items: [{ label: "EA Activity", href: "/ea-activity", icon: Bot }],
   },
   {
     group: "Account",

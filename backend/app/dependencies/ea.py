@@ -8,9 +8,11 @@ from app.dependencies.database import get_db
 from app.models.user import User
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.audit_log_repository import AuditLogRepository
+from app.repositories.ea_execution_event_repository import EaExecutionEventRepository
 from app.repositories.ea_token_repository import EaTokenRepository
 from app.repositories.signal_repository import SignalRepository
-from app.services.ea_service import EaService
+from app.services.ea_event_service import EaEventService
+from app.services.ea_service import EaPrincipal, EaService
 
 
 def get_ea_service(db: Annotated[Session, Depends(get_db)]) -> EaService:
@@ -22,10 +24,17 @@ def get_ea_service(db: Annotated[Session, Depends(get_db)]) -> EaService:
     )
 
 
-def get_ea_user(
+def get_ea_event_service(db: Annotated[Session, Depends(get_db)]) -> EaEventService:
+    return EaEventService(
+        event_repository=EaExecutionEventRepository(db),
+        signal_repository=SignalRepository(db),
+    )
+
+
+def get_ea_principal(
     service: Annotated[EaService, Depends(get_ea_service)],
     x_ea_token: Annotated[str | None, Header(alias="X-EA-Token")] = None,
-) -> User:
+) -> EaPrincipal:
     """Authenticates an Expert Advisor by its `X-EA-Token` header (ADR-161).
 
     A header rather than `Authorization: Bearer`, so an EA token can never
@@ -33,3 +42,7 @@ def get_ea_user(
     and a session JWT can never be accepted here.
     """
     return service.authenticate(x_ea_token, datetime.now(UTC))
+
+
+def get_ea_user(principal: Annotated[EaPrincipal, Depends(get_ea_principal)]) -> User:
+    return principal.user

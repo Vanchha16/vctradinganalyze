@@ -880,6 +880,50 @@ How an EA reads it (ADR-161 §4): open an order only for `active`, once per `id`
 
 ---
 
+POST /ea/events
+
+ADR-162. **Header `X-EA-Token`.** What the EA did, reported in batches of 1-50. Rate limited per IP (`EA_EVENTS_RATE_LIMIT`, default 30/min). Never changes a signal's status.
+
+Request
+
+{
+  "events": [
+    {
+      "event_key": "160018306:live:closed:880112",
+      "event_type": "position_closed",
+      "signal_id": "3f7e2b1a-9c4d-4e5f-8a6b-1d2c3e4f5a6b",
+      "dry_run": false,
+      "occurred_at": 1789140000,
+      "account_login": "160018306",
+      "broker_symbol": "XAUUSDc",
+      "position_id": 880112,
+      "volume": 0.01,
+      "price": 4440.0,
+      "profit": 25.76,
+      "currency": "USC",
+      "close_reason": "tp"
+    }
+  ]
+}
+
+`event_type`: `dry_run_checked`, `order_placed`, `order_skipped`, `order_rejected`, `order_cancelled`, `position_opened`, `position_closed`. Optional fields: `order_type`, `order_ticket`, `position_id`, `volume`, `price`, `stop_loss`, `take_profit`, `profit` (net of commission/swap/fees), `currency`, `retcode`, `close_reason` (`tp`/`sl`/`stop_out`/`manual`/`expert`/`other`), `message` (truncated to 255, never rejected for length). Times are epoch seconds.
+
+Response
+
+{ "accepted": 1, "duplicates": 0, "rejected": [] }
+
+`event_key` is unique per user: re-sending an already-stored event counts as a duplicate, not an error. An event for an unknown `signal_id` is listed in `rejected` (`{"event_key", "reason"}`) and the rest of the batch is still stored. 422 only for a malformed batch (shape, unknown `event_type`, 0 or more than 50 events). 401 as for the feed.
+
+---
+
+GET /ea/events?signal_id=&dry_run=&event_type=&page=&limit=
+
+Super admin session. The caller's own events, newest `occurred_at` first, `limit` up to 100. An EA token cannot read events (401).
+
+Response: `{"items", "page", "limit", "total"}`, each item the reported fields plus `id`, `signal_type` (the signal's direction, for display), `token_name` (kept after the token is revoked) and `created_at` (arrival time - can be much later than `occurred_at` for a terminal that was offline).
+
+---
+
 # AI Chat
 
 Phase 6C (docs/52_AI_CHAT_ARCHITECTURE.md, ADR-092 through ADR-098). `AIChatEngine` is a thin conversational/persistence layer over Phase 4-6B - it computes no new recommendation, confidence, or evidence of its own (ADR-093/094). **Requires authentication** on every route - conversations are private per-user data, and generating a reply calls the same metered LLM provider as Phase 6A (ADR-083's cost rationale extended here).

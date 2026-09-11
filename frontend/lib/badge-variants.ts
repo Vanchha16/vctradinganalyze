@@ -89,6 +89,16 @@ export function systemStatusVariant(value: "ok" | "down"): Variant {
   return value === "ok" ? "success" : "destructive";
 }
 
+/** ADR-162 EA activity. Green for something that now exists at the broker,
+ * amber for a signal the EA did not act on, red for a refusal. */
+export function eaEventVariant(value: string): Variant {
+  if (value === "order_placed" || value === "position_opened") return "success";
+  if (value === "order_rejected") return "destructive";
+  if (value === "order_skipped" || value === "order_cancelled") return "warning";
+  if (value === "position_closed") return "default";
+  return "outline"; // dry_run_checked
+}
+
 export function orderStatusVariant(value: string): Variant {
   if (value === "filled" || value === "closed") return "success";
   if (value === "rejected" || value === "cancelled") return "destructive";

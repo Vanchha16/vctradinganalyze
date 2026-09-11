@@ -857,3 +857,49 @@ export interface EaTokenCreatedResponse extends EaTokenResponse {
 export interface EaTokenListResponse {
   items: EaTokenResponse[];
 }
+
+// ---- MT5 Expert Advisor activity (ADR-162) ----
+
+export type EaEventType =
+  | "dry_run_checked"
+  | "order_placed"
+  | "order_skipped"
+  | "order_rejected"
+  | "order_cancelled"
+  | "position_opened"
+  | "position_closed";
+
+/** What one terminal reported doing with a signal. Describes the account,
+ * never the signal's own status. */
+export interface EaEventResponse {
+  id: string;
+  event_type: EaEventType;
+  signal_id: string;
+  signal_type: "buy" | "sell" | null;
+  dry_run: boolean;
+  occurred_at: string;
+  token_name: string;
+  account_login: string;
+  broker_symbol: string;
+  order_type: string | null;
+  order_ticket: number | null;
+  position_id: number | null;
+  volume: number | null;
+  price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  /** Net of commission/swap/fees, in `currency` (USC on a cent account). */
+  profit: number | null;
+  currency: string | null;
+  retcode: number | null;
+  close_reason: string | null;
+  message: string | null;
+  created_at: string;
+}
+
+export interface EaEventListResponse {
+  items: EaEventResponse[];
+  page: number;
+  limit: number;
+  total: number;
+}

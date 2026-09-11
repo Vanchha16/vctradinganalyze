@@ -174,6 +174,9 @@ class Settings(BaseSettings):
     # requests a minute; 30 leaves room for a restart or a second terminal
     # behind the same IP while still bounding token guessing.
     ea_feed_rate_limit: int = 30
+    # ADR-162 - per-IP limit on EA event reports. The EA sends at most one
+    # batch per poll, so this is the same ceiling as the feed.
+    ea_events_rate_limit: int = 30
 
     # Phase 9B (ADR-133, docs/23 §17) - failed-login lockout. docs/23 §17
     # names the requirement ("Temporary Lock") with no threshold/duration;

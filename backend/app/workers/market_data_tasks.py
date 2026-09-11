@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 import structlog
+from celery.schedules import crontab
 
 from app.config import settings
 from app.database.session import SessionLocal
@@ -156,13 +157,39 @@ def collect_market_data_task(timeframe_value: str) -> None:
         session.close()
 
 
+#: ADR-166 - H1 and M15 are collected on the clock, one minute after each
+#: candle closes, so signal generation (minute 3) and M15 confirmation
+#: (minutes 3, 18, 33, 48) read the candle that just closed. The same
+#: number of runs per day as the intervals they replace, so the quota
+#: projection above still holds.
+_CANDLE_CLOSE_SCHEDULES: dict[Timeframe, crontab] = {
+    Timeframe.H1: crontab(minute="1"),
+    Timeframe.M15: crontab(minute="1,16,31,46"),
+}
+
+
+def schedule_for(timeframe: Timeframe, interval_seconds: float) -> crontab | float:
+    """The candle-close schedule where one exists, unless the operator
+    overrode that timeframe or the floor raised its interval - both are
+    deliberate choices this alignment must not silently undo."""
+    aligned = _CANDLE_CLOSE_SCHEDULES.get(timeframe)
+    overridden = {key.lower() for key in settings.market_data_collection_interval_overrides}
+    if (
+        aligned is None
+        or timeframe.value in overridden
+        or interval_seconds != TIMEFRAME_DURATIONS[timeframe].total_seconds()
+    ):
+        return interval_seconds
+    return aligned
+
+
 def register_market_data_schedule() -> dict[str, dict[str, object]]:
     """Build Celery Beat schedule entries - one per `Timeframe`, all
     invoking the same `collect_market_data_task` (docs/38 §9)."""
     return {
         f"collect-market-data-{timeframe.value}": {
             "task": "market_data.collect_for_timeframe",
-            "schedule": interval_seconds,
+            "schedule": schedule_for(timeframe, interval_seconds),
             "args": (timeframe.value,),
         }
         for timeframe, interval_seconds in BEAT_SCHEDULE_SECONDS.items()

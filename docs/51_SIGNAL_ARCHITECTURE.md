@@ -59,6 +59,23 @@ signal_repository.find_paginated(...) / get_by_id(...)
 
 `AIOrchestratorEngine` is called **exactly once** per `SignalEngine.generate()` execution - no re-derivation of confidence, risk, or the candidate setup.
 
+**Update (ADR-166, 2026-09-11): confirmation before publishing.** The flow above now persists `Signal(status=DRAFT)` rather than `ACTIVE`, and the decision tree also returns WAIT when a higher timeframe trends against the setup.
+
+```
+H1 close (minute 3):  SignalEngine.generate -> DRAFT          [not published]
+M15 close (3,18,33,48): signals.confirm_pending, per draft:
+  SL/TP reached before a confirming break -> CANCELLED (reason)
+  confirmed M15 BOS in the signal's direction, after creation, in window
+                                          -> ACTIVE (+ confirmed_at, reason)
+                                             -> Telegram + live "created" event
+  window (4h) passed                      -> CANCELLED (reason)
+```
+
+- **A draft is invisible downstream:** it gets no Telegram message, is not in the EA feed, and is not watched by the price monitor.
+- **A draft still blocks** new generation for its asset while inside its window.
+- **Entry, stop loss and take profit** are the H1 setup's.
+- **The monitor's fill watch starts at confirmation.**
+
 ---
 
 # 4. Status Lifecycle Scope (ADR-088)
@@ -73,6 +90,11 @@ Phase 6B implements exactly two states:
 The remaining six states are reserved enum values (so a future phase can start writing them without a migration) but are not reachable through any code path in 6B. Building live price-monitoring, trigger-detection, and outcome tracking (Successful/Stopped Out, `profit_loss`) is a real follow-up requiring its own design pass - not built speculatively here.
 
 **Update (Phase 9E, ADR-137):** this follow-up is now built. `TRIGGERED`, `SUCCESSFUL`, and `STOPPED_OUT` are written by `app/workers/signal_monitoring_tasks.py`; `CLOSED` (a `TRIGGERED` signal that never resolved before `signal_triggered_ttl_hours`) is computed read-time-only, the same treatment as `EXPIRED`. The trigger rule fixes a live production defect where SL/TP were evaluated the instant a signal existed, without ever confirming price reached `entry_price` first - see ADR-137 for the full incident and design. `DRAFT`/`CANCELLED` remain unreachable through any current code path.
+
+**Update (ADR-166):** both are now reachable.
+- **DRAFT** is written at creation - an H1 setup waiting for M15 confirmation.
+- **CANCELLED** is written by `signals.confirm_pending` with a `status_reason`: never confirmed within `signal_confirmation_window_hours`, or its stop loss/take profit was reached first.
+- A DRAFT past its window is also resolved to CANCELLED at read time, the same treatment as EXPIRED.
 
 ---
 

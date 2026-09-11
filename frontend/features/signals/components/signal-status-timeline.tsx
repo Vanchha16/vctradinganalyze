@@ -52,6 +52,22 @@ export function SignalStatusTimeline({ signal }: { signal: SignalResponse }) {
           </span>
         </p>
       ) : null}
+      {/* ADR-166: a draft is an H1 setup waiting for M15 to confirm it. */}
+      {signal.status === "draft" ? (
+        <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Waiting for M15 to confirm the move. This signal is sent to Telegram and your EA only once
+          it is confirmed.
+        </p>
+      ) : null}
+      {signal.confirmed_at ? (
+        <p className="text-xs text-muted-foreground">
+          Confirmed {formatDateTime(signal.confirmed_at)}
+          {signal.status_reason && signal.status !== "cancelled" ? ` · ${signal.status_reason}` : ""}
+        </p>
+      ) : null}
+      {signal.status === "cancelled" && signal.status_reason ? (
+        <p className="text-xs text-muted-foreground">Cancelled: {signal.status_reason}</p>
+      ) : null}
     </div>
   );
 }

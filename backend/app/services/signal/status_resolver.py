@@ -30,8 +30,20 @@ def effective_status(
     signal that was never triggered) simply omit it and TRIGGERED
     passes through unchanged, same as every other non-ACTIVE status.
 
+    DRAFT becomes CANCELLED once `signal_confirmation_window_hours` has
+    elapsed since `created_at` (ADR-166) - an H1 setup M15 never
+    confirmed. The confirmation task also persists this, with a reason;
+    resolving it here too keeps a stalled worker from leaving a stale draft
+    looking live.
+
     Every other stored value passes through unchanged."""
     now = as_aware_utc(now)
+
+    if stored_status is SignalStatus.DRAFT:
+        window = timedelta(hours=settings.signal_confirmation_window_hours)
+        if now - as_aware_utc(created_at) >= window:
+            return SignalStatus.CANCELLED
+        return SignalStatus.DRAFT
 
     if stored_status is SignalStatus.ACTIVE:
         if now - as_aware_utc(created_at) >= timedelta(hours=settings.signal_ttl_hours):

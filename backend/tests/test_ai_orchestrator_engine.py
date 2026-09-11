@@ -294,10 +294,10 @@ def test_higher_timeframes_are_analysed_and_reach_the_prompt(
     assert "D1: no data available" in prompt
 
 
-def test_higher_timeframes_never_change_the_recommendation() -> None:
-    """ADR-165 keeps ADR-078/079: the decision reads only the analysed
-    timeframe. A higher timeframe opposing the setup is narrated, not acted
-    on - acting on it belongs to a separate, reviewed decision."""
+def test_opposing_higher_timeframes_now_hold_a_setup_back() -> None:
+    """ADR-166 supersedes ADR-165 §4: a higher timeframe trending against the
+    setup turns it into WAIT. Still a deterministic rule - the cases are
+    covered in `test_ai_recommendation_decision.py`; this pins the switch."""
     from app.services.ai_orchestrator import recommendation_decision
     from app.services.ai_orchestrator.types import CandidateSetup
     from app.services.risk_management.types import TradeDirection
@@ -319,7 +319,8 @@ def test_higher_timeframes_never_change_the_recommendation() -> None:
         ],
     )
 
-    assert recommendation_decision.decide(opposed) == recommendation_decision.decide(baseline)
+    assert recommendation_decision.decide(baseline).recommendation is Recommendation.BUY
+    assert recommendation_decision.decide(opposed).recommendation is Recommendation.WAIT
 
 
 def test_an_unknown_focus_event_id_still_returns_an_analysis(

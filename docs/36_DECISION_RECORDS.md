@@ -10204,6 +10204,10 @@ reads `higher_timeframes` - tested with a LONG setup against two bearish
 higher timeframes. ADR-078/079 stand; acting on this context is the
 subject of the risk review's own ADR.
 
+**Superseded by ADR-166 (same day):** the operator chose to act on this
+context directly - a higher timeframe trending against the setup now holds
+it back as WAIT, as a deterministic rule rather than an AI one.
+
 Consequences
 
 - Every analysis runs the confidence engine up to three times instead of
@@ -10220,6 +10224,109 @@ Future Review
 - If D1's thin history keeps it unavailable, a one-off backfill of daily
   candles is the fix - it would cost one market-data request, not a
   schedule change.
+
+# ADR-166
+
+Title
+
+Publish a Signal Only Once Its Higher Timeframes Allow It and M15 Confirms It
+
+Status
+
+Accepted
+
+Context
+
+Every BUY/SELL the hourly job produced was published at once - website,
+Telegram, EA feed - on an interval of 3600 seconds whose phase depended on
+when the worker last restarted, not on the H1 candle closing. The operator
+asked (2026-09-11) that signals go out only when confirmed, using other
+timeframes, and chose:
+
+- **higher timeframes must not oppose the setup** (H4 and D1, from
+  ADR-165);
+- **an M15 entry trigger** before publishing;
+- **checks at each H1 candle close**;
+- a **4-hour** confirmation window;
+- **keep the H1 entry** and let the EA wait for a retest, rather than
+  moving entry to the confirmation price.
+
+An M15 trigger cannot be caught by a check that runs only at H1 closes, so
+confirmation runs on its own M15 cadence, as a second, rules-only stage.
+
+Decision
+
+**1. Higher-timeframe rule, in the deterministic decision tree.** After the
+existing gates, a setup is WAIT if any higher timeframe's technical trend is
+the *opposite* of its direction; the reason names the timeframe. Sideways
+does not block, and neither does a timeframe with no data - otherwise D1's
+thin history would silence every signal. Supersedes ADR-165 §4. The AI
+still decides nothing.
+
+**2. A passing BUY/SELL is saved as a DRAFT** - a status docs/51 §4
+reserved and nothing wrote until now. A draft:
+- is not published - no Telegram, no live "created" event;
+- is not in the EA feed, and not watched by the price monitor;
+- is not counted as an open trade;
+- does block new generation for the asset while inside its window, so
+  consecutive H1 closes cannot stack drafts for one move.
+
+Both generation paths create drafts: the hourly job and the website's
+Generate Signal button. `SIGNAL_CONFIRMATION_ENABLED=false` restores
+immediate publication.
+
+**3. `signals.confirm_pending` runs at minutes 3, 18, 33 and 48** - rules
+only, no AI call, one M15 Smart Money analysis per asset per run. For each
+draft, in order:
+- **cancelled** if an M1 candle reached the stop loss or take profit
+  *before* the confirming break - the setup played out with nobody in it;
+- **confirmed** on the first *confirmed* M15 break of structure in the
+  signal's direction, after the draft was created and inside the window;
+- **cancelled** once `SIGNAL_CONFIRMATION_WINDOW_HOURS` (4) has passed.
+
+On confirmation the signal becomes ACTIVE and gets `confirmed_at` and a
+`status_reason`, and only then are Telegram and the live event sent. Its
+`last_monitored_at` is set to the confirmation time, so the monitor looks
+for the entry fill from then on - a touch while it was still a draft was not
+a fill anyone could have had. Entry, stop loss and take profit are the H1
+setup's, unchanged.
+
+**4. Read-time too.** `effective_status` turns a DRAFT past its window into
+CANCELLED, and the API serves the same reason the task would have written,
+so a stalled worker cannot leave a dead draft looking live.
+
+**5. On the clock.**
+- Generation runs at `SIGNAL_GENERATION_MINUTE` (3) past each hour,
+  replacing `SIGNAL_GENERATION_INTERVAL_SECONDS` (a leftover `.env` value
+  is ignored).
+- Market data collects H1 at minute 1 and M15 at minutes 1, 16, 31 and 46.
+- Runs per day are unchanged, so the Twelve Data quota projection
+  (ADR-140) still holds.
+- An operator override, or a floor raised above the candle length, keeps
+  its interval.
+
+Consequences
+
+- **Fewer signals, and later ones.** A signal can appear up to 4 hours after
+  its H1 setup, and some setups are cancelled without ever being sent.
+- **Some confirmed signals will expire unfilled.** After a break in the
+  signal's direction, price is usually already past the H1 entry. The EA's
+  limit fills only on a retest, and some confirmed signals will never get
+  one - the cost of the retest choice.
+- **Less pending life for late confirmations.** The 24-hour pending TTL
+  still counts from creation.
+- **The website shows drafts and cancellations with their reasons**; the
+  EA sees neither.
+- **The dormant MetaApi executor is not wired to confirmation.** If it is
+  revived, it belongs where a draft becomes ACTIVE.
+
+Future Review
+
+- After two weeks: compare how many drafts confirmed or were cancelled, and
+  the confirmed signals' win rate against the earlier signals', before
+  tuning the window or the entry choice.
+- The pending "allow any new signal while one is open" decision must
+  account for drafts, which now block too.
 
 ---
 

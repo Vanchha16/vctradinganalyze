@@ -42,6 +42,7 @@ from app.workers import (  # noqa: E402
     economic_calendar_tasks,
     market_data_tasks,
     news_sentiment_tasks,
+    signal_confirmation_tasks,
     signal_monitoring_tasks,
     signal_tasks,
     telegram_tasks,
@@ -53,5 +54,6 @@ celery_app.conf.beat_schedule = {
     **economic_calendar_tasks.register_economic_calendar_schedule(),
     **signal_tasks.register_signal_schedule(),
     **signal_monitoring_tasks.register_signal_monitoring_schedule(),
+    **signal_confirmation_tasks.register_signal_confirmation_schedule(),
     **telegram_tasks.register_telegram_schedule(),
 }

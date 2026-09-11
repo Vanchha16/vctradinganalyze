@@ -29,6 +29,7 @@ from app.schemas.signal import (
     SignalResponse,
 )
 from app.services.signal import status_resolver
+from app.services.signal_confirmation_service import UNCONFIRMED_REASON
 from app.services.signal_engine import SignalEngine, SignalGenerationResult
 
 router = APIRouter(tags=["signals"])
@@ -56,7 +57,20 @@ def _signal_to_response(signal: Signal, symbol: str) -> SignalResponse:
         closed_at=signal.closed_at,
         profit_loss=signal.profit_loss,
         created_at=signal.created_at,
+        confirmed_at=signal.confirmed_at,
+        status_reason=_status_reason(signal, effective_status),
     )
+
+
+def _status_reason(signal: Signal, effective: SignalStatus) -> str | None:
+    """A draft past its window reads as CANCELLED before the confirmation
+    task has persisted that (ADR-166) - give it the reason the task would
+    have written, rather than an unexplained cancellation."""
+    if signal.status_reason:
+        return signal.status_reason
+    if signal.status is SignalStatus.DRAFT and effective is SignalStatus.CANCELLED:
+        return UNCONFIRMED_REASON
+    return None
 
 
 def _generation_result_to_response(
@@ -82,7 +96,9 @@ async def generate_signal(
     `POST /analysis/ai/{symbol}`'s pattern. `signal` is `null` when the
     underlying recommendation is WAIT (ADR-086)."""
     result = engine.generate(asset, timeframe)
-    if result.signal is not None:
+    # ADR-166: a DRAFT is not published yet - Telegram and the live "created"
+    # event go out from the confirmation task once M15 confirms it.
+    if result.signal is not None and result.signal.status is SignalStatus.ACTIVE:
         # docs/57 §5 - the same delivery hook the automatic
         # `signals.generate_for_watchlist` task uses, fired here too so
         # manually-generated signals also reach linked Telegram accounts.

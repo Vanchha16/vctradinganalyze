@@ -134,11 +134,16 @@ class Settings(BaseSettings):
     # threshold constant in this project.
     signal_triggered_ttl_hours: int = 168
 
-    # Phase 9E (ADR-137) - hourly signal-generation cadence, moved out of a
-    # module constant (`workers/signal_tasks.py`) so the operator can retune
-    # it via `.env` + restart without a code change/deploy. Default
-    # unchanged from the prior hardcoded value.
-    signal_generation_interval_seconds: float = 3600.0
+    # ADR-166 - automatic generation runs this many minutes past each hour:
+    # just after the H1 candle closes (collected at minute 1), replacing
+    # ADR-137's free-running `signal_generation_interval_seconds`, whose
+    # phase depended on when the worker last restarted.
+    signal_generation_minute: int = 3
+    # ADR-166 - a BUY/SELL is saved as a DRAFT and published (Telegram, the
+    # website's live event, the EA feed) only once M15 breaks structure in
+    # its direction within the window. False restores immediate publication.
+    signal_confirmation_enabled: bool = True
+    signal_confirmation_window_hours: int = 4
 
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""

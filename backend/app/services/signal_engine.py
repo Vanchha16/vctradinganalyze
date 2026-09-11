@@ -10,8 +10,9 @@ available via `analysis_id`).
 import uuid
 from dataclasses import dataclass
 
+from app.config import settings
 from app.models.asset import Asset
-from app.models.enums import Recommendation, SignalType, Timeframe
+from app.models.enums import Recommendation, SignalStatus, SignalType, Timeframe
 from app.models.signal import Signal
 from app.repositories.signal_repository import SignalRepository
 from app.services.ai_orchestrator.types import AIAnalysisResult
@@ -68,7 +69,10 @@ class SignalEngine:
             )
 
         signal = self._persist(asset, result)
-        if self._execution_service is not None:
+        # A DRAFT is not a tradeable signal until M15 confirms it (ADR-166).
+        # The dormant MetaApi executor is not wired into confirmation; if it
+        # is ever revived, it belongs where a draft becomes ACTIVE.
+        if self._execution_service is not None and signal.status is SignalStatus.ACTIVE:
             self._execution_service.process_signal(signal, asset)
         return SignalGenerationResult(
             analysis_id=result.id,
@@ -101,6 +105,11 @@ class SignalEngine:
             #: every strategy was rejected - recorded honestly rather
             #: than defaulted to a plausible-looking label.
             strategy=result.strategy.value if result.strategy is not None else None,
+            #: ADR-166: saved as a DRAFT and published only once M15 confirms
+            #: it. The setting restores immediate publication.
+            status=(
+                SignalStatus.DRAFT if settings.signal_confirmation_enabled else SignalStatus.ACTIVE
+            ),
         )
         self._signal_repository.create(signal)
         self._signal_repository.commit()

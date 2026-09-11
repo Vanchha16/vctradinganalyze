@@ -32,7 +32,6 @@ def test_non_active_stored_status_passes_through_unchanged() -> None:
     resolver must not reinterpret a future phase's stored states."""
     now = _CREATED_AT + timedelta(days=10)
     for status in (
-        SignalStatus.DRAFT,
         SignalStatus.TRIGGERED,
         SignalStatus.CANCELLED,
         SignalStatus.CLOSED,
@@ -40,6 +39,23 @@ def test_non_active_stored_status_passes_through_unchanged() -> None:
         SignalStatus.STOPPED_OUT,
     ):
         assert status_resolver.effective_status(status, _CREATED_AT, now) is status
+
+
+def test_a_draft_inside_its_confirmation_window_stays_a_draft() -> None:
+    """ADR-166 - still waiting for M15."""
+    now = _CREATED_AT + timedelta(hours=3, minutes=59)
+    assert status_resolver.effective_status(SignalStatus.DRAFT, _CREATED_AT, now) is (
+        SignalStatus.DRAFT
+    )
+
+
+def test_a_draft_past_its_confirmation_window_reads_as_cancelled() -> None:
+    """ADR-166 - the task persists this too, but a stalled worker must not
+    leave a dead draft looking live."""
+    now = _CREATED_AT + timedelta(hours=4)
+    assert status_resolver.effective_status(SignalStatus.DRAFT, _CREATED_AT, now) is (
+        SignalStatus.CANCELLED
+    )
 
 
 def test_handles_naive_datetimes_from_sqlite() -> None:

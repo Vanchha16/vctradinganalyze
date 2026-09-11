@@ -1,6 +1,7 @@
 from collections.abc import Generator
 
 import pytest
+from celery.schedules import crontab
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -35,6 +36,34 @@ def test_register_market_data_schedule_has_one_entry_per_timeframe() -> None:
     assert len(schedule) == len(Timeframe)
     for entry in schedule.values():
         assert entry["task"] == "market_data.collect_for_timeframe"
+
+
+def test_h1_and_m15_are_collected_just_after_their_candles_close() -> None:
+    """ADR-166 - signal generation (minute 3) and M15 confirmation (3, 18, 33,
+    48) must read the candle that just closed, not one up to an interval old."""
+    schedule = market_data_tasks.register_market_data_schedule()
+
+    h1 = schedule["collect-market-data-h1"]["schedule"]
+    m15 = schedule["collect-market-data-m15"]["schedule"]
+    assert isinstance(h1, crontab)
+    assert h1.minute == {1}
+    assert isinstance(m15, crontab)
+    assert m15.minute == {1, 16, 31, 46}
+    # Everything else keeps its interval.
+    m5 = market_data_tasks.BEAT_SCHEDULE_SECONDS[Timeframe.M5]
+    assert schedule["collect-market-data-m5"]["schedule"] == m5
+
+
+def test_an_operator_override_keeps_its_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "market_data_collection_interval_overrides", {"M15": 600.0})
+
+    assert market_data_tasks.schedule_for(Timeframe.M15, 600.0) == 600.0
+
+
+def test_a_raised_floor_keeps_its_interval() -> None:
+    """A floor above the candle length is a quota decision the alignment must
+    not quietly override."""
+    assert market_data_tasks.schedule_for(Timeframe.M15, 1200.0) == 1200.0
 
 
 def test_collect_market_data_task_persists_candles_for_active_assets(

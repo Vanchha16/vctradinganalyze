@@ -12,9 +12,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database.base import Base
 from app.models.asset import Asset
-from app.models.enums import MarketType, Recommendation, Timeframe
+from app.models.enums import MarketType, Recommendation, SignalStatus, Timeframe
 from app.models.signal import Signal
 from app.repositories.signal_repository import SignalRepository
 from app.services.ai_orchestrator.types import AIAnalysisResult, ReasoningSections
@@ -110,6 +111,38 @@ def test_buy_recommendation_persists_a_signal(session: Session, asset: Asset) ->
     assert row is not None
     assert row.asset_id == asset.id
     assert row.analysis_id == result.id
+
+
+def _buy_result() -> AIAnalysisResult:
+    return _make_result(
+        recommendation=Recommendation.BUY,
+        entry_price=Decimal("1.17540"),
+        stop_loss=Decimal("1.17120"),
+        take_profit=Decimal("1.18150"),
+    )
+
+
+def test_a_new_signal_is_a_draft_until_m15_confirms_it(session: Session, asset: Asset) -> None:
+    """ADR-166 - nothing is published at creation; the confirmation task
+    promotes it once M15 breaks structure in its direction."""
+    engine = SignalEngine(_FakeAIOrchestratorEngine(_buy_result()), SignalRepository(session))
+
+    generation = engine.generate(asset, Timeframe.H1)
+
+    assert generation.signal is not None
+    assert generation.signal.status is SignalStatus.DRAFT
+
+
+def test_confirmation_can_be_switched_off(
+    session: Session, asset: Asset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "signal_confirmation_enabled", False)
+    engine = SignalEngine(_FakeAIOrchestratorEngine(_buy_result()), SignalRepository(session))
+
+    generation = engine.generate(asset, Timeframe.H1)
+
+    assert generation.signal is not None
+    assert generation.signal.status is SignalStatus.ACTIVE
 
 
 def test_sell_recommendation_persists_a_signal(session: Session, asset: Asset) -> None:

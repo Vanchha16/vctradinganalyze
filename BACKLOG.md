@@ -364,7 +364,14 @@ Last updated: 2026-09-08 (ADR-141 signal monitoring range scan). Note: entries b
 - **Upgrade 1 (built, ADR-165):** H1 analyses also run the confidence engine on H4 and D1, and the prompt states whether each higher timeframe agrees with, opposes, or is neutral to the setup. Decision unchanged; tested.
 - **Data note:** production has 734 H4 and only 35 D1 XAUUSD candles (2026-09-11). D1 lines may show partial data until history builds up; a one-off daily backfill is the fix if it stays thin.
 - **Upgrades 2 and 3 (not built):** each overturns part of ADR-078/079 or ADR-051 and needs its own ADR. Both start in shadow mode: the AI verdict is stored next to the signal or article and compared against real outcomes before it is allowed to act.
-- **Also pending, from the same session:** the operator chose "allow any new signal while one is open" (replacing the one-open-signal-per-asset gate), then paused it to ask questions. Not started; confirm before building.
+- **Also pending, from the same session:** the operator chose "allow any new signal while one is open" (replacing the one-open-signal-per-asset gate), then paused it to ask questions. Not started; confirm before building. Since ADR-166 a DRAFT blocks too, so that decision now covers drafts as well.
+- **Signal confirmation (built, ADR-166).** The operator did not want a signal published on every hourly check, only once confirmed.
+  - **Higher timeframes:** a setup whose H4 or D1 trend runs against it is WAIT.
+  - **Drafts:** a passing BUY/SELL is saved as DRAFT (not published, not in the EA feed).
+  - **Confirmation:** a rules-only task at minutes 3/18/33/48 publishes it as ACTIVE on the first confirmed M15 break of structure in its direction. It cancels the draft if its stop loss or take profit is reached first, or after 4 hours.
+  - **Entry:** the H1 setup's entry is kept, so the EA waits for a retest.
+  - **Schedule:** generation now runs at minute 3 of each hour, and H1/M15 are collected at candle close (same daily request count).
+  - **To measure after two weeks:** drafts confirmed vs cancelled, and confirmed win rate vs before.
 
 ## 42. News AI Summaries: ~99% of OpenAI Usage, and Broken (2026-09-11, ADR-164)
 

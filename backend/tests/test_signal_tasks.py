@@ -9,6 +9,7 @@ from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from celery.schedules import crontab
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -143,8 +144,32 @@ def test_has_open_signal_false_once_triggered_ttl_elapsed(
         assert _has_open_signal(SignalRepository(session), asset.id, datetime.now(UTC)) is False
 
 
-def test_register_signal_schedule() -> None:
+def test_has_open_signal_true_for_a_draft_inside_its_window(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """ADR-166 - otherwise every H1 close would stack another draft for the
+    same move before M15 had time to confirm the first."""
+    with session_factory() as session:
+        asset = _seed_signal(session, status=SignalStatus.DRAFT, created_at=datetime.now(UTC))
+        assert _has_open_signal(SignalRepository(session), asset.id, datetime.now(UTC)) is True
+
+
+def test_has_open_signal_false_for_a_draft_past_its_window(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A draft M15 never confirmed is cancelled - it must stop blocking."""
+    stale = datetime.now(UTC) - timedelta(hours=settings.signal_confirmation_window_hours + 1)
+    with session_factory() as session:
+        asset = _seed_signal(session, status=SignalStatus.DRAFT, created_at=stale)
+        assert _has_open_signal(SignalRepository(session), asset.id, datetime.now(UTC)) is False
+
+
+def test_register_signal_schedule_runs_just_after_the_h1_close() -> None:
+    """ADR-166 - on the clock, not a free-running interval whose phase
+    depended on when the worker last restarted."""
     schedule = register_signal_schedule()
 
-    assert schedule["generate-signals-watchlist"]["task"] == "signals.generate_for_watchlist"
-    assert schedule["generate-signals-watchlist"]["schedule"] == 3600.0
+    entry = schedule["generate-signals-watchlist"]
+    assert entry["task"] == "signals.generate_for_watchlist"
+    assert isinstance(entry["schedule"], crontab)
+    assert entry["schedule"].minute == {settings.signal_generation_minute}

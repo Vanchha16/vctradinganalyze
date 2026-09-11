@@ -1,6 +1,8 @@
 import uuid
 from datetime import UTC, datetime
 
+from celery.schedules import crontab
+
 from app.config import settings
 from app.database.session import SessionLocal
 from app.dependencies.ai_orchestrator import (
@@ -50,7 +52,23 @@ def _has_open_signal(
     ADR-137: a `TRIGGERED` signal is a *live trade*, more open than a
     pending `ACTIVE` one - it must also block regeneration, or the new
     state would silently reopen ADR-125's dedup gate the moment a
-    pending order fills."""
+    pending order fills.
+
+    ADR-166: a DRAFT still inside its confirmation window blocks too -
+    otherwise every H1 close would stack another draft for the same move
+    while M15 has not yet had time to confirm the first."""
+    drafts = signal_repository.find_paginated(
+        asset_id=asset_id,
+        timeframe=_TIMEFRAME,
+        status=SignalStatus.DRAFT,
+        limit=1,
+    )
+    if any(
+        effective_status(signal.status, signal.created_at, now) == SignalStatus.DRAFT
+        for signal in drafts
+    ):
+        return True
+
     active = signal_repository.find_paginated(
         asset_id=asset_id,
         timeframe=_TIMEFRAME,
@@ -151,7 +169,9 @@ def generate_signals_task() -> None:
                 continue
 
             result = signal_engine.generate(asset, _TIMEFRAME)
-            if result.signal is not None:
+            # ADR-166: a DRAFT is announced by the confirmation task once M15
+            # confirms it, not here.
+            if result.signal is not None and result.signal.status is SignalStatus.ACTIVE:
                 # Deferred import: avoids a module-level import cycle
                 # (telegram_tasks -> celery_app -> workers/__init__ ->
                 # this module), mirrors how Celery task modules already
@@ -167,10 +187,15 @@ def generate_signals_task() -> None:
 
 def register_signal_schedule() -> dict[str, dict[str, object]]:
     """Celery Beat schedule entry - mirrors
-    `market_data_tasks.register_market_data_schedule`'s shape."""
+    `market_data_tasks.register_market_data_schedule`'s shape.
+
+    ADR-166: on the clock, `signal_generation_minute` past each hour - just
+    after the H1 candle closes and is collected (minute 1) - instead of a
+    free-running 3600s interval whose phase depended on when the worker
+    last started."""
     return {
         "generate-signals-watchlist": {
             "task": "signals.generate_for_watchlist",
-            "schedule": settings.signal_generation_interval_seconds,
+            "schedule": crontab(minute=str(settings.signal_generation_minute)),
         }
     }

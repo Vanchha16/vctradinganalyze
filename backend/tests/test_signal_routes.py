@@ -157,7 +157,8 @@ def test_generate_signal_for_buy_persists_and_returns_signal(
     assert body["recommendation"] == "buy"
     assert body["signal"] is not None
     assert body["signal"]["signal_type"] == "buy"
-    assert body["signal"]["status"] == "active"
+    # ADR-166: saved as a draft - published once M15 confirms it.
+    assert body["signal"]["status"] == "draft"
     assert body["signal"]["risk_reward"] == pytest.approx(1.4524, abs=0.01)
 
 

@@ -64,3 +64,10 @@ class Signal(Base, UUIDMixin, CreatedAtMixin):
         DateTime(timezone=True), nullable=True
     )
     profit_loss: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    #: ADR-166 - when a DRAFT was confirmed on M15 and published (became
+    #: ACTIVE). `None` for a signal that is still a draft, was cancelled, or
+    #: was created before confirmation existed.
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: ADR-166 - one line on why the status is what it is: what confirmed
+    #: a draft, or why it was cancelled.
+    status_reason: Mapped[str | None] = mapped_column(String(160), nullable=True)

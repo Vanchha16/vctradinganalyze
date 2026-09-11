@@ -580,6 +580,10 @@ export interface SignalResponse {
   closed_at: string | null;
   profit_loss: string | null;
   created_at: string;
+  /** ADR-166: when a draft was confirmed on M15 and published. */
+  confirmed_at: string | null;
+  /** ADR-166: what confirmed it, or why it was cancelled. */
+  status_reason: string | null;
 }
 
 export interface SignalListResponse {

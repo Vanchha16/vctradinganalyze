@@ -54,6 +54,10 @@ class SignalResponse(BaseModel):
     closed_at: datetime | None
     profit_loss: Decimal | None
     created_at: datetime
+    #: ADR-166 - when a draft was confirmed on M15 and published.
+    confirmed_at: datetime | None = None
+    #: ADR-166 - what confirmed it, or why it was cancelled.
+    status_reason: str | None = None
 
 
 class SignalListResponse(BaseModel):

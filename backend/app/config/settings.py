@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     # newer families reject any explicit value ("Only the default (1) is
     # supported"). Set a float here to pin it on a model that allows one.
     openai_temperature: float | None = None
+    # ADR-164 - model for news article summaries. The operator chose the same
+    # model as signal narration, but it stays a separate setting: sharing one
+    # setting is how moving the narration model broke this call, and either
+    # can now change without silently affecting the other.
+    news_summary_model: str = "gpt-6-astra"
 
     ai_orchestrator_providers: list[str] = ["openai"]
     ai_retry_max_attempts: int = 2

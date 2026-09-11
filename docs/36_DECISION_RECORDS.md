@@ -10070,6 +10070,157 @@ Future Review
 - If pausing from Telegram is wanted - it would write the same `paused`
   field through the same service method.
 
+# ADR-164
+
+Title
+
+Summarize Only News That Affects an Active Asset, With Its Own Model
+
+Status
+
+Accepted
+
+Context
+
+The operator's OpenAI dashboard showed 11,928 requests and 2.68M tokens in
+seven days (2026-09-11). Signal analyses accounted for almost none of it:
+production made 2-30 analyses a day. The rest was `AISummaryGenerator`
+(ADR-051), called once for **every** ingested news article - 1,100 to 2,500
+a day. Only about 2% of the corpus affects XAUUSD (BACKLOG §31), so nearly
+all of those requests summarized articles no signal ever reads.
+
+**It was also broken.** The generator read `OPENAI_MODEL` and still sent
+`temperature: 0.2`. When ADR-160 moved `OPENAI_MODEL` to `gpt-6-astra`,
+which rejects any explicit temperature, every summary request started
+failing with a 400:
+- 09-10: 536 of 2,500 articles summarized;
+- 09-11: 0;
+- about 150 failing requests an hour since.
+
+ADR-160 fixed only `OpenAIProvider` and missed this second caller. Its own
+Future Review asked for a payload-shape test with any provider parameter;
+this call had none, which is why nothing caught it.
+
+Decision
+
+The operator chose (2026-09-11) to fix the call and summarize gold news
+only:
+
+1. **Only articles with a non-empty `affected_assets` are summarized.**
+   Asset detection runs against *active* assets only, so today that means
+   XAUUSD articles. The check comes before the API-key check, so an
+   irrelevant article costs no request.
+2. **`NEWS_SUMMARY_MODEL`, separate from `OPENAI_MODEL`.** Its default is
+   `gpt-6-astra` - the operator chose the same model as signal narration
+   over the cheaper `gpt-4o-mini`, since the gate in 1 already cuts the
+   request count to tens a day. It stays a separate setting anyway: sharing
+   one setting is exactly how changing the narration model broke this call.
+3. **ADR-160's request shape:** `max_completion_tokens` (400 - headroom so
+   the existing 150-word cap, not a token cut, trims long answers), and
+   `temperature` only when `OPENAI_TEMPERATURE` is set. Payload-shape tests
+   added.
+
+Signals are unaffected. Sentiment, confidence, category, importance and
+affected assets stay deterministic; `ai_summary` is display text only.
+
+Alternatives Considered
+
+- **Turn news summaries off.** Cheapest; the operator preferred keeping
+  them where they matter.
+- **Fix the 400 only.** Back to ~2,000 requests a day, now on the more
+  expensive narration model.
+
+Consequences
+
+- Expect requests in the tens per day, not thousands. That is an estimate
+  from the ~2% relevance rate, to be confirmed on the OpenAI dashboard
+  after deploy.
+- Articles that affect no active asset show no AI summary on the News
+  page. Their deterministic sentiment and category are unchanged.
+- Activating another symbol raises the summary count in proportion to its
+  news volume.
+- Existing summaries are untouched; nothing is backfilled.
+
+Future Review
+
+- When a second asset is activated.
+- If gold articles are being missed: the limit here is `asset_detector`'s
+  keyword matching (BACKLOG §31's classification-quality note), not this
+  gate.
+- Any other OpenAI caller added later needs a payload-shape test and a
+  deliberate model choice - this is the second time a shared setting broke
+  one.
+
+# ADR-165
+
+Title
+
+Give the Narration Higher-Timeframe Context (H1 Analyses See H4 and D1)
+
+Status
+
+Accepted
+
+Context
+
+The operator asked for the AI budget to go where it makes the system
+stronger, not just longer (2026-09-11), and chose three upgrades, built in
+this order:
+
+1. multi-timeframe context (this ADR);
+2. an AI risk review with veto power, in shadow mode first;
+3. an AI news reader for gold, in shadow mode first.
+
+An H1 analysis looked only at H1. A SELL on H1 inside a strong daily
+uptrend read exactly like one that trades with it - the narration had no
+way to tell the difference, and the planned risk review would inherit the
+same blindness. Production already collects H4 (every 4 hours) and D1
+(daily) candles for XAUUSD, so the data existed; it was never analysed for
+a signal.
+
+Decision
+
+**1. `ContextBuilder` runs the existing `AnalysisConfidenceEngine` on the
+timeframes above the one analysed** - `HIGHER_TIMEFRAMES`: H1 -> H4, D1;
+M15 -> H1, H4; H4 -> D1, W1; and so on, two levels at most. No new engine,
+no new data path, no extra market-data requests.
+
+**2. Thin history degrades, it does not fail.** Missing candles already
+come back as a result with `missing_data`; anything else a short history
+trips (D1 has only weeks of data) is logged and that timeframe left out.
+Context for the narration must never cost the analysis it decorates.
+
+**3. The prompt shows one line per higher timeframe** - trend, strength and
+score, ADX, RSI, SMC structure, premium/discount position, regime and
+confidence - ending in whether that trend **agrees with**, **OPPOSES** or is
+**neutral to** the setup's direction. That comparison is a plain
+fact-against-fact check, stated so the model cannot skip it; with no setup
+(WAIT) no verdict is given. The system prompt asks the model to say plainly
+whether higher timeframes support or contradict the setup. `PROMPT_VERSION`
+1.1.0.
+
+**4. The recommendation is untouched.** `recommendation_decision` never
+reads `higher_timeframes` - tested with a LONG setup against two bearish
+higher timeframes. ADR-078/079 stand; acting on this context is the
+subject of the risk review's own ADR.
+
+Consequences
+
+- Every analysis runs the confidence engine up to three times instead of
+  once. At one generation an hour this is modest CPU on the 909MB server,
+  but it is the first cost to check if analyses slow down.
+- More input tokens per analysis (a few hundred), and narration that can
+  call out a setup fighting the bigger trend.
+- Until D1 has enough history, its line may show partial or no data. That
+  is reported, not hidden.
+
+Future Review
+
+- When the risk review (upgrade 2) consumes this context.
+- If D1's thin history keeps it unavailable, a one-off backfill of daily
+  candles is the fix - it would cost one market-data request, not a
+  schedule change.
+
 ---
 
 # Review Policy

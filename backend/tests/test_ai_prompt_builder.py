@@ -1,13 +1,108 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from app.models.enums import Recommendation
+from app.models.enums import Recommendation, Timeframe
 from app.services.ai_orchestrator import prompt_builder
-from tests.ai_orchestrator_helpers import make_analysis_context, make_economic_event_evidence
+from app.services.ai_orchestrator.types import CandidateSetup
+from app.services.risk_management.types import TradeDirection
+from app.services.technical_analysis.types import TrendDirection
+from tests.ai_orchestrator_helpers import (
+    make_analysis_context,
+    make_confidence_result,
+    make_economic_event_evidence,
+)
 
 
 def test_prompt_version_is_set() -> None:
-    assert prompt_builder.PROMPT_VERSION == "1.0.0"
+    assert prompt_builder.PROMPT_VERSION == "1.1.0"
+
+
+def _setup(direction: TradeDirection) -> CandidateSetup:
+    return CandidateSetup(
+        direction=direction,
+        entry_price=Decimal("4360.72"),
+        stop_loss=Decimal("4392.15"),
+        take_profit=Decimal("4297.86"),
+    )
+
+
+def _line(prompt: str, label: str) -> str:
+    return next(line for line in prompt.splitlines() if line.strip().startswith(f"{label}:"))
+
+
+def test_higher_timeframes_reach_the_prompt_with_their_agreement() -> None:
+    """ADR-165 - a SELL against a bullish daily trend is the risk a reader
+    most needs to hear, and the one a model skips when left implicit."""
+    context = make_analysis_context(
+        candidate_setup=_setup(TradeDirection.SHORT),
+        higher_timeframes=[
+            make_confidence_result(timeframe=Timeframe.H4, trend=TrendDirection.BEARISH),
+            make_confidence_result(timeframe=Timeframe.D1, trend=TrendDirection.BULLISH),
+        ],
+    )
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.SELL, [], [], [], [])
+
+    assert "Higher timeframes:" in prompt
+    assert "trend bearish" in _line(prompt, "H4")
+    assert _line(prompt, "H4").endswith("agrees with the setup")
+    assert _line(prompt, "D1").endswith("OPPOSES the setup")
+
+
+def test_a_sideways_higher_timeframe_is_neutral_not_opposed() -> None:
+    context = make_analysis_context(
+        candidate_setup=_setup(TradeDirection.LONG),
+        higher_timeframes=[
+            make_confidence_result(timeframe=Timeframe.H4, trend=TrendDirection.SIDEWAYS)
+        ],
+    )
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.BUY, [], [], [], [])
+
+    assert _line(prompt, "H4").endswith("neutral to the setup")
+
+
+def test_a_higher_timeframe_without_data_says_so() -> None:
+    """D1 has only weeks of history. Silence would read as "nothing to
+    report", which is a different claim from "no data"."""
+    context = make_analysis_context(
+        higher_timeframes=[
+            make_confidence_result(
+                timeframe=Timeframe.D1,
+                include_technical=False,
+                include_smc=False,
+                include_regime=False,
+            )
+        ]
+    )
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.WAIT, [], [], [], [])
+
+    assert "D1: no data available" in prompt
+
+
+def test_without_a_setup_there_is_no_agreement_verdict() -> None:
+    """WAIT has no direction, so "agrees" or "opposes" would be invented."""
+    context = make_analysis_context(
+        higher_timeframes=[make_confidence_result(timeframe=Timeframe.H4)]
+    )
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.WAIT, [], [], [], [])
+
+    assert "Higher timeframes:" in prompt
+    assert "the setup" not in _line(prompt, "H4")
+
+
+def test_no_higher_timeframe_section_when_none_were_analysed() -> None:
+    context = make_analysis_context()
+
+    prompt = prompt_builder.build_user_prompt(context, Recommendation.BUY, [], [], [], [])
+
+    assert "Higher timeframes:" not in prompt
+
+
+def test_system_prompt_asks_the_model_to_address_higher_timeframes() -> None:
+    assert "higher-timeframe" in prompt_builder.SYSTEM_PROMPT
 
 
 def test_system_prompt_forbids_inventing_and_deciding() -> None:

@@ -1,12 +1,14 @@
 """Builds `AnalysisContext` once per `AIOrchestratorEngine.generate()`
 call (docs/50 §3/§5) - every upstream engine is called at most once."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from app.models.asset import Asset
 from app.models.enums import Timeframe
 from app.repositories.price_candle_repository import PriceCandleRepository
+from app.services.analysis_confidence.types import ConfidenceResult
 from app.services.analysis_confidence_engine import AnalysisConfidenceEngine
 from app.services.economic_calendar.types import EconomicCalendarResult
 from app.services.economic_calendar_engine import EconomicCalendarEngine
@@ -20,6 +22,22 @@ from .types import AnalysisContext
 _NEWS_LOOKBACK_HOURS = 24
 _ECONOMIC_LOOKBACK_HOURS = 2
 _ECONOMIC_LOOKAHEAD_HOURS = 24
+
+logger = logging.getLogger(__name__)
+
+#: ADR-165 - the timeframes analysed above the one a signal is built on.
+#: Two levels: enough to see whether a setup trades with or against the
+#: bigger picture, without tripling the work on a 909MB server. Every
+#: timeframe here is already collected (no extra market-data requests).
+HIGHER_TIMEFRAMES: dict[Timeframe, tuple[Timeframe, ...]] = {
+    Timeframe.M1: (Timeframe.M5, Timeframe.M15),
+    Timeframe.M5: (Timeframe.M15, Timeframe.H1),
+    Timeframe.M15: (Timeframe.H1, Timeframe.H4),
+    Timeframe.M30: (Timeframe.H1, Timeframe.H4),
+    Timeframe.H1: (Timeframe.H4, Timeframe.D1),
+    Timeframe.H4: (Timeframe.D1, Timeframe.W1),
+    Timeframe.D1: (Timeframe.W1,),
+}
 
 
 class ContextBuilder:
@@ -53,6 +71,7 @@ class ContextBuilder:
         now = datetime.now(UTC)
 
         confidence = self._confidence_engine.analyze(asset, timeframe)
+        higher_timeframes = self._higher_timeframes(asset, timeframe)
 
         since = now - timedelta(hours=_NEWS_LOOKBACK_HOURS)
         news = self._news_sentiment_engine.get_sentiment_for_asset(asset.symbol, since)
@@ -101,7 +120,26 @@ class ContextBuilder:
             candidate_setup=candidate_setup,
             risk=risk,
             focus_event=focus_event,
+            higher_timeframes=higher_timeframes,
         )
+
+    def _higher_timeframes(self, asset: Asset, timeframe: Timeframe) -> list[ConfidenceResult]:
+        """ADR-165. Missing candles already degrade inside the engine (a
+        result with `missing_data`, never an exception). Anything else a thin
+        history trips - D1 has only weeks of data - is logged and that
+        timeframe left out: context for the narration must never cost the
+        analysis it decorates."""
+        results: list[ConfidenceResult] = []
+        for higher in HIGHER_TIMEFRAMES.get(timeframe, ()):
+            try:
+                results.append(self._confidence_engine.analyze(asset, higher))
+            except Exception:  # noqa: BLE001 - see docstring
+                logger.warning(
+                    "ai_orchestrator.higher_timeframe_unavailable",
+                    extra={"symbol": asset.symbol, "timeframe": higher.value},
+                    exc_info=True,
+                )
+        return results
 
     def _economic_events_for(self, asset: Asset, now: datetime) -> EconomicCalendarResult:
         start = now - timedelta(hours=_ECONOMIC_LOOKBACK_HOURS)

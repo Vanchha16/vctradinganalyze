@@ -258,6 +258,8 @@ Risk
 
 Confidence
 
+Scope (ADR-164): only articles whose detected affected assets include an active asset are summarized, using `NEWS_SUMMARY_MODEL` (default `gpt-6-astra`). Every other article keeps its deterministic sentiment, category and importance, and has no AI summary.
+
 ---
 
 # 10. Duplicate Detection

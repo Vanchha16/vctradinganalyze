@@ -27,6 +27,7 @@ from app.services.economic_calendar.types import EconomicCalendarResult, Economi
 from app.services.news_sentiment.types import NewsSentimentResult
 from app.services.risk_management.types import RiskEvaluation
 from app.services.strategy.types import StrategyBreakdown, StrategyEvaluation, StrategyName
+from app.services.technical_analysis.types import TrendDirection
 from tests.analysis_confidence_helpers import (
     make_regime_result,
     make_smc_result,
@@ -54,16 +55,20 @@ def make_confidence_result(
     include_technical: bool = True,
     include_smc: bool = True,
     include_regime: bool = True,
+    timeframe: Timeframe = Timeframe.H1,
+    trend: TrendDirection = TrendDirection.BULLISH,
 ) -> ConfidenceResult:
     return ConfidenceResult(
         symbol="EURUSD",
-        timeframe=Timeframe.H1,
+        timeframe=timeframe,
         overall_confidence=overall_confidence,
         confidence_level=confidence_level,
         summary="Deterministic summary.",
-        technical=make_technical_result() if include_technical else None,
-        smc=make_smc_result() if include_smc else None,
-        market_regime=make_regime_result() if include_regime else None,
+        technical=(
+            make_technical_result(timeframe=timeframe, trend=trend) if include_technical else None
+        ),
+        smc=make_smc_result(timeframe=timeframe) if include_smc else None,
+        market_regime=make_regime_result(timeframe=timeframe) if include_regime else None,
         alignment=AlignmentEvidence(
             technical_direction=NormalizedDirection.BULLISH,
             smc_direction=NormalizedDirection.BULLISH,
@@ -141,6 +146,7 @@ def make_analysis_context(
     focus_event: EconomicEventEvidence | None = None,
     economic_events: list[EconomicEventEvidence] | None = None,
     bbma: object | None = None,
+    higher_timeframes: list[ConfidenceResult] | None = None,
 ) -> AnalysisContext:
     return AnalysisContext(
         asset=make_asset(),
@@ -152,6 +158,7 @@ def make_analysis_context(
         candidate_setup=candidate_setup,
         risk=risk,
         focus_event=focus_event,
+        higher_timeframes=higher_timeframes or [],
     )
 
 

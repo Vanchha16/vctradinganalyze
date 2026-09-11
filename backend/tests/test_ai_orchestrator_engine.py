@@ -275,6 +275,53 @@ def test_focus_event_reaches_the_prompt_without_touching_the_scored_events(
     assert focused.confidence_score == baseline.confidence_score
 
 
+def test_higher_timeframes_are_analysed_and_reach_the_prompt(
+    session: Session, asset: Asset
+) -> None:
+    """ADR-165 - H1 analyses also look at H4 and D1. D1 with no candles is
+    reported as unavailable rather than failing the analysis."""
+    _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
+    _seed_trending_candles(session, asset, Timeframe.H4, 300, drift=0.3)
+    provider = MockAIProvider()
+    engine = _make_engine(session, provider)
+
+    result = engine.generate(asset, Timeframe.H1)
+
+    prompt = provider.calls[-1].user_prompt
+    assert result.ai_available is True
+    assert "Higher timeframes:" in prompt
+    assert "H4: trend" in prompt
+    assert "D1: no data available" in prompt
+
+
+def test_higher_timeframes_never_change_the_recommendation() -> None:
+    """ADR-165 keeps ADR-078/079: the decision reads only the analysed
+    timeframe. A higher timeframe opposing the setup is narrated, not acted
+    on - acting on it belongs to a separate, reviewed decision."""
+    from app.services.ai_orchestrator import recommendation_decision
+    from app.services.ai_orchestrator.types import CandidateSetup
+    from app.services.risk_management.types import TradeDirection
+    from app.services.technical_analysis.types import TrendDirection
+    from tests.ai_orchestrator_helpers import make_analysis_context, make_confidence_result
+
+    setup = CandidateSetup(
+        direction=TradeDirection.LONG,
+        entry_price=Decimal("100"),
+        stop_loss=Decimal("95"),
+        take_profit=Decimal("110"),
+    )
+    baseline = make_analysis_context(candidate_setup=setup)
+    opposed = make_analysis_context(
+        candidate_setup=setup,
+        higher_timeframes=[
+            make_confidence_result(timeframe=Timeframe.H4, trend=TrendDirection.BEARISH),
+            make_confidence_result(timeframe=Timeframe.D1, trend=TrendDirection.BEARISH),
+        ],
+    )
+
+    assert recommendation_decision.decide(opposed) == recommendation_decision.decide(baseline)
+
+
 def test_an_unknown_focus_event_id_still_returns_an_analysis(
     session: Session, asset: Asset
 ) -> None:

@@ -8,6 +8,13 @@ Guardrails: must reference the source article, never invent facts/
 quotes/numbers/forecasts not present in the article text, max 150 words
 (enforced post-generation), and degrades gracefully to `None` on any
 failure - ingestion never blocks on this call (docs/46 §3).
+
+ADR-164: only articles that affect an active asset are summarized, with
+their own model (`NEWS_SUMMARY_MODEL`), and the request uses ADR-160's
+shape. Summarizing every ingested article was ~99% of all OpenAI requests
+- about 2,000 a day, nearly all of them for articles no signal reads - and
+once `OPENAI_MODEL` moved to a model that rejects `temperature`, every one
+of them failed with a 400.
 """
 
 import logging
@@ -22,6 +29,9 @@ from app.services.news_sentiment.types import RawArticleClassification
 logger = logging.getLogger(__name__)
 
 _MAX_WORDS = 150
+#: Headroom over 150 words (~200 tokens) so the word cap, not the token
+#: limit, is what trims a long answer - a token cut mid-sentence reads worse.
+_MAX_COMPLETION_TOKENS = 400
 _SYSTEM_PROMPT = (
     "You summarize financial news articles for traders. Rules you must "
     "never break: only use facts, numbers, and quotes present in the "
@@ -45,6 +55,11 @@ class AISummaryGenerator:
         article: RawNewsArticle,
         classification: RawArticleClassification,
     ) -> str | None:
+        # ADR-164: `affected_assets` is detected against the *active* assets
+        # only, so empty means no signal will ever read this article. Checked
+        # before the key, so an irrelevant article costs no request at all.
+        if not classification.affected_assets:
+            return None
         if not credential_resolver.resolve("openai"):
             return None
 
@@ -55,8 +70,24 @@ class AISummaryGenerator:
             f"Content: {article.content or 'N/A'}\n"
             f"Deterministic sentiment: {classification.sentiment.value} "
             f"(confidence {classification.confidence:.0f})\n"
-            f"Affected assets: {', '.join(classification.affected_assets) or 'none detected'}"
+            f"Affected assets: {', '.join(classification.affected_assets)}"
         )
+
+        payload: dict[str, object] = {
+            # Its own setting, not `openai_model` - even though both default to
+            # the same model: sharing one setting is how moving the narration
+            # model (ADR-160) broke this call.
+            "model": settings.news_summary_model,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            # ADR-160's shape: newer models reject `max_tokens` and any
+            # explicit `temperature`; every model reachable accepts this.
+            "max_completion_tokens": _MAX_COMPLETION_TOKENS,
+        }
+        if settings.openai_temperature is not None:
+            payload["temperature"] = settings.openai_temperature
 
         try:
             with httpx.Client(
@@ -65,17 +96,7 @@ class AISummaryGenerator:
                 headers={"Authorization": f"Bearer {credential_resolver.resolve("openai")}"},
                 transport=self._transport,
             ) as client:
-                response = client.post(
-                    "/chat/completions",
-                    json={
-                        "model": settings.openai_model,
-                        "messages": [
-                            {"role": "system", "content": _SYSTEM_PROMPT},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        "temperature": 0.2,
-                    },
-                )
+                response = client.post("/chat/completions", json=payload)
                 response.raise_for_status()
                 body = response.json()
                 text: str = body["choices"][0]["message"]["content"].strip()

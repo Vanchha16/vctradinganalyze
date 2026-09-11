@@ -55,6 +55,11 @@ class AnalysisContext:
     #: must not change the recommendation, only what the narration talks
     #: about (ADR-079).
     focus_event: EconomicEventEvidence | None = None
+    #: ADR-165 - the same deterministic analysis, run on the timeframes
+    #: above `timeframe` (H1 -> H4, D1), nearest first. Context for the
+    #: narration only: `recommendation_decision` never reads it, so a
+    #: higher timeframe cannot change BUY/SELL/WAIT (ADR-078/079).
+    higher_timeframes: list[ConfidenceResult] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

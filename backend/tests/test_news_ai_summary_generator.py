@@ -1,3 +1,6 @@
+import json
+from dataclasses import replace
+
 import httpx
 import pytest
 
@@ -15,6 +18,62 @@ _CLASSIFICATION = RawArticleClassification(
     reason="Matched 1 sentiment keyword(s): rate hike (score=-2.0).",
     affected_assets=["EURUSD"],
 )
+
+
+def _capturing(captured: list[httpx.Request]) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    return httpx.MockTransport(handler)
+
+
+def test_articles_affecting_no_active_asset_are_never_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-164: summarizing every article was ~99% of all OpenAI requests,
+    almost all of them for news no signal ever reads."""
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    captured: list[httpx.Request] = []
+    generator = AISummaryGenerator(transport=_capturing(captured))
+
+    result = generator.generate(make_raw_article(), replace(_CLASSIFICATION, affected_assets=[]))
+
+    assert result is None
+    assert captured == []
+
+
+def test_request_uses_the_news_summary_model_and_adr_160_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This call had no payload test, which is how `gpt-6-astra` rejecting
+    `temperature` turned every summary into a 400 unnoticed (ADR-164)."""
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "openai_model", "gpt-6-astra")
+    monkeypatch.setattr(settings, "news_summary_model", "gpt-4o-mini")
+    monkeypatch.setattr(settings, "openai_temperature", None)
+    captured: list[httpx.Request] = []
+    generator = AISummaryGenerator(transport=_capturing(captured))
+
+    generator.generate(make_raw_article(), _CLASSIFICATION)
+
+    [request] = captured
+    payload = json.loads(request.content)
+    assert payload["model"] == "gpt-4o-mini"
+    assert payload["max_completion_tokens"] == 400
+    assert "max_tokens" not in payload
+    assert "temperature" not in payload
+
+
+def test_temperature_is_sent_only_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "openai_temperature", 0.3)
+    captured: list[httpx.Request] = []
+    generator = AISummaryGenerator(transport=_capturing(captured))
+
+    generator.generate(make_raw_article(), _CLASSIFICATION)
+
+    assert json.loads(captured[0].content)["temperature"] == 0.3
 
 
 def test_generate_returns_none_when_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

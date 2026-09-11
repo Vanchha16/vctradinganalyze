@@ -543,7 +543,7 @@ Response
   "sentiment": { "sentiment", "confidence", "reason", "affected_assets", "ai_summary" }
 }
 
-404 if the article id is unknown. `ai_summary` is `null` if the AI summary call failed or was skipped (ADR-051) - never blocks the rest of the response.
+404 if the article id is unknown. `ai_summary` is `null` if the AI summary call failed or was skipped (ADR-051) - never blocks the rest of the response - and always for an article that affects no active asset, which is never sent for summarizing (ADR-164).
 
 ---
 

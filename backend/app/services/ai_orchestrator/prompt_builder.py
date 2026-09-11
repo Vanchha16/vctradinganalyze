@@ -10,13 +10,15 @@ from decimal import Decimal
 from app.models.enums import Recommendation
 from app.services.bbma.types import BBMAResult
 from app.services.economic_calendar.types import EconomicEventEvidence
+from app.services.risk_management.types import TradeDirection
 from app.services.smc.types import SMCAnalysisResult
 from app.services.technical_analysis.types import TechnicalAnalysisResult
 from app.utils.time import as_aware_utc
 
 from .types import AnalysisContext
 
-PROMPT_VERSION = "1.0.0"
+#: 1.1.0 - ADR-165: higher-timeframe context.
+PROMPT_VERSION = "1.1.0"
 
 _MAX_SECTION_WORDS = 120
 _MAX_TOKENS = 1200
@@ -34,7 +36,10 @@ SYSTEM_PROMPT = (
     "context below - never invent a price, indicator value, news item, "
     "economic event, or structural detail that isn't present. Never output "
     "a recommendation, confidence value, or price of your own - those "
-    "fields are not part of your response. Respond only with the JSON "
+    "fields are not part of your response. When higher-timeframe context is "
+    "given, say plainly whether it supports or contradicts the setup - a "
+    "setup that opposes its higher timeframes is a risk the reader must "
+    "hear about. Respond only with the JSON "
     f"schema you are given, each section under {_MAX_SECTION_WORDS} words."
 )
 
@@ -98,6 +103,8 @@ def build_user_prompt(
     if context.confidence.market_regime is not None:
         lines.append(f"Market Regime: {context.confidence.market_regime.regime.value}")
 
+    lines.extend(_higher_timeframe_lines(context))
+
     if context.news.articles:
         lines.append("Recent news:")
         # Sentiment and importance, not just the headline: a bearish
@@ -153,6 +160,69 @@ def build_user_prompt(
     lines.append(f"Risks: {'; '.join(risks) or 'none'}")
 
     return "\n".join(lines)
+
+
+def _higher_timeframe_lines(context: AnalysisContext) -> list[str]:
+    """ADR-165 - the bigger picture, one line per timeframe.
+
+    Each line ends with whether that timeframe's trend agrees with the
+    setup's direction. That is a plain comparison of two facts already
+    decided, not a judgement - but it is the comparison a reader most needs
+    and the one a model is most likely to skip when it is left implicit.
+    """
+    if not context.higher_timeframes:
+        return []
+
+    setup_trend: str | None = None
+    if context.candidate_setup is not None:
+        setup_trend = (
+            "bullish" if context.candidate_setup.direction is TradeDirection.LONG else "bearish"
+        )
+
+    lines = ["Higher timeframes:"]
+    for view in context.higher_timeframes:
+        label = view.timeframe.value.upper()
+        technical = view.technical
+        if technical is None and view.smc is None and view.market_regime is None:
+            lines.append(f"  {label}: no data available")
+            continue
+
+        parts: list[str] = []
+        if technical is not None:
+            detail = (
+                f"trend {technical.trend.value} ({technical.strength.value}, "
+                f"score {technical.technical_score:.0f})"
+            )
+            if technical.trend_evidence.adx is not None:
+                detail += f", ADX {technical.trend_evidence.adx:.0f}"
+            rsi = technical.indicators.get("rsi_14")
+            if rsi is not None:
+                detail += f", RSI {rsi:.0f}"
+            parts.append(detail)
+        if view.smc is not None:
+            parts.append(
+                f"SMC {view.smc.market_structure.state.value}, "
+                f"price in {view.smc.premium_discount.position.value}"
+            )
+        if view.market_regime is not None:
+            parts.append(f"regime {view.market_regime.regime.value}")
+        parts.append(
+            f"confidence {view.overall_confidence:.0f} ({view.confidence_level.value})"
+        )
+
+        line = f"  {label}: {'; '.join(parts)}"
+        if setup_trend is not None and technical is not None:
+            line += f" -> {_agreement(technical.trend.value, setup_trend)}"
+        lines.append(line)
+    return lines
+
+
+def _agreement(trend: str, setup_trend: str) -> str:
+    if trend == setup_trend:
+        return "agrees with the setup"
+    if trend in {"bullish", "bearish"}:
+        return "OPPOSES the setup"
+    return "neutral to the setup"
 
 
 def _bbma_lines(bbma: BBMAResult | None) -> list[str]:

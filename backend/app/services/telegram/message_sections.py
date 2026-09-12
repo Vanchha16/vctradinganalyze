@@ -215,13 +215,52 @@ def compose_signal_triggered_message(signal: Signal, asset: Asset, *, now: datet
     return "\n\n".join(sections)
 
 
+#: Shown when a cancelled signal carries no reason of its own.
+_DEFAULT_CANCELLED_REASON = "Cancelled before it filled."
+
+
+def render_cancelled_header(asset: Asset) -> str:
+    symbol = escape_markdown_v2(_display_symbol(asset))
+    return f"{_SEPARATOR}\n🚫 SIGNAL CANCELLED • {symbol}\n{_SEPARATOR}"
+
+
+def render_cancelled_body(signal: Signal, asset: Asset) -> str:
+    lines = [
+        _field("📌 Signal", signal.signal_type.value.upper()),
+        "",
+        _field("⏰ Timeframe", signal.timeframe.value.upper()),
+        "",
+        _field("🎯 Entry", _format_price(signal.entry_price, asset)),
+        "",
+        escape_markdown_v2(signal.status_reason or _DEFAULT_CANCELLED_REASON),
+    ]
+    return "\n".join(lines)
+
+
+def compose_signal_cancelled_message(signal: Signal, asset: Asset, *, now: datetime) -> str:
+    """Sent when a signal subscribers were already sent is cancelled before
+    it filled - replaced by a newer confirmed signal (ADR-168) or cancelled
+    from the website (ADR-169). The signal's `status_reason` says which.
+    Anyone who placed the order by hand should remove it. Same layout style
+    as the other signal messages."""
+    sections = [
+        render_cancelled_header(asset),
+        render_cancelled_body(signal, asset),
+        render_timestamp(now),
+    ]
+    return "\n\n".join(sections)
+
+
 __all__ = [
     "compose_signal_message",
+    "compose_signal_cancelled_message",
     "compose_signal_outcome_message",
     "compose_signal_triggered_message",
     "escape_markdown_v2",
     "render_header",
     "render_outcome_header",
+    "render_cancelled_body",
+    "render_cancelled_header",
     "render_outcome_result",
     "render_risk_management",
     "render_timestamp",

@@ -56,7 +56,12 @@ def _has_open_signal(
 
     ADR-166: a DRAFT still inside its confirmation window blocks too -
     otherwise every H1 close would stack another draft for the same move
-    while M15 has not yet had time to confirm the first."""
+    while M15 has not yet had time to confirm the first.
+
+    ADR-168: while confirmation is on, an ACTIVE signal that has not filled
+    no longer blocks - a newer setup may be drafted and, once M15 confirms
+    it, replaces the unfilled one (`signal_confirmation_tasks`). Without
+    confirmation there is no replacement step, so ACTIVE still blocks."""
     drafts = signal_repository.find_paginated(
         asset_id=asset_id,
         timeframe=_TIMEFRAME,
@@ -69,17 +74,18 @@ def _has_open_signal(
     ):
         return True
 
-    active = signal_repository.find_paginated(
-        asset_id=asset_id,
-        timeframe=_TIMEFRAME,
-        status=SignalStatus.ACTIVE,
-        limit=1,
-    )
-    if any(
-        effective_status(signal.status, signal.created_at, now) == SignalStatus.ACTIVE
-        for signal in active
-    ):
-        return True
+    if not settings.signal_confirmation_enabled:
+        active = signal_repository.find_paginated(
+            asset_id=asset_id,
+            timeframe=_TIMEFRAME,
+            status=SignalStatus.ACTIVE,
+            limit=1,
+        )
+        if any(
+            effective_status(signal.status, signal.created_at, now) == SignalStatus.ACTIVE
+            for signal in active
+        ):
+            return True
 
     triggered = signal_repository.find_paginated(
         asset_id=asset_id,
@@ -158,14 +164,13 @@ def generate_signals_task() -> None:
         now = datetime.now(UTC)
         for asset in asset_repository.list_active(limit=1000):
             if _has_open_signal(signal_repository, asset.id, now):
-                # An unresolved BUY/SELL call already exists for this
+                # A live trade or a waiting draft already exists for this
                 # asset/timeframe (ADR-088 EXPIRED is read-time-only, so
                 # this re-checks effective_status rather than trusting
-                # the stored ACTIVE status). Re-running the full AI
-                # orchestration hourly would only ever re-confirm or
-                # contradict that same open call, spamming Telegram with
-                # near-duplicate signals (docs/57 §8's deferred
-                # "deduplication" gap) - skip until it closes/expires.
+                # the stored status). Skip until it closes, expires or is
+                # confirmed. An unfilled ACTIVE signal does not block while
+                # confirmation is on (ADR-168); repeats of its setup are
+                # cancelled at confirmation, so Telegram is not spammed.
                 continue
 
             result = signal_engine.generate(asset, _TIMEFRAME)

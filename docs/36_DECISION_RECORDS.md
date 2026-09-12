@@ -5719,7 +5719,8 @@ Hourly Watchlist Signal Generation Skips Assets With an Open Call
 
 Status
 
-Accepted
+Accepted - partly superseded by ADR-168 (an unfilled ACTIVE signal no longer
+blocks while M15 confirmation is on)
 
 Context
 
@@ -10409,6 +10410,152 @@ Future Review
   vetoed signals clearly did worse.
 - If vetoes are frequent and uninformative, the system prompt's bar for a
   veto is what to tune, not the mode.
+
+# ADR-168
+
+Title
+
+A Newer Confirmed Signal Replaces One That Has Not Filled
+
+Status
+
+Accepted
+
+Context
+
+ADR-125 skipped hourly analysis for an asset while any signal was open, and
+the operator kept that rule on 2026-09-11 ("keep one open signal at a time").
+The first day of production data showed its cost. A SELL created at 14:03 UTC
+with entry 4396 was confirmed at 18:18, and gold then fell to 4348 without
+ever retesting the entry. For the rest of its 24-hour pending life the system
+ran no analysis for gold at all, although the unfilled order was very
+unlikely to fill.
+
+With M15 confirmation (ADR-166), most confirmed signals wait for a retest
+that may not come, so this happens often. On 2026-09-12 the operator said
+confirmed setups were being lost this way, and chose to let a newer confirmed
+signal replace one that has not filled, while a live trade still blocks.
+
+Decision
+
+**1. The hourly gate.** While `SIGNAL_CONFIRMATION_ENABLED` is on,
+`_has_open_signal` blocks generation only for a TRIGGERED signal (a live
+trade) or a DRAFT inside its window. An unfilled ACTIVE signal no longer
+blocks. With confirmation off there is no replacement step, so ACTIVE blocks
+as before. Supersedes that part of ADR-125.
+
+**2. Repeats of the open setup are cancelled at once.** Each confirmation run
+first compares a draft with the unfilled ACTIVE signals for its asset and
+timeframe. A draft with the same direction whose entry is closer than
+`SIGNAL_SAME_SETUP_ENTRY_RATIO` (0.5) of the open signal's risk (its
+entry-to-stop distance) is the same setup found again. It is cancelled with
+"Same setup as the signal already open.", without waiting for M15, so the
+hourly job can look again next hour. An opposite-direction draft is always a
+new setup.
+
+**3. When M15 confirms a draft:**
+- if an earlier signal for the asset and timeframe is TRIGGERED, the draft is
+  cancelled ("Confirmed, but an earlier signal's trade is already live.") - a
+  live trade is never replaced;
+- otherwise every unfilled ACTIVE signal for the asset and timeframe becomes
+  CANCELLED with "Replaced by a newer confirmed signal before it filled.", in
+  the same commit that makes the draft ACTIVE.
+
+Read-time status decides what is open: a signal past its TTL is already over
+and is not touched.
+
+**4. Who is told.**
+- The website gets a status-changed event for the replaced signal.
+- Telegram subscribers, who were sent the replaced signal, get a short notice
+  that it is cancelled and replaced, alongside the new signal's own message.
+  The two are separate Celery tasks, so their order is not guaranteed.
+- The EA needs no change. The replaced signal leaves `GET /ea/signals`, and
+  the EA already deletes a pending order whose signal is no longer listed,
+  before it handles new signals in the same poll - so its max-open-trades
+  slot is free for the new signal at once.
+
+Consequences
+
+- **More AI use while a signal waits.** The hourly analysis, with its risk
+  review, runs each hour an unfilled signal is out instead of stopping.
+- **A replaced order can fill at the broker first.** Between the replacement
+  and the EA's next poll (seconds), the old limit order can fill. The EA
+  keeps that position with its own stop and target, and reports the fill,
+  but the website shows the signal as cancelled. Rare; not handled.
+- **Still one signal per asset.** Two signals are never out at once for the
+  same asset and timeframe, and a draft never goes out beside a live trade.
+- **The same-setup ratio is a starting point**, not calibrated - like the
+  other thresholds in this project.
+
+Future Review
+
+- After two weeks: count replacements, same-setup cancellations, and how
+  replacement signals ended compared with the ones they replaced.
+- If replacements churn (a signal replaced before the EA could ever fill
+  it), raise the ratio or require a minimum age before a signal can be
+  replaced.
+
+# ADR-169
+
+Title
+
+The Super Admin Can Cancel a Signal That Has Not Filled
+
+Status
+
+Accepted
+
+Context
+
+On 2026-09-12 the operator asked for a button to cancel a signal themselves,
+alongside ADR-168's automatic replacement. Until now nothing but the
+confirmation task wrote CANCELLED, and docs/04 listed "a Cancelled status (no
+admin/user action endpoint specified)" as out of scope.
+
+A signal is broadcast to every Telegram subscriber and read by the EA, so
+cancelling one is an operator action with effects outside the website.
+
+Decision
+
+**1. `POST /signals/{id}/cancel`, super admin only** - the same role that
+holds EA tokens and controls the EA (ADR-161/163). No request body; the
+reason is fixed: "Cancelled from the website before it filled."
+
+**2. Only a signal that has not filled**, by read-time status:
+- `draft` - cancelled quietly, it was never sent;
+- `active` - cancelled, and subscribers are told;
+- `triggered` - refused with 409. It is a live trade: cancelling the signal
+  would not close it in MetaTrader 5, and the website would then disagree
+  with the account. The message says to close the trade in MT5;
+- anything already over (expired, closed, successful, stopped out,
+  cancelled) - refused with 409.
+
+**3. What follows a cancellation:**
+- an audit log entry (`signal.cancel`, with the previous status), in the
+  same commit;
+- the website's live status-changed event;
+- for an `active` signal, a Telegram "SIGNAL CANCELLED" message - the same
+  message ADR-168's replacement sends, now showing the signal's reason;
+- the signal leaves `GET /ea/signals`, and the EA deletes its pending order
+  on its next poll, as for a replacement. No EA change.
+
+**4. The button** is on the signal detail page, shown to the super admin for
+a draft or an active signal, behind a confirmation dialog that says what
+will happen.
+
+Consequences
+
+- **The same setup can come back.** A cancelled signal no longer blocks the
+  hourly job, which may find and draft the same setup again next hour. This
+  is deliberate - a cancel says "not this order", not "stop analysing".
+- **A fill can win the race.** As with a replacement, if the broker fills
+  the pending order in the seconds before the EA's next poll, the EA keeps
+  that position while the website shows the signal cancelled.
+
+Future Review
+
+- If the operator cancels a setup and then sees it redrafted, add a way to
+  block the same setup for a while, rather than making cancel stop analysis.
 
 ---
 

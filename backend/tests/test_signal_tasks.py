@@ -76,9 +76,22 @@ def _seed_signal(
     return asset
 
 
-def test_has_open_signal_true_for_active_unexpired_signal(
+def test_has_open_signal_false_for_an_unfilled_active_signal_while_confirmation_is_on(
     session_factory: sessionmaker[Session],
 ) -> None:
+    """ADR-168 - a newer setup may be drafted and, once confirmed, replace
+    the unfilled signal; blocking here would lose that confirmation."""
+    with session_factory() as session:
+        asset = _seed_signal(session)
+        assert _has_open_signal(SignalRepository(session), asset.id, datetime.now(UTC)) is False
+
+
+def test_has_open_signal_true_for_active_unexpired_signal_without_confirmation(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With confirmation off there is no replacement step - a new signal
+    would be published beside the open one - so ACTIVE still blocks."""
+    monkeypatch.setattr(settings, "signal_confirmation_enabled", False)
     with session_factory() as session:
         asset = _seed_signal(session)
         assert _has_open_signal(SignalRepository(session), asset.id, datetime.now(UTC)) is True
@@ -95,11 +108,13 @@ def test_has_open_signal_false_when_no_signal_exists(
 
 
 def test_has_open_signal_false_once_ttl_expired(
-    session_factory: sessionmaker[Session],
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A stored-ACTIVE signal past `signal_ttl_hours` is EXPIRED at
     read-time (ADR-088) - the hourly job must be free to generate a new
-    call for the asset once that happens."""
+    call for the asset once that happens. Confirmation off, the only case
+    where ACTIVE blocks at all (ADR-168)."""
+    monkeypatch.setattr(settings, "signal_confirmation_enabled", False)
     stale_created_at = datetime.now(UTC) - timedelta(hours=48)
     with session_factory() as session:
         asset = _seed_signal(session, created_at=stale_created_at)

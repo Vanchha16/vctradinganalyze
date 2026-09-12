@@ -30,6 +30,11 @@ export function getSignal(id: string): Promise<SignalResponse> {
   return apiGet<SignalResponse>(`/signals/${id}`);
 }
 
+/** ADR-169 - super admin only; a draft or an unfilled signal. */
+export function cancelSignal(id: string): Promise<SignalResponse> {
+  return apiPost<SignalResponse>(`/signals/${id}/cancel`, undefined);
+}
+
 export function bookmarkSignal(signalId: string): Promise<BookmarkResponse> {
   return apiPost<BookmarkResponse>("/signals/bookmark", { signal_id: signalId });
 }

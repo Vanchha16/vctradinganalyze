@@ -149,6 +149,11 @@ class Settings(BaseSettings):
     # its direction within the window. False restores immediate publication.
     signal_confirmation_enabled: bool = True
     signal_confirmation_window_hours: int = 4
+    # ADR-168 - a confirmed draft replaces an older signal that has not filled.
+    # A draft in the same direction whose entry is closer to the open signal's
+    # entry than this fraction of that signal's risk (entry-to-stop distance)
+    # is the same setup found again: it is cancelled instead of replacing it.
+    signal_same_setup_entry_ratio: float = 0.5
 
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""

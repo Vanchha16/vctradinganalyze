@@ -7,8 +7,9 @@ approval heuristics ever producing BUY/SELL for synthetic data."""
 
 import uuid
 from collections.abc import Generator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,12 +23,21 @@ from app.dependencies.ai_orchestrator import get_ai_orchestrator_engine
 from app.main import app
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
-from app.models.enums import MarketType, Recommendation, Timeframe, UserRole
+from app.models.audit_log import AuditLog
+from app.models.enums import (
+    MarketType,
+    Recommendation,
+    SignalStatus,
+    SignalType,
+    Timeframe,
+    UserRole,
+)
 from app.models.signal import Signal
 from app.models.signal_bookmark import SignalBookmark
 from app.models.telegram_account import TelegramAccount
 from app.models.user import User
 from app.services.ai_orchestrator.types import AIAnalysisResult, ReasoningSections
+from app.services.signal_cancellation_service import MANUAL_CANCEL_REASON
 
 _TABLES = [
     User.__table__,
@@ -36,7 +46,16 @@ _TABLES = [
     AIAnalysis.__table__,
     Signal.__table__,
     SignalBookmark.__table__,
+    AuditLog.__table__,
 ]
+
+_SUPER_ADMIN = User(
+    id=uuid.uuid4(),
+    email="operator@example.com",
+    username="operator",
+    password_hash="hashed",
+    role=UserRole.SUPER_ADMIN,
+)
 
 _USER = User(
     id=uuid.uuid4(),
@@ -226,6 +245,141 @@ def test_bookmark_and_delete_bookmark_round_trip(buy_client: TestClient, session
 
     delete_response = buy_client.delete(f"/api/v1/signals/bookmark/{bookmark['id']}")
     assert delete_response.status_code == 204
+
+
+# --- Cancelling a signal (ADR-169) -------------------------------------------
+
+
+@pytest.fixture
+def published(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
+    record: dict[str, list[Any]] = {"telegram": [], "changed": []}
+    monkeypatch.setattr(
+        "app.workers.telegram_tasks.enqueue_signal_cancelled_delivery",
+        lambda signal_id: record["telegram"].append(signal_id),
+    )
+    monkeypatch.setattr(
+        "app.services.signal_events.publish_signal_status_changed",
+        lambda signal: record["changed"].append(str(signal.id)),
+    )
+    return record
+
+
+@pytest.fixture
+def admin_client(session_engine: object) -> Generator[TestClient, None, None]:
+    with _make_client(session_engine, Recommendation.WAIT) as client:
+        app.dependency_overrides[get_current_user] = lambda: _SUPER_ADMIN
+        yield client
+    app.dependency_overrides.clear()
+
+
+def _seed_signal(
+    session: Session,
+    *,
+    status: SignalStatus,
+    created_at: datetime | None = None,
+    triggered_at: datetime | None = None,
+) -> str:
+    asset = _make_asset(session)
+    signal = Signal(
+        analysis_id=uuid.uuid4(),
+        asset_id=asset.id,
+        timeframe=Timeframe.H1,
+        signal_type=SignalType.SELL,
+        entry_price=Decimal("1.17540"),
+        stop_loss=Decimal("1.17900"),
+        take_profit=Decimal("1.16900"),
+        risk_reward=1.8,
+        confidence=80.0,
+        status=status,
+        created_at=created_at or datetime.now(UTC),
+        triggered_at=triggered_at,
+    )
+    session.add(signal)
+    session.commit()
+    return str(signal.id)
+
+
+def test_cancel_signal_requires_super_admin(
+    buy_client: TestClient, session: Session, published: dict[str, list[Any]]
+) -> None:
+    signal_id = _seed_signal(session, status=SignalStatus.ACTIVE)
+
+    response = buy_client.post(f"/api/v1/signals/{signal_id}/cancel")
+
+    assert response.status_code == 403
+    assert published == {"telegram": [], "changed": []}
+
+
+def test_cancelling_an_unfilled_signal_tells_subscribers_and_is_audited(
+    admin_client: TestClient, session: Session, published: dict[str, list[Any]]
+) -> None:
+    signal_id = _seed_signal(session, status=SignalStatus.ACTIVE)
+
+    response = admin_client.post(f"/api/v1/signals/{signal_id}/cancel")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "cancelled"
+    assert body["status_reason"] == MANUAL_CANCEL_REASON
+    assert published["telegram"] == [signal_id]
+    assert published["changed"] == [signal_id]
+    audit = session.query(AuditLog).one()
+    assert audit.action == "signal.cancel"
+    assert audit.user_id == _SUPER_ADMIN.id
+    assert audit.context == {"previous_status": "active"}
+
+
+def test_cancelling_a_draft_sends_no_telegram_message(
+    admin_client: TestClient, session: Session, published: dict[str, list[Any]]
+) -> None:
+    """A draft was never sent to anyone."""
+    signal_id = _seed_signal(session, status=SignalStatus.DRAFT)
+
+    response = admin_client.post(f"/api/v1/signals/{signal_id}/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+    assert published["telegram"] == []
+    assert published["changed"] == [signal_id]
+
+
+def test_a_live_trade_cannot_be_cancelled(
+    admin_client: TestClient, session: Session, published: dict[str, list[Any]]
+) -> None:
+    """Cancelling the signal would not close the trade in MT5."""
+    signal_id = _seed_signal(
+        session, status=SignalStatus.TRIGGERED, triggered_at=datetime.now(UTC)
+    )
+
+    response = admin_client.post(f"/api/v1/signals/{signal_id}/cancel")
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["error"] == "conflict"
+    # The website shows `message` as-is, so it must say what to do instead.
+    assert "MetaTrader 5" in body["message"]
+    assert session.get(Signal, uuid.UUID(signal_id)).status is SignalStatus.TRIGGERED  # type: ignore[union-attr]
+    assert published == {"telegram": [], "changed": []}
+
+
+def test_an_expired_signal_cannot_be_cancelled(
+    admin_client: TestClient, session: Session, published: dict[str, list[Any]]
+) -> None:
+    signal_id = _seed_signal(
+        session, status=SignalStatus.ACTIVE, created_at=datetime.now(UTC) - timedelta(hours=48)
+    )
+
+    response = admin_client.post(f"/api/v1/signals/{signal_id}/cancel")
+
+    assert response.status_code == 409
+    assert published == {"telegram": [], "changed": []}
+
+
+def test_cancel_unknown_signal_is_404(
+    admin_client: TestClient, published: dict[str, list[Any]]
+) -> None:
+    response = admin_client.post(f"/api/v1/signals/{uuid.uuid4()}/cancel")
+    assert response.status_code == 404
 
 
 def test_bookmark_404_for_unknown_signal(buy_client: TestClient) -> None:

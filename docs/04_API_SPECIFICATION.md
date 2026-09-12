@@ -823,6 +823,20 @@ DELETE /signals/bookmark/{id}
 
 204 No Content. 404 if the bookmark id is unknown or does not belong to the current user.
 
+---
+
+POST /signals/{id}/cancel
+
+ADR-169. **Super admin only.** Cancels a signal that has not filled. No request body.
+
+Response: the signal, same shape as `GET /signals/{id}`, with `"status": "cancelled"` and `"status_reason": "Cancelled from the website before it filled."`.
+
+- A `draft` is cancelled quietly - it was never sent to anyone.
+- An `active` signal is cancelled, and Telegram subscribers get a "SIGNAL CANCELLED" message. It leaves `GET /ea/signals`, so an EA deletes its pending order for it.
+- Every cancellation writes an audit log entry (`signal.cancel`, with the previous status).
+
+403 for any other role. 404 if the id is unknown. 409 if the signal is `triggered` (a live trade - close it in MetaTrader 5; cancelling the signal would not close it) or already over (expired, closed, successful, stopped out, cancelled).
+
 Out of scope for Phase 6B: autonomous trading or broker execution; live price-monitoring/auto status transitions beyond read-time-computed EXPIRED (Triggered/Closed/Successful/Stopped Out, `profit_loss` population - ADR-088); TP1/TP2/TP3 (ADR-087); a Cancelled status (no admin/user action endpoint specified); Celery Beat scheduled/proactive generation (ADR-089's rejected alternative); `/ws/signals`; Telegram/Dashboard notification (Phase 7).
 
 ---

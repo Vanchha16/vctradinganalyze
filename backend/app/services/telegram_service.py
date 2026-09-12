@@ -8,6 +8,7 @@ from app.models.signal import Signal
 from app.models.telegram_account import TelegramAccount
 from app.repositories.telegram_account_repository import TelegramAccountRepository
 from app.services.telegram.message_sections import (
+    compose_signal_cancelled_message,
     compose_signal_message,
     compose_signal_outcome_message,
     compose_signal_triggered_message,
@@ -121,6 +122,15 @@ class TelegramService:
         triggers and resolves within the same candle - `send_outcome`
         alone covers that case."""
         text = compose_signal_triggered_message(signal, asset, now=now or datetime.now(UTC))
+        for account in self.linked_accounts():
+            if account.telegram_chat_id is None:
+                continue
+            self._provider.send_message(account.telegram_chat_id, text)
+
+    def send_cancelled(self, signal: Signal, asset: Asset, *, now: datetime | None = None) -> None:
+        """Broadcasts that `signal`, already sent, is cancelled before it
+        filled - replaced (ADR-168) or cancelled from the website (ADR-169)."""
+        text = compose_signal_cancelled_message(signal, asset, now=now or datetime.now(UTC))
         for account in self.linked_accounts():
             if account.telegram_chat_id is None:
                 continue

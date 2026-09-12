@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BookmarkButton } from "@/features/signals/components/bookmark-button";
+import { CancelSignalButton } from "@/features/signals/components/cancel-signal-button";
 import { SignalStatusTimeline } from "@/features/signals/components/signal-status-timeline";
 import { EvidenceList } from "@/features/ai-analysis/components/evidence-list";
 import { ReasoningSections } from "@/features/ai-analysis/components/reasoning-sections";
@@ -83,7 +84,13 @@ export default function SignalDetailPage() {
       <PageHeader
         title={`${signal.symbol} · ${signal.timeframe.toUpperCase()}`}
         description="Signal detail"
-        actions={<BookmarkButton signalId={signal.id} />}
+        actions={
+          <div className="flex items-center gap-2">
+            {/* ADR-169: only the super admin may cancel a signal. */}
+            {user?.role === "super_admin" ? <CancelSignalButton signal={signal} /> : null}
+            <BookmarkButton signalId={signal.id} />
+          </div>
+        }
       />
       <PageContainer>
         <div className="flex flex-col gap-6">

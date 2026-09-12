@@ -7,8 +7,10 @@ from fastapi import APIRouter, Depends, Query
 from app.api.v1.routes.market_data import get_asset_or_404
 from app.dependencies import get_current_user
 from app.dependencies.market_data import get_asset_repository
+from app.dependencies.rbac import require_super_admin
 from app.dependencies.signal import (
     get_signal_bookmark_repository,
+    get_signal_cancellation_service,
     get_signal_engine,
     get_signal_repository,
 )
@@ -29,6 +31,7 @@ from app.schemas.signal import (
     SignalResponse,
 )
 from app.services.signal import status_resolver
+from app.services.signal_cancellation_service import SignalCancellationService
 from app.services.signal_confirmation_service import UNCONFIRMED_REASON
 from app.services.signal_engine import SignalEngine, SignalGenerationResult
 
@@ -159,6 +162,32 @@ async def get_signal(
     asset = asset_repository.get_by_id(row.asset_id)
     symbol = asset.symbol if asset is not None else "UNKNOWN"
     return _signal_to_response(row, symbol)
+
+
+@router.post("/signals/{signal_id}/cancel", response_model=SignalResponse)
+async def cancel_signal(
+    signal_id: UUID,
+    actor: Annotated[User, Depends(require_super_admin)],
+    service: Annotated[SignalCancellationService, Depends(get_signal_cancellation_service)],
+    asset_repository: Annotated[AssetRepository, Depends(get_asset_repository)],
+) -> SignalResponse:
+    """ADR-169 - cancel a draft or an unfilled signal. 409 for a live trade
+    or a signal that is already over. A cancelled signal leaves the EA feed,
+    which is the EA's cue to delete its pending order."""
+    result = service.cancel(actor, signal_id, datetime.now(UTC))
+
+    # Deferred imports, same reason as `generate_signal`. Both are
+    # best-effort: the cancellation is already committed.
+    from app.services.signal_events import publish_signal_status_changed
+
+    publish_signal_status_changed(result.signal)
+    if result.was_published:
+        from app.workers.telegram_tasks import enqueue_signal_cancelled_delivery
+
+        enqueue_signal_cancelled_delivery(str(result.signal.id))
+
+    asset = asset_repository.get_by_id(result.signal.asset_id)
+    return _signal_to_response(result.signal, asset.symbol if asset is not None else "UNKNOWN")
 
 
 @router.post("/signals/bookmark", response_model=BookmarkResponse)

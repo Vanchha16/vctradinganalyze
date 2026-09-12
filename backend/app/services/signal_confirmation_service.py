@@ -13,6 +13,7 @@ move has actually started.
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal
 from enum import StrEnum
 
 from app.config import settings
@@ -26,6 +27,10 @@ from app.utils.time import as_aware_utc
 #: Also served for a draft that reads as CANCELLED at request time before
 #: the task has persisted it, so both paths give the same explanation.
 UNCONFIRMED_REASON = "Not confirmed on M15 within the confirmation window."
+#: ADR-168 - the reasons written when a draft meets a signal already out.
+SAME_SETUP_REASON = "Same setup as the signal already open."
+TRADE_LIVE_REASON = "Confirmed, but an earlier signal's trade is already live."
+REPLACED_REASON = "Replaced by a newer confirmed signal before it filled."
 
 
 class ConfirmationOutcome(StrEnum):
@@ -88,6 +93,21 @@ def evaluate(
     return ConfirmationDecision(ConfirmationOutcome.PENDING)
 
 
+def is_same_setup(draft: Signal, open_signal: Signal) -> bool:
+    """ADR-168: whether `draft` is `open_signal`'s setup found again, not a
+    new one worth replacing it with.
+
+    Same direction, and the entries closer together than
+    `signal_same_setup_entry_ratio` of the open signal's risk (its
+    entry-to-stop distance). Scaling by risk keeps the rule meaningful at any
+    price level or volatility. The opposite direction is always a new setup."""
+    if draft.signal_type is not open_signal.signal_type:
+        return False
+    risk = abs(Decimal(open_signal.entry_price) - Decimal(open_signal.stop_loss))
+    shift = abs(Decimal(draft.entry_price) - Decimal(open_signal.entry_price))
+    return shift < risk * Decimal(str(settings.signal_same_setup_entry_ratio))
+
+
 def _first_confirming_break(
     signal: Signal, m15: SMCAnalysisResult | None, created_at: datetime
 ) -> BOSEvidence | None:
@@ -112,8 +132,12 @@ def _first_confirming_break(
 
 
 __all__ = [
+    "REPLACED_REASON",
+    "SAME_SETUP_REASON",
+    "TRADE_LIVE_REASON",
     "UNCONFIRMED_REASON",
     "ConfirmationDecision",
     "ConfirmationOutcome",
     "evaluate",
+    "is_same_setup",
 ]

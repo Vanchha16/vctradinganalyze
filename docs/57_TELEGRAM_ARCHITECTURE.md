@@ -22,16 +22,21 @@ forgotten): `/help`, `/status`, `/signals`, `/analyze`, `/watchlist`, `/settings
 and other bot commands; quiet hours; email/in-app/push channels; per-type
 notification preferences; retry queue; admin escalation. ADR-110.
 
-**Deduplication (ADR-125):** `signals.generate_for_watchlist`
+**Deduplication (ADR-125, changed by ADR-168):** `signals.generate_for_watchlist`
 (`app/workers/signal_tasks.py`) skips re-running AI orchestration for any
-asset that already has an unresolved BUY/SELL call on `Timeframe.H1` -
-checked via `_has_open_signal()`, which reuses `status_resolver.effective_status`
-(ADR-088) so a stored-ACTIVE-but-TTL-expired row doesn't block a fresh
-signal. This is asset+timeframe scoped, not per-user, so it's a generation-time
-gate rather than a delivery-time notification preference (the broadcast
-model in §5 is unchanged). Without it, the hourly job would re-confirm the
-same open call every run and re-broadcast a near-duplicate Telegram
-message each time.
+asset that already has a live trade (TRIGGERED) or a draft waiting for
+confirmation on `Timeframe.H1` - checked via `_has_open_signal()`, which reuses
+`status_resolver.effective_status` (ADR-088) so an expired row doesn't block a
+fresh signal. An unfilled ACTIVE signal no longer blocks while confirmation is
+on: a newer setup may be drafted, and once M15 confirms it, it replaces the
+unfilled one. Repeats of the open signal's own setup are cancelled before they
+can confirm, so Telegram still gets no near-duplicate message. When a signal
+is replaced, its subscribers get a short "cancelled - replaced" notice
+alongside the new signal's message (separate tasks, order not guaranteed).
+The same "SIGNAL CANCELLED" message, showing the signal's reason, goes out
+when the super admin cancels a published signal from the website (ADR-169). This is asset+timeframe scoped, not per-user, so it's
+a generation-time gate rather than a delivery-time notification preference
+(the broadcast model in §5 is unchanged).
 
 ---
 

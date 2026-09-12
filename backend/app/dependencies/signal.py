@@ -6,10 +6,12 @@ from sqlalchemy.orm import Session
 from app.dependencies.ai_orchestrator import get_ai_orchestrator_engine
 from app.dependencies.database import get_db
 from app.dependencies.execution import get_order_execution_service
+from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.signal_bookmark_repository import SignalBookmarkRepository
 from app.repositories.signal_repository import SignalRepository
 from app.services.ai_orchestrator_engine import AIOrchestratorEngine
 from app.services.execution.order_execution_service import OrderExecutionService
+from app.services.signal_cancellation_service import SignalCancellationService
 from app.services.signal_engine import SignalEngine
 
 
@@ -21,6 +23,17 @@ def get_signal_bookmark_repository(
     db: Annotated[Session, Depends(get_db)],
 ) -> SignalBookmarkRepository:
     return SignalBookmarkRepository(db)
+
+
+def get_signal_cancellation_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> SignalCancellationService:
+    """ADR-169 - one session for the signal and its audit row, so both land
+    in the same commit."""
+    return SignalCancellationService(
+        signal_repository=SignalRepository(db),
+        audit_log_repository=AuditLogRepository(db),
+    )
 
 
 def get_signal_engine(

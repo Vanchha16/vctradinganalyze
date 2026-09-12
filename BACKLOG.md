@@ -371,7 +371,12 @@ Last updated: 2026-09-08 (ADR-141 signal monitoring range scan). Note: entries b
   - **Failure:** a failed review blocks nothing in any mode.
   - **To do before enforce:** after two weeks of closed signals, compare outcomes for approved vs vetoed. That query is not built yet.
 - **Upgrade 3 (not built):** AI news reader for gold - overturns part of ADR-051, needs its own ADR, and starts in shadow mode.
-- **Decided, not built (2026-09-11): keep one open signal per asset.** The operator first chose "allow any new signal while one is open", paused to ask questions, then - with M15 confirmation (ADR-166) already filtering signals - chose to keep the one-at-a-time gate. Drafts count toward it. No code change.
+- **Decided 2026-09-11, changed 2026-09-12 (ADR-168): a newer confirmed signal replaces one that has not filled.**
+  - **Why it changed:** the operator first kept the one-at-a-time gate. Production then showed a SELL confirmed at 18:18 that gold moved away from without a retest; the gate stopped all gold analysis for the rest of its 24 hours, and confirmed setups were lost.
+  - **Now:** an unfilled ACTIVE signal no longer blocks hourly analysis. When M15 confirms a new draft, the unfilled signal is cancelled as "replaced" and the EA deletes its pending order. A live trade (TRIGGERED) and a waiting draft still block.
+  - **Repeats:** a draft in the same direction with its entry within half the open signal's risk is the same setup, and is cancelled at once.
+  - **To measure after two weeks:** replacements, same-setup cancellations, and how replacements ended compared with the signals they replaced.
+- **Cancel button (2026-09-12, ADR-169).** The super admin can cancel a draft or an unfilled signal from its detail page (`POST /signals/{id}/cancel`). An active signal's Telegram subscribers get "SIGNAL CANCELLED", the EA deletes its pending order, and the cancel is audited. A live trade is refused - it has to be closed in MT5. The hourly job may draft the same setup again; revisit only if that bothers the operator.
 - **Signal confirmation (built, ADR-166).** The operator did not want a signal published on every hourly check, only once confirmed.
   - **Higher timeframes:** a setup whose H4 or D1 trend runs against it is WAIT.
   - **Drafts:** a passing BUY/SELL is saved as DRAFT (not published, not in the EA feed).

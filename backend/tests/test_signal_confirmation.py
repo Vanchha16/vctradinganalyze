@@ -29,7 +29,13 @@ from app.repositories.asset_repository import AssetRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
 from app.services import signal_confirmation_service
-from app.services.signal_confirmation_service import UNCONFIRMED_REASON, ConfirmationOutcome
+from app.services.signal_confirmation_service import (
+    REPLACED_REASON,
+    SAME_SETUP_REASON,
+    TRADE_LIVE_REASON,
+    UNCONFIRMED_REASON,
+    ConfirmationOutcome,
+)
 from app.services.smc.types import BOSEvidence, Direction, SMCAnalysisResult
 from app.workers import signal_confirmation_tasks
 from tests.analysis_confidence_helpers import make_smc_result
@@ -221,10 +227,14 @@ def session() -> Generator[Session, None, None]:
 
 @pytest.fixture
 def published(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
-    record: dict[str, list[Any]] = {"telegram": [], "created": [], "changed": []}
+    record: dict[str, list[Any]] = {"telegram": [], "created": [], "changed": [], "replaced": []}
     monkeypatch.setattr(
         "app.workers.telegram_tasks.enqueue_signal_delivery",
         lambda signal_id: record["telegram"].append(signal_id),
+    )
+    monkeypatch.setattr(
+        "app.workers.telegram_tasks.enqueue_signal_cancelled_delivery",
+        lambda signal_id: record["replaced"].append(signal_id),
     )
     monkeypatch.setattr(
         "app.services.signal_events.publish_signal_created",
@@ -308,7 +318,7 @@ def test_a_pending_draft_is_left_alone_and_not_published(
 
     session.refresh(draft)
     assert draft.status is SignalStatus.DRAFT
-    assert published == {"telegram": [], "created": [], "changed": []}
+    assert published == {"telegram": [], "created": [], "changed": [], "replaced": []}
 
 
 def test_an_expired_draft_is_cancelled_quietly(
@@ -341,3 +351,169 @@ def test_one_m15_analysis_per_asset_however_many_drafts(
     _run(session, engine, _CREATED + timedelta(minutes=30))
 
     assert engine.calls == [("XAUUSD", Timeframe.M15)]
+
+
+# --- Replacing a signal that has not filled (ADR-168) -----------------------
+
+
+def _open(
+    session: Session,
+    asset: Asset,
+    *,
+    signal_type: SignalType = SignalType.SELL,
+    entry: str = "4400",
+    stop: str = "4430",
+    target: str = "4330",
+    status: SignalStatus = SignalStatus.ACTIVE,
+    created_at: datetime = _CREATED - timedelta(hours=2),
+) -> Signal:
+    """A signal already out. SELL default: entry 4400, risk 30 - the draft's
+    4360 entry is 40 away, a different setup."""
+    signal = Signal(
+        analysis_id=uuid.uuid4(),
+        asset_id=asset.id,
+        timeframe=Timeframe.H1,
+        signal_type=signal_type,
+        entry_price=Decimal(entry),
+        stop_loss=Decimal(stop),
+        take_profit=Decimal(target),
+        risk_reward=2.0,
+        confidence=70.0,
+        status=status,
+        created_at=created_at,
+        triggered_at=_CREATED - timedelta(hours=1) if status is SignalStatus.TRIGGERED else None,
+    )
+    session.add(signal)
+    session.commit()
+    return signal
+
+
+def _confirming_engine() -> _FakeSMCEngine:
+    return _FakeSMCEngine(_m15(_break(Direction.BEARISH, _CREATED + timedelta(minutes=20))))
+
+
+def test_a_confirmed_draft_replaces_an_open_signal_that_has_not_filled(
+    session: Session, published: dict[str, list[Any]]
+) -> None:
+    asset = _asset(session)
+    older = _open(session, asset)
+    draft = _signal(asset_id=asset.id)
+    session.add(draft)
+    session.commit()
+
+    _run(session, _confirming_engine(), _CREATED + timedelta(minutes=30))
+
+    session.refresh(older)
+    session.refresh(draft)
+    assert older.status is SignalStatus.CANCELLED
+    assert older.status_reason == REPLACED_REASON
+    assert draft.status is SignalStatus.ACTIVE
+    # The website hears about both; Telegram gets a notice for the old one
+    # and the new signal itself.
+    assert published["changed"] == [older.id]
+    assert published["replaced"] == [str(older.id)]
+    assert published["telegram"] == [str(draft.id)]
+
+
+def test_an_opposite_setup_replaces_even_at_the_same_entry(
+    session: Session, published: dict[str, list[Any]]
+) -> None:
+    asset = _asset(session)
+    older = _open(
+        session, asset, signal_type=SignalType.BUY, entry="4360", stop="4330", target="4420"
+    )
+    draft = _signal(asset_id=asset.id)
+    session.add(draft)
+    session.commit()
+
+    _run(session, _confirming_engine(), _CREATED + timedelta(minutes=30))
+
+    session.refresh(older)
+    assert older.status is SignalStatus.CANCELLED
+    assert published["replaced"] == [str(older.id)]
+
+
+def test_the_same_setup_found_again_is_cancelled_without_waiting_for_m15(
+    session: Session, published: dict[str, list[Any]]
+) -> None:
+    """Entry 5 away against a risk of 30 - the unfilled signal's own setup.
+    Cancelled at once, so it neither republishes the trade nor holds up the
+    hourly job for its whole window."""
+    asset = _asset(session)
+    older = _open(session, asset, entry="4365", stop="4395", target="4305")
+    draft = _signal(asset_id=asset.id)
+    session.add(draft)
+    session.commit()
+    engine = _FakeSMCEngine(_m15())
+
+    _run(session, engine, _CREATED + timedelta(minutes=30))
+
+    session.refresh(older)
+    session.refresh(draft)
+    assert draft.status is SignalStatus.CANCELLED
+    assert draft.status_reason == SAME_SETUP_REASON
+    assert older.status is SignalStatus.ACTIVE
+    assert engine.calls == []
+    assert published["telegram"] == [] and published["replaced"] == []
+
+
+def test_a_draft_is_not_published_while_an_earlier_trade_is_live(
+    session: Session, published: dict[str, list[Any]]
+) -> None:
+    """The earlier signal filled while the draft waited. A live trade is
+    never replaced."""
+    asset = _asset(session)
+    live = _open(session, asset, status=SignalStatus.TRIGGERED)
+    draft = _signal(asset_id=asset.id)
+    session.add(draft)
+    session.commit()
+
+    _run(session, _confirming_engine(), _CREATED + timedelta(minutes=30))
+
+    session.refresh(live)
+    session.refresh(draft)
+    assert live.status is SignalStatus.TRIGGERED
+    assert draft.status is SignalStatus.CANCELLED
+    assert draft.status_reason == TRADE_LIVE_REASON
+    assert published["telegram"] == [] and published["replaced"] == []
+
+
+def test_an_expired_older_signal_is_not_replaced(
+    session: Session, published: dict[str, list[Any]]
+) -> None:
+    """Past its TTL it is already over (read-time EXPIRED) - nothing to
+    cancel, and no Telegram notice about it."""
+    asset = _asset(session)
+    stale = _open(
+        session, asset, created_at=_CREATED - timedelta(hours=settings.signal_ttl_hours + 1)
+    )
+    draft = _signal(asset_id=asset.id)
+    session.add(draft)
+    session.commit()
+
+    _run(session, _confirming_engine(), _CREATED + timedelta(minutes=30))
+
+    session.refresh(stale)
+    session.refresh(draft)
+    assert stale.status is SignalStatus.ACTIVE
+    assert draft.status is SignalStatus.ACTIVE
+    assert published["replaced"] == []
+
+
+def test_another_assets_signal_is_not_replaced(
+    session: Session, published: dict[str, list[Any]]
+) -> None:
+    gold = _asset(session)
+    euro = Asset(symbol="EURUSD", name="Euro / US Dollar", market_type=MarketType.FOREX)
+    session.add(euro)
+    session.commit()
+    other = _open(session, euro)
+    draft = _signal(asset_id=gold.id)
+    session.add(draft)
+    session.commit()
+
+    _run(session, _confirming_engine(), _CREATED + timedelta(minutes=30))
+
+    session.refresh(other)
+    assert other.status is SignalStatus.ACTIVE
+    assert published["replaced"] == []

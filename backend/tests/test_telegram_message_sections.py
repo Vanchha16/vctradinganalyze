@@ -11,6 +11,7 @@ from app.models.asset import Asset
 from app.models.enums import MarketType, Recommendation, SignalStatus, SignalType, Timeframe
 from app.models.signal import Signal
 from app.services.telegram.message_sections import (
+    compose_signal_cancelled_message,
     compose_signal_message,
     compose_signal_outcome_message,
     compose_signal_triggered_message,
@@ -303,6 +304,36 @@ def test_compose_signal_triggered_message_matches_expected_layout() -> None:
     assert "🛑 Stop Loss : 64112\\.13" in text
     assert "💰 Take Profit : 63249\\.24" in text
     assert text.rstrip().endswith("09:00 UTC")
+
+
+def test_compose_signal_cancelled_message_matches_expected_layout() -> None:
+    """ADR-168/169 - subscribers who were sent a signal hear that it is
+    cancelled, and why."""
+    asset = _make_asset()
+    analysis = _make_analysis(asset_id=asset.id)
+    signal = _make_signal(analysis_id=analysis.id, asset_id=asset.id)
+    signal.status_reason = "Replaced by a newer confirmed signal before it filled."
+
+    text = compose_signal_cancelled_message(signal, asset, now=_NOW)
+
+    assert "🚫" in text
+    assert "SIGNAL CANCELLED" in text
+    assert "BTC/USD" in text
+    assert f"📌 Signal : {signal.signal_type.value.upper()}" in text
+    assert "🎯 Entry : 63824\\.50" in text
+    assert "Replaced by a newer confirmed signal before it filled\\." in text
+    assert text.rstrip().endswith("09:00 UTC")
+
+
+def test_compose_signal_cancelled_message_without_a_reason_still_explains() -> None:
+    asset = _make_asset()
+    analysis = _make_analysis(asset_id=asset.id)
+    signal = _make_signal(analysis_id=analysis.id, asset_id=asset.id)
+    signal.status_reason = None
+
+    text = compose_signal_cancelled_message(signal, asset, now=_NOW)
+
+    assert "Cancelled before it filled\\." in text
 
 
 def test_render_risk_management_shows_the_strategy_that_analysed_the_signal() -> None:

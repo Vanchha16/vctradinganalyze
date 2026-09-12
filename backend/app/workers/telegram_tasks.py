@@ -309,6 +309,31 @@ def send_signal_triggered_telegram_task(signal_id: str) -> None:
         session.close()
 
 
+@celery_app.task(name="telegram.send_signal_cancelled", ignore_result=True)  # type: ignore[untyped-decorator]
+def send_signal_cancelled_telegram_task(signal_id: str) -> None:
+    """Tells subscribers that a signal they were sent is cancelled before it
+    filled: replaced by a newer confirmed signal (ADR-168, from
+    `signal_confirmation_tasks`) or cancelled from the website (ADR-169,
+    `POST /signals/{id}/cancel`)."""
+    session = SessionLocal()
+    try:
+        signal = SignalRepository(session).get_by_id(uuid.UUID(signal_id))
+        if signal is None:
+            return
+
+        asset = AssetRepository(session).get_by_id(signal.asset_id)
+        if asset is None:
+            return
+
+        telegram_service = TelegramService(
+            account_repository=TelegramAccountRepository(session),
+            provider=get_telegram_provider(),
+        )
+        telegram_service.send_cancelled(signal, asset)
+    finally:
+        session.close()
+
+
 def enqueue_signal_outcome_delivery(signal_id: str) -> None:
     """Best-effort enqueue of `send_signal_outcome_telegram_task` - same
     "log and move on" reasoning as `enqueue_signal_delivery`: the signal's
@@ -332,6 +357,18 @@ def enqueue_signal_triggered_delivery(signal_id: str) -> None:
     except Exception:
         logger.warning(
             "telegram_signal_triggered_delivery_enqueue_failed", signal_id=signal_id, exc_info=True
+        )
+
+
+def enqueue_signal_cancelled_delivery(signal_id: str) -> None:
+    """Best-effort enqueue of `send_signal_cancelled_telegram_task` - the
+    cancellation is already committed; a broker outage here must never roll
+    it back."""
+    try:
+        send_signal_cancelled_telegram_task.delay(signal_id)
+    except Exception:
+        logger.warning(
+            "telegram_signal_cancelled_delivery_enqueue_failed", signal_id=signal_id, exc_info=True
         )
 
 

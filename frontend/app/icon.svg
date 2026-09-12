@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Browser tab icon: the BrandMark logomark (components/shared/brand-mark.tsx) on the
+       gradient-brand tile from globals.css, converted to hex for favicon renderers. -->
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5e92ff" />
+      <stop offset="1" stop-color="#7b53dd" />
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="url(#brand)" />
+  <g transform="translate(4 4)" fill="none" stroke="#f7f8fc" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19 10.5 7l3 6L20 5" />
+    <path d="M15.4 5H20v4.6" />
+    <circle cx="4" cy="19" r="1.9" fill="#f7f8fc" stroke="none" />
+    <circle cx="10.5" cy="7" r="1.9" fill="#f7f8fc" stroke="none" />
+    <circle cx="13.5" cy="13" r="1.9" fill="#f7f8fc" stroke="none" />
+  </g>
+</svg>

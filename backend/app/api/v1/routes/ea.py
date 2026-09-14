@@ -50,8 +50,14 @@ from app.schemas.ea import (
 )
 from app.services.ea_event_service import EaEventService
 from app.services.ea_service import EaPrincipal, EaService, FeedSignal
+from app.services.ea_signal_sync import SignalMove
+from app.services.signal_events import publish_signal_status_changed
 from app.utils.time import as_aware_utc
-from app.workers.telegram_tasks import enqueue_ea_event_delivery
+from app.workers.telegram_tasks import (
+    enqueue_ea_event_delivery,
+    enqueue_signal_outcome_delivery,
+    enqueue_signal_triggered_delivery,
+)
 
 router = APIRouter(prefix="/ea", tags=["expert-advisor"])
 
@@ -181,10 +187,19 @@ async def report_ea_events(
 ) -> EaEventBatchResponse:
     """ADR-162: the EA's report of what it did. Idempotent per
     `event_key` - re-sending a batch is safe and expected after a lost
-    response. ADR-170: newly stored live events are sent to Telegram."""
+    response. ADR-170: newly stored live events are sent to Telegram.
+    ADR-172: a live fill or close moves the signal it traded, and the
+    website and subscribers are told as the candle monitor would tell them."""
     result = service.ingest(principal, payload.events, datetime.now(UTC))
     for event_id in result.notify:
         enqueue_ea_event_delivery(str(event_id))
+    for signal in result.moved_signals:
+        publish_signal_status_changed(signal)
+    for move, signal_id in result.signal_messages:
+        if move is SignalMove.TRIGGERED:
+            enqueue_signal_triggered_delivery(str(signal_id))
+        else:
+            enqueue_signal_outcome_delivery(str(signal_id))
     return EaEventBatchResponse(
         accepted=result.accepted,
         duplicates=result.duplicates,

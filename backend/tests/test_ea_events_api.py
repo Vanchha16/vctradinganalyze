@@ -3,7 +3,7 @@
 What must hold: a re-sent batch never double-stores, one bad event never
 sinks the good ones in its batch, only the owner can read events back, an
 EA token can report but not read, history survives token revocation, and
-no report ever changes a signal's status.
+only a live fill or close moves a signal (ADR-172).
 """
 
 import uuid
@@ -32,6 +32,7 @@ from app.models.ea_token import EaToken
 from app.models.enums import MarketType, SignalStatus, SignalType, Timeframe, UserRole
 from app.models.signal import Signal
 from app.models.user import User
+from app.utils.time import as_aware_utc
 
 _TABLES = [
     User.__table__,
@@ -59,6 +60,21 @@ def queued(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     sent: list[str] = []
     monkeypatch.setattr(ea_routes, "enqueue_ea_event_delivery", sent.append)
     return sent
+
+
+@pytest.fixture(autouse=True)
+def signal_news(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
+    """ADR-172 - the website update (the status it announced) and subscriber
+    messages for signals a live fill or close moved."""
+    news: dict[str, list[str]] = {"changed": [], "triggered": [], "outcome": []}
+    monkeypatch.setattr(
+        ea_routes,
+        "publish_signal_status_changed",
+        lambda signal: news["changed"].append(signal.status.value),
+    )
+    monkeypatch.setattr(ea_routes, "enqueue_signal_triggered_delivery", news["triggered"].append)
+    monkeypatch.setattr(ea_routes, "enqueue_signal_outcome_delivery", news["outcome"].append)
+    return news
 
 
 @pytest.fixture
@@ -273,9 +289,60 @@ def test_a_session_cannot_report_events(client: TestClient, db: Session) -> None
     assert _report(client, None, [_event(signal, "k")]).status_code == 401
 
 
-def test_a_report_never_changes_the_signals_status(client: TestClient, db: Session) -> None:
-    """ADR-162: the signal says what the analysis called; events say what
-    one account did. A broker close must not rewrite the former."""
+# --- Moving the signal (ADR-172) --------------------------------------------
+
+
+def _stored(db: Session, signal: Signal) -> Signal:
+    db.expire_all()
+    stored = db.get(Signal, signal.id)
+    assert stored is not None
+    return stored
+
+
+def test_a_live_fill_and_take_profit_move_the_signal(
+    client: TestClient, db: Session, signal_news: dict[str, list[str]]
+) -> None:
+    """The broker's fill is what really happened - on 2026-09-14 Twelve Data
+    missed the entry by 0.36 and the website never saw the fill."""
+    token = _token(client, _user(db))
+    signal = _signal(db)
+    now = int(datetime.now(UTC).timestamp())
+
+    _report(
+        client,
+        token["token"],
+        [
+            # Close listed first on purpose: the fill is still applied first.
+            _event(
+                signal,
+                "closed:1",
+                "position_closed",
+                dry_run=False,
+                occurred_at=now,
+                price=4440.0,
+                profit=25.76,
+                close_reason="tp",
+            ),
+            _event(signal, "opened:1", "position_opened", dry_run=False, occurred_at=now - 600),
+        ],
+    )
+
+    stored = _stored(db, signal)
+    assert stored.status == SignalStatus.SUCCESSFUL
+    assert as_aware_utc(stored.triggered_at) == datetime.fromtimestamp(now - 600, UTC)  # type: ignore[arg-type]
+    assert as_aware_utc(stored.closed_at) == datetime.fromtimestamp(now, UTC)  # type: ignore[arg-type]
+    assert stored.profit_loss == Decimal("25.764")
+    assert signal_news == {
+        "changed": ["successful"],
+        "triggered": [str(signal.id)],
+        "outcome": [str(signal.id)],
+    }
+
+
+def test_a_dry_run_report_never_changes_the_signal(
+    client: TestClient, db: Session, signal_news: dict[str, list[str]]
+) -> None:
+    """ADR-162 still holds for everything but a live fill or close."""
     token = _token(client, _user(db))
     signal = _signal(db)
 
@@ -283,24 +350,97 @@ def test_a_report_never_changes_the_signals_status(client: TestClient, db: Sessi
         client,
         token["token"],
         [
-            _event(signal, "opened:1", "position_opened", dry_run=False),
-            _event(
-                signal,
-                "closed:2",
-                "position_closed",
-                dry_run=False,
-                profit=25.76,
-                close_reason="tp",
-            ),
+            _event(signal, "opened:1", "position_opened"),
+            _event(signal, "closed:2", "position_closed", profit=25.76, close_reason="tp"),
         ],
     )
 
-    db.expire_all()
-    stored = db.get(Signal, signal.id)
-    assert stored is not None
+    stored = _stored(db, signal)
     assert stored.status == SignalStatus.ACTIVE
     assert stored.closed_at is None
     assert stored.profit_loss is None
+    assert signal_news == {"changed": [], "triggered": [], "outcome": []}
+
+
+def test_a_hand_close_ends_the_trade_without_a_subscriber_message(
+    client: TestClient, db: Session, signal_news: dict[str, list[str]]
+) -> None:
+    """Left filled, a trade closed by hand would block every newer signal
+    (ADR-168). The outcome message only knows take profit and stop loss."""
+    token = _token(client, _user(db))
+    signal = _signal(db)
+
+    _report(client, token["token"], [_event(signal, "opened:1", "position_opened", dry_run=False)])
+    _report(
+        client,
+        token["token"],
+        [
+            _event(
+                signal,
+                "closed:1",
+                "position_closed",
+                dry_run=False,
+                price=4420.0,
+                close_reason="manual",
+            )
+        ],
+    )
+
+    stored = _stored(db, signal)
+    assert stored.status == SignalStatus.CLOSED
+    assert stored.status_reason == "Closed by hand on the EA's account."
+    assert stored.profit_loss == Decimal("5.764")
+    assert signal_news == {
+        "changed": ["triggered", "closed"],
+        "triggered": [str(signal.id)],
+        "outcome": [],
+    }
+
+
+def test_a_resent_fill_moves_and_announces_the_signal_once(
+    client: TestClient, db: Session, signal_news: dict[str, list[str]]
+) -> None:
+    token = _token(client, _user(db))
+    signal = _signal(db)
+    batch = [_event(signal, "opened:1", "position_opened", dry_run=False)]
+
+    _report(client, token["token"], batch)
+    _report(client, token["token"], batch)
+
+    assert _stored(db, signal).status == SignalStatus.TRIGGERED
+    assert signal_news == {"changed": ["triggered"], "triggered": [str(signal.id)], "outcome": []}
+
+
+def test_a_late_fill_moves_the_signal_but_sends_no_message(
+    client: TestClient, db: Session, signal_news: dict[str, list[str]]
+) -> None:
+    """A terminal catching up after an outage corrects the website quietly."""
+    token = _token(client, _user(db))
+    signal = _signal(db)
+    hours_ago = int((datetime.now(UTC) - timedelta(hours=7)).timestamp())
+
+    _report(
+        client,
+        token["token"],
+        [_event(signal, "opened:1", "position_opened", dry_run=False, occurred_at=hours_ago)],
+    )
+
+    assert _stored(db, signal).status == SignalStatus.TRIGGERED
+    assert signal_news == {"changed": ["triggered"], "triggered": [], "outcome": []}
+
+
+def test_a_fill_for_a_cancelled_signal_leaves_it_cancelled(
+    client: TestClient, db: Session, signal_news: dict[str, list[str]]
+) -> None:
+    token = _token(client, _user(db))
+    signal = _signal(db)
+    signal.status = SignalStatus.CANCELLED
+    db.commit()
+
+    _report(client, token["token"], [_event(signal, "opened:1", "position_opened", dry_run=False)])
+
+    assert _stored(db, signal).status == SignalStatus.CANCELLED
+    assert signal_news == {"changed": [], "triggered": [], "outcome": []}
 
 
 # --- Telegram (ADR-170) -----------------------------------------------------

@@ -27,9 +27,9 @@ class EaExecutionEvent(Base, UUIDMixin, CreatedAtMixin):
     **Deliberately not `broker_orders`.** That table belongs to the dormant
     MetaApi executor, and the mere existence of a row there switches
     `signal_monitoring_tasks` into MetaApi reconciliation for the signal.
-    These rows are the account's own record and never change a signal's
-    status: the signal says what the analysis called, this says what one
-    terminal did about it.
+    These rows are the account's own record: the signal says what the
+    analysis called, this says what one terminal did about it. Only a live
+    fill or close moves the signal it traded (ADR-172, `ea_signal_sync`).
 
     Append-only (`CreatedAtMixin`): an event is a fact at a moment. A fill
     followed by a close is two rows, not one row updated.

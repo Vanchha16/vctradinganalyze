@@ -9860,7 +9860,7 @@ Report Expert Advisor Activity Back to the Website
 
 Status
 
-Accepted
+Accepted - decision 2 superseded by ADR-172 for live fills and closes
 
 Context
 
@@ -9881,7 +9881,8 @@ Decision
 switch into MetaApi reconciliation for that signal. EA rows written there
 would route monitoring through a provider that is not configured.
 
-**2. Events never change a signal.** The signal records what the analysis
+**2. Events never change a signal.** *(Superseded by ADR-172: a live fill
+or close now moves the signal it traded.)* The signal records what the analysis
 called and how price moved against it (Twelve Data candles); an event
 records what one account did. They legitimately disagree - a limit that
 never filled on a signal the website marks `successful`, for instance - and
@@ -10705,6 +10706,90 @@ Consequences
   work per run. That is negligible.
 - A candle that arrives later than three runs (15 minutes) would still be lost.
   None has been seen.
+
+---
+
+# ADR-172
+
+Title
+
+A Live EA Fill or Close Moves the Signal It Traded
+
+Status
+
+Accepted - supersedes decision 2 of ADR-162 for live fills and closes
+
+Context
+
+The website decides that a signal filled, and how it ended, from Twelve Data
+M1 candles (ADR-137, ADR-141). The EA trades on the broker's own prices, which
+can differ by a few tenths.
+
+On 2026-09-14 the EA's sell limit at 4311.26 (signal `7f13793b`) filled on
+Exness at 09:09 UTC. Twelve Data's high in that window was 4310.90, so the
+website kept the signal unfilled. The operator closed the trade by hand at
+09:26 for +1,199 USC. At 13:03 a newer draft was confirmed, and ADR-168
+cancelled `7f13793b` as "replaced before it filled". Subscribers were told a
+trade was cancelled after it had filled and closed.
+
+ADR-162 decision 2 kept events from ever changing a signal: the signal is the
+analysis's record, and one account's result can legitimately differ. A real
+fill is still stronger evidence that price reached the entry than a candle
+that missed it by 0.36. The operator chose (2026-09-14) to let the EA's fill
+report mark the signal filled.
+
+Decision
+
+- **Fill.** A newly stored live `position_opened` makes a stored `ACTIVE`
+  signal `TRIGGERED`, with `triggered_at` and `last_monitored_at` set to the
+  fill time. The candle monitor keeps checking stop loss and take profit from
+  there.
+- **Close.** A newly stored live `position_closed` finishes a `TRIGGERED`
+  signal, or an `ACTIVE` one whose fill was never reported, at the close time:
+  - `tp` → `SUCCESSFUL` and `sl` → `STOPPED_OUT`, with `profit_loss` at the
+    signal's own level, as the candle monitor records it;
+  - any other reason (`manual`, `stop_out`, `expert`, `other`) → `CLOSED`,
+    with a `status_reason`, and `profit_loss` at the reported close price.
+
+  Closes are handled as well as fills because a `TRIGGERED` signal blocks newer
+  signals (ADR-125, ADR-168). Left filled, the hand-closed trade above would
+  have cancelled that evening's confirmed 4285.83 signal.
+- **Nothing else moves.** Dry-run events, order events, and a signal that is
+  already filled, finished or cancelled are left alone. Nothing un-fills a
+  signal: one filled on Twelve Data whose order never filled on the broker
+  stays as it is.
+- **Order and repeats.** A batch is applied oldest first, a fill before a
+  close in the same second. Events and signal changes are stored in one
+  commit, so a re-sent batch, which stores nothing new, moves nothing twice.
+- **Who is told.**
+  - The website gets a status-changed event.
+  - Telegram subscribers get the triggered, take-profit or stop-loss message
+    the candle monitor sends.
+  - Other closes send subscribers nothing: that message only knows those two
+    exits, and the operator already has the EA alert (ADR-170).
+  - Events older than `EA_EVENT_ALERT_MAX_AGE_HOURS` move the signal but
+    send nothing.
+
+Consequences
+
+- A signal the EA traded now follows the broker account's fill and exit.
+  Otherwise Twelve Data candles still decide.
+- The candle monitor and an EA report can race on the same signal. The first
+  write wins, and the other then finds the signal no longer open.
+- With more than one terminal on a signal, the first report wins. ADR-161
+  allows only one terminal per account.
+- Signals changed before this ADR are not rewritten: `7f13793b` stays
+  cancelled.
+
+Alternatives Considered
+
+- **Fills only.** Rejected: a trade closed by hand would stay filled for up to
+  `SIGNAL_TRIGGERED_TTL_HOURS` and block every newer signal.
+- **Guard only the replacement** (ADR-168 checks EA fills before replacing).
+  Rejected: the signal page, monitoring and Telegram messages would still be
+  wrong.
+- **A tolerance on the candle entry check.** Rejected: any fixed tolerance is a
+  guess, and would mark fills that never happened.
 
 ---
 

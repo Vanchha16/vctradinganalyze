@@ -951,7 +951,7 @@ These are recorded on the token and shown on the website. A missing or unreadabl
 
 POST /ea/events
 
-ADR-162. **Header `X-EA-Token`.** What the EA did, reported in batches of 1-50. Rate limited per IP (`EA_EVENTS_RATE_LIMIT`, default 30/min). Never changes a signal's status.
+ADR-162. **Header `X-EA-Token`.** What the EA did, reported in batches of 1-50. Rate limited per IP (`EA_EVENTS_RATE_LIMIT`, default 30/min). Only a live fill or close changes a signal's status (ADR-172, below).
 
 Request
 
@@ -982,6 +982,8 @@ Response
 { "accepted": 1, "duplicates": 0, "rejected": [] }
 
 ADR-170: each newly stored live (`dry_run: false`) `order_placed`, `order_skipped`, `order_rejected`, `order_cancelled`, `position_opened` or `position_closed` is sent to super admins' linked Telegram - not for dry-run events, duplicates, or events that happened more than `EA_EVENT_ALERT_MAX_AGE_HOURS` (default 6) before they arrived. Delivery is queued and never affects the response.
+
+ADR-172: a newly stored live `position_opened` makes an unfilled (`active`) signal `triggered` at `occurred_at`. A newly stored live `position_closed` finishes a `triggered` signal, or an `active` one whose fill was never reported, at `occurred_at`: `close_reason` `tp` → `successful`, `sl` → `stopped_out`, anything else → `closed` with a `status_reason`. `profit_loss` is in price: at the signal's own level for `tp`/`sl`, at the reported `price` otherwise. A signal already filled, finished or cancelled is not changed, and dry-run events never change one. The website gets a status-changed event. Telegram subscribers get the usual triggered, take-profit or stop-loss message, but none for other closes or for events older than `EA_EVENT_ALERT_MAX_AGE_HOURS`.
 
 `event_key` is unique per user: re-sending an already-stored event counts as a duplicate, not an error. An event for an unknown `signal_id` is listed in `rejected` (`{"event_key", "reason"}`) and the rest of the batch is still stored. 422 only for a malformed batch (shape, unknown `event_type`, 0 or more than 50 events). 401 as for the feed.
 

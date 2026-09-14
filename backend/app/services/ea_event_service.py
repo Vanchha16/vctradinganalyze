@@ -1,9 +1,10 @@
 """What an MT5 Expert Advisor reports it did (ADR-162).
 
-Reports are the account's record, not the signal's: nothing here reads or
-writes `Signal.status`. A signal can be `successful` on the website while
-the EA's order never filled, and the reverse - both are true at once, and
-this module keeps them apart rather than reconciling one into the other.
+Reports are the account's record. Since ADR-172 one kind also moves the
+signal: a live fill or close of an open signal (`ea_signal_sync`), because
+the broker's prices are what really filled. Everything else - dry runs, order
+events, a signal the website already finished or cancelled - leaves
+`Signal.status` alone, and nothing un-fills a signal whose order never filled.
 """
 
 import uuid
@@ -19,11 +20,14 @@ from app.config import settings
 from app.exceptions import ConflictException
 from app.models.ea_execution_event import EaExecutionEvent
 from app.models.enums import SignalType
+from app.models.signal import Signal
 from app.models.user import User
 from app.repositories.ea_execution_event_repository import EaExecutionEventRepository
 from app.repositories.signal_repository import SignalRepository
 from app.schemas.ea import EaEventIn
+from app.services import ea_signal_sync
 from app.services.ea_service import EaPrincipal
+from app.services.ea_signal_sync import SignalMove
 from app.utils.time import as_aware_utc
 
 logger = structlog.get_logger(__name__)
@@ -50,6 +54,15 @@ class IngestResult:
     rejected: list[tuple[str, str]]
     #: ADR-170 - ids of the newly stored events to send to Telegram.
     notify: list[uuid.UUID] = field(default_factory=list)
+    #: ADR-172 - signals a live fill or close moved, in their new state.
+    moved_signals: list[Signal] = field(default_factory=list)
+    #: ADR-172 - subscriber messages for those moves, oldest first.
+    signal_messages: list[tuple[SignalMove, uuid.UUID]] = field(default_factory=list)
+
+
+def _is_recent(occurred_at: datetime, now: datetime) -> bool:
+    max_age = timedelta(hours=settings.ea_event_alert_max_age_hours)
+    return as_aware_utc(now) - as_aware_utc(occurred_at) <= max_age
 
 
 def is_worth_telling(event: EaExecutionEvent, now: datetime) -> bool:
@@ -58,8 +71,7 @@ def is_worth_telling(event: EaExecutionEvent, now: datetime) -> bool:
     the chat with hours-old fills."""
     if event.dry_run or event.event_type not in NOTIFY_EVENT_TYPES:
         return False
-    max_age = timedelta(hours=settings.ea_event_alert_max_age_hours)
-    return as_aware_utc(now) - as_aware_utc(event.occurred_at) <= max_age
+    return _is_recent(event.occurred_at, now)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,12 +100,14 @@ class EaEventService:
         a good event must not be lost with it.
 
         `notify` lists only events stored by this call, so a re-sent batch
-        never sends its Telegram messages twice."""
+        never sends its Telegram messages twice. The same goes for the
+        signals a live fill or close moves (ADR-172): they are changed in the
+        commit that stores the events, and only for newly stored ones."""
         now = now or datetime.now(UTC)
         user_id = principal.user.id
         seen = self._event_repository.existing_keys(user_id, {e.event_key for e in events})
-        known_signals = {
-            s.id for s in self._signal_repository.list_by_ids({e.signal_id for e in events})
+        signals = {
+            s.id: s for s in self._signal_repository.list_by_ids({e.signal_id for e in events})
         }
 
         rows: list[EaExecutionEvent] = []
@@ -103,12 +117,32 @@ class EaEventService:
             if event.event_key in seen:
                 duplicates += 1
                 continue
-            if event.signal_id not in known_signals:
+            if event.signal_id not in signals:
                 rejected.append((event.event_key, "unknown signal_id"))
                 continue
             # Also dedupes within this batch.
             seen.add(event.event_key)
             rows.append(_to_row(principal, event))
+
+        moved: dict[uuid.UUID, Signal] = {}
+        messages: list[tuple[SignalMove, uuid.UUID]] = []
+        # Oldest first, and a fill before a close in the same second: one
+        # batch can carry both.
+        for row in sorted(rows, key=_move_order):
+            signal = signals[row.signal_id]
+            change = ea_signal_sync.apply_event(signal, row)
+            if change is None:
+                continue
+            moved[signal.id] = signal
+            if change.has_message and _is_recent(change.occurred_at, now):
+                messages.append((change.move, signal.id))
+            logger.info(
+                "ea.signal_moved",
+                signal_id=str(signal.id),
+                move=change.move.value,
+                status=signal.status.value,
+                event_key=row.event_key,
+            )
 
         if rows:
             try:
@@ -136,6 +170,8 @@ class EaEventService:
             duplicates=duplicates,
             rejected=rejected,
             notify=[row.id for row in rows if is_worth_telling(row, now)],
+            moved_signals=list(moved.values()),
+            signal_messages=messages,
         )
 
     def list_events(
@@ -165,6 +201,10 @@ class EaEventService:
         return EventPage(
             items=items, total=total, signal_types={s.id: s.signal_type for s in signals}
         )
+
+
+def _move_order(row: EaExecutionEvent) -> tuple[datetime, bool]:
+    return as_aware_utc(row.occurred_at), row.event_type == "position_closed"
 
 
 def _to_row(principal: EaPrincipal, event: EaEventIn) -> EaExecutionEvent:

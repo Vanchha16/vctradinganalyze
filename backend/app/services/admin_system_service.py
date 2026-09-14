@@ -89,12 +89,14 @@ class AdminSystemService:
         returns - the admin surface exists for a consistent `/admin/*`
         dashboard entry point, not to unlock previously-hidden rows."""
         offset = (page - 1) * limit
+        # Filter by the status each item shows, not the stored one (docs/04).
+        now = datetime.now(UTC)
         items = list(
             self._signal_repository.find_paginated(
-                asset_id=asset_id, status=status, offset=offset, limit=limit
+                asset_id=asset_id, status=status, as_of=now, offset=offset, limit=limit
             )
         )
-        total = self._signal_repository.count_filtered(asset_id=asset_id, status=status)
+        total = self._signal_repository.count_filtered(asset_id=asset_id, status=status, as_of=now)
         return items, total
 
     def list_broker_orders(

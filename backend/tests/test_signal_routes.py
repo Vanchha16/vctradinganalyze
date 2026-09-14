@@ -278,8 +278,9 @@ def _seed_signal(
     status: SignalStatus,
     created_at: datetime | None = None,
     triggered_at: datetime | None = None,
+    asset: Asset | None = None,
 ) -> str:
-    asset = _make_asset(session)
+    asset = asset or _make_asset(session)
     signal = Signal(
         analysis_id=uuid.uuid4(),
         asset_id=asset.id,
@@ -373,6 +374,41 @@ def test_an_expired_signal_cannot_be_cancelled(
 
     assert response.status_code == 409
     assert published == {"telegram": [], "changed": []}
+
+
+def test_status_filter_matches_the_status_each_signal_shows(
+    buy_client: TestClient, session: Session
+) -> None:
+    """An unfilled signal past its TTL is still stored ACTIVE, so filtering by
+    the stored value listed it under "active" and never under "expired"."""
+    asset = _make_asset(session)
+    now = datetime.now(UTC)
+    expected = {
+        "active": _seed_signal(session, status=SignalStatus.ACTIVE, asset=asset),
+        "expired": _seed_signal(
+            session, status=SignalStatus.ACTIVE, created_at=now - timedelta(hours=48), asset=asset
+        ),
+        "draft": _seed_signal(session, status=SignalStatus.DRAFT, asset=asset),
+        "cancelled": _seed_signal(
+            session, status=SignalStatus.DRAFT, created_at=now - timedelta(hours=5), asset=asset
+        ),
+        "triggered": _seed_signal(
+            session, status=SignalStatus.TRIGGERED, triggered_at=now, asset=asset
+        ),
+        "closed": _seed_signal(
+            session,
+            status=SignalStatus.TRIGGERED,
+            created_at=now - timedelta(days=9),
+            triggered_at=now - timedelta(days=8),
+            asset=asset,
+        ),
+    }
+
+    for status, signal_id in expected.items():
+        body = buy_client.get("/api/v1/signals", params={"status": status}).json()
+        assert [item["id"] for item in body["items"]] == [signal_id], status
+        assert body["items"][0]["status"] == status
+        assert body["total"] == 1, status
 
 
 def test_cancel_unknown_signal_is_404(

@@ -110,6 +110,23 @@ def test_today_and_week_sections_reflect_signal_status_and_pnl(session: Session)
     assert "+30.00" in unescaped  # week's P&L: 50 - 20 net across both signals
 
 
+def test_an_unfilled_signal_past_its_ttl_is_not_counted_as_open(session: Session) -> None:
+    asset = _make_asset(session)
+    now = datetime.now(UTC)
+    _make_signal(session, asset, status=SignalStatus.ACTIVE, created_at=now - timedelta(days=2))
+    _make_signal(session, asset, status=SignalStatus.ACTIVE, created_at=now - timedelta(hours=1))
+    session.commit()
+
+    text = build_summary_report_text(
+        SignalRepository(session),
+        AssetRepository(session),
+        PriceCandleRepository(session),
+        now=now,
+    ).replace("\\", "")
+
+    assert "Signals: 2  (Won 0 / Lost 0 / Open 1)" in text  # the 7-day section
+
+
 def test_market_overview_shows_latest_close_and_change(session: Session) -> None:
     asset = _make_asset(session)
     now = datetime.now(UTC)

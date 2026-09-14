@@ -66,9 +66,9 @@ function validate(form: FormState, maxLot: number | null): EaSettings | string {
 /**
  * ADR-163 - edits the settings one terminal picks up on its next poll.
  * Switching to live asks for confirmation first, and warns when the EA on
- * the server has not allowed the website to do that (it would stay in dry
- * run). The EA's hard lot limit is shown and enforced here as well as in
- * the EA itself.
+ * the server has not allowed the website to do that - unless the EA is
+ * already live through its own DryRun input. The EA's hard lot limit is
+ * shown and enforced here as well as in the EA itself.
  */
 export function EaSettingsDialog({
   token,
@@ -94,8 +94,12 @@ export function EaSettingsDialog({
   if (!token || !form) return null;
 
   const maxLot = token.terminal.max_lot;
-  const liveBlocked = !form.dry_run && token.terminal.allow_remote_live === false;
-  const liveUnknown = !form.dry_run && token.terminal.allow_remote_live === null;
+  // Without AllowWebsiteLive the website can only force dry run: the EA is
+  // still live when its own DryRun input is false. It reports the mode it
+  // really runs in, so there is nothing to warn about once that is live.
+  const liveFromInputs = token.terminal.dry_run === false && token.terminal.allow_remote_live !== true;
+  const liveBlocked = !form.dry_run && !liveFromInputs && token.terminal.allow_remote_live === false;
+  const liveUnknown = !form.dry_run && !liveFromInputs && token.terminal.allow_remote_live === null;
   const switchingToLive = token.settings.dry_run && !form.dry_run;
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -187,14 +191,20 @@ export function EaSettingsDialog({
             {liveBlocked ? (
               <p className="flex gap-2 rounded-md border border-warning/30 bg-warning/10 p-2.5 text-xs text-warning">
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                This EA has not allowed the website to switch it to live, so it will stay in dry run.
-                Set AllowWebsiteLive = true in the EA&apos;s inputs on the server first.
+                This EA does not let the website switch it to live (AllowWebsiteLive = false). It trades
+                live only if DryRun = false in its MT5 inputs on the server; otherwise it stays in dry run.
               </p>
             ) : liveUnknown ? (
               <p className="flex gap-2 rounded-md border border-warning/30 bg-warning/10 p-2.5 text-xs text-warning">
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                This EA has not reported whether it allows a live switch (it needs version 1.20 or
-                later). It stays in dry run unless AllowWebsiteLive = true on the server.
+                This EA has not reported whether the website may switch it to live (it needs version 1.20
+                or later). It trades live only if AllowWebsiteLive = true or DryRun = false in its MT5
+                inputs.
+              </p>
+            ) : !form.dry_run && liveFromInputs ? (
+              <p className="text-xs text-muted-foreground">
+                Live because DryRun = false in the EA&apos;s MT5 inputs. Choosing Dry run here still stops
+                real orders.
               </p>
             ) : null}
 
@@ -268,7 +278,7 @@ export function EaSettingsDialog({
         title="Switch to LIVE trading?"
         description={`Every new signal will place a REAL order of ${form.lot_size} lot on this account, with real money. ${
           liveBlocked || liveUnknown
-            ? "The EA will stay in dry run until AllowWebsiteLive = true is set on the server."
+            ? "It goes live only if the EA's MT5 inputs allow it (AllowWebsiteLive = true or DryRun = false)."
             : "This takes effect on the EA's next check."
         }`}
         actionLabel="Yes, go live"

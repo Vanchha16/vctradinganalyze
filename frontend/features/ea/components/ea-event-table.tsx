@@ -62,7 +62,10 @@ export function EaEventTable({ events }: { events: EaEventResponse[] }) {
                 <TableCell>
                   <SignalLink event={event} />
                 </TableCell>
-                <TableCell className="max-w-md text-[13px]">{describeEaEvent(event)}</TableCell>
+                {/* Table cells default to nowrap - a long description would run into the Terminal column. */}
+                <TableCell className="max-w-md whitespace-normal break-words text-[13px]">
+                  {describeEaEvent(event)}
+                </TableCell>
                 <TableCell className={`whitespace-nowrap text-right tabular-nums ${profitClass(event)}`}>
                   {formatEaProfit(event) ?? "—"}
                 </TableCell>

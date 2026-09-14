@@ -135,10 +135,12 @@ async def list_signals(
         asset_id = asset.id
 
     offset = (page - 1) * limit
+    # Filter by the status each item shows, not the stored one (docs/04).
+    now = datetime.now(UTC)
     rows = signal_repository.find_paginated(
-        asset_id=asset_id, status=status, offset=offset, limit=limit
+        asset_id=asset_id, status=status, as_of=now, offset=offset, limit=limit
     )
-    total = signal_repository.count_filtered(asset_id=asset_id, status=status)
+    total = signal_repository.count_filtered(asset_id=asset_id, status=status, as_of=now)
 
     items = []
     for row in rows:

@@ -791,7 +791,7 @@ Response
 
 GET /signals?symbol=&status=&page=&limit=
 
-Latest signals, paginated and optionally filtered by asset symbol and/or `status`. `status` reflects a read-time-computed value (`active`/`expired`) for stored `ACTIVE` rows (ADR-088) - never a stale stored value.
+Latest signals, paginated and optionally filtered by asset symbol and/or `status`. `status` - in each item and in the filter - is the read-time-computed value, never a stale stored one: a stored `ACTIVE` row past its TTL is `expired` (ADR-088), a `DRAFT` past its confirmation window is `cancelled` (ADR-166), and a `TRIGGERED` row past its TTL is `closed` (ADR-137). `total` counts the same way. `GET /admin/signals` filters identically, and the Telegram Summary Report counts signals by this status too.
 
 Response: same item shape as `POST /signals/generate/{symbol}`'s `signal` object, wrapped in `{"items", "page", "limit", "total"}`.
 

@@ -10,6 +10,7 @@ is read verbatim from already-persisted rows, nothing is scored or
 decided in this module.
 """
 
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -17,6 +18,7 @@ from app.models.enums import SignalStatus, Timeframe
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
+from app.services.signal.status_resolver import effective_status
 from app.services.telegram.message_sections import escape_markdown_v2
 
 _SEPARATOR = "━━━━━━━━━━━━━━━━━━"
@@ -27,6 +29,19 @@ _REPORT_WINDOW_DAYS = 7
 #: measure.
 _MARKET_OVERVIEW_LOOKBACK_CANDLES = 60
 _MARKET_OVERVIEW_MAX_ASSETS = 10
+
+
+def _status_counts(
+    signal_repository: SignalRepository, since: datetime, now: datetime
+) -> dict[SignalStatus, int]:
+    """Counted by the status each signal shows now, not the stored one: an
+    unfilled signal past its TTL is expired, not open (ADR-088)."""
+    return dict(
+        Counter(
+            effective_status(status, created_at, now, triggered_at=triggered_at)
+            for status, created_at, triggered_at in signal_repository.list_status_times_since(since)
+        )
+    )
 
 
 def _status_counts_line(status_counts: dict[SignalStatus, int]) -> str:
@@ -94,12 +109,12 @@ def build_summary_report_text(
         f"{_SEPARATOR}\n📊 SUMMARY REPORT\n{_SEPARATOR}",
         _period_section(
             "Today",
-            signal_repository.count_by_status_since(today_start),
+            _status_counts(signal_repository, today_start, now),
             signal_repository.sum_profit_loss_since(today_start),
         ),
         _period_section(
             "Last 7 Days",
-            signal_repository.count_by_status_since(week_start),
+            _status_counts(signal_repository, week_start, now),
             signal_repository.sum_profit_loss_since(week_start),
         ),
         _market_overview_section(asset_repository, candle_repository),

@@ -383,6 +383,10 @@ Last updated: 2026-09-08 (ADR-141 signal monitoring range scan). Note: entries b
   - **Daily loss limit:** EA 1.30 input `MaxDailyLoss`, counting closed losses since the broker's midnight. It blocks new orders and cancels unfilled ones for the rest of the day, and is reported to the website and Telegram.
   - EA alerts go to super admins' Telegram only, not every subscriber.
   - **To deploy:** migration `b4e7d2a91c35`, restart worker and beat, rebuild the frontend, then the operator installs EA 1.30 and sets `MaxDailyLoss`.
+- **Three small fixes (2026-09-14, built locally).**
+  - **Status filter:** `GET /signals` and `GET /admin/signals` filtered by the stored status, so an unfilled signal past its TTL showed under "active" and never under "expired". Drafts past their window and old triggered trades had the same problem. The filter and `total` now use the read-time status, as docs/04 already specified. Rows are still never rewritten (ADR-088). The Telegram Summary Report no longer counts expired signals as open.
+  - **EA settings warning:** "will stay in dry run" no longer shows when the EA is already live through its own `DryRun = false` input.
+  - **EA Activity:** long details text wraps instead of running into the Terminal column.
 - **M1 candle gaps fixed (2026-09-14, ADR-171).** Production had about 40% of XAUUSD M1 candles missing: the minutes ending in 1-2 and 6-7 of every five.
   - **Cause:** a five-minute fetch window on a five-minute schedule. Twelve Data had not yet published the newest two minutes at each run, and no later run went back for them.
   - **Fix:** each run fetches back three of its own runs (M1: 15 minutes), still one request per run. The missing minutes were backfilled once.

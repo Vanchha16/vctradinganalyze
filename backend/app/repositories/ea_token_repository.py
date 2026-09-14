@@ -36,6 +36,17 @@ class EaTokenRepository(BaseRepository[EaToken]):
             .all()
         )
 
+    def list_reporting(self) -> Sequence[EaToken]:
+        """Every token an EA has polled with at least once (ADR-170's watch).
+        A token never used has no terminal to lose."""
+        return (
+            self.session.execute(
+                select(EaToken).where(EaToken.last_used_at.is_not(None)).order_by(EaToken.created_at)
+            )
+            .scalars()
+            .all()
+        )
+
     def count_for_user(self, user_id: uuid.UUID) -> int:
         return self.session.execute(
             select(func.count()).select_from(EaToken).where(EaToken.user_id == user_id)

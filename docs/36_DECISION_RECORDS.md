@@ -10559,6 +10559,155 @@ Future Review
 
 ---
 
+# ADR-170
+
+Title
+
+Telegram Tells the Operator What the EA Is Doing, and the EA Stops for the Day at a Loss Limit
+
+Status
+
+Accepted
+
+Context
+
+On 2026-09-14 the operator switched the EA to live trading: 0.40 lot on an
+Exness cent account, where one stop loss costs about 6-7% of the balance. Three
+gaps showed up:
+
+- **Nothing notices a terminal going quiet.** If MT5 closes or the Windows
+  server restarts, signals are silently not traded. The website shows "last
+  used", but only to someone looking.
+- **Telegram describes the signals, not the account.** Orders placed, fills,
+  closes with profit and broker rejections are stored as EA events (ADR-162),
+  but they are visible only on the EA Activity page.
+- **No limit stops a losing day.** Three losses in a row cost about 20% of the
+  account, and nothing in the EA or on the website would stop a fourth.
+
+Decision
+
+**1. Offline and back-online alerts.** A Celery Beat task (`ea.watch_terminals`,
+every `EA_WATCH_INTERVAL_SECONDS`, default 60) checks every token that has ever
+polled:
+- no poll for `EA_OFFLINE_ALERT_MINUTES` (default 5) **while the market is
+  open** (`session_classifier`: closed Friday 22:00 - Sunday 22:00 UTC) sends
+  "EA OFFLINE" once;
+- the next poll after that sends "EA BACK ONLINE".
+`ea_tokens.offline_alerted_at` records that the alert was sent, so it is sent
+once per outage. It is only written once the message has gone out, so a failed
+send is retried on the next run. A terminal still offline when the weekend
+starts stays silent until the market reopens.
+
+**2. Live EA events go to Telegram.** When `POST /ea/events` stores a live
+(`dry_run: false`) `order_placed`, `order_skipped`, `order_rejected`,
+`order_cancelled`, `position_opened` or `position_closed`, a message is queued
+for it. The message is timestamped with when the event happened. Nothing is sent
+for:
+- dry-run events, which would repeat every signal message;
+- a duplicate report;
+- an event that happened more than `EA_EVENT_ALERT_MAX_AGE_HOURS` (default 6)
+  before it arrived. A terminal catching up after an outage must not flood the
+  chat.
+
+**3. Who receives them.** EA alerts describe one operator's broker account, so
+they are **not** broadcast to every linked Telegram like signals are (ADR-113).
+They go to the linked Telegram of every active super admin - the only role that
+may hold an EA token (ADR-161).
+
+**4. Daily loss limit, on the terminal (EA 1.30).** A new input,
+`MaxDailyLoss`, joins the safety limits the website can never override
+(ADR-163). It is set in the account currency, and 0 turns it off.
+- **What counts:** the EA adds up the closed net result (profit, commission,
+  swap, fees) of its own trades since the start of the broker's trading day.
+  Its own trades are its magic number, or a position it opened.
+- **When it triggers:** once that loss reaches the limit, the EA opens nothing
+  new and cancels its unfilled orders until the next broker day. Open positions
+  keep their stop loss and take profit.
+- **Latched:** the block holds for the rest of the day, so a later win cannot
+  reopen trading.
+- **Closed trades only:** floating losses are not counted, so a trade in
+  temporary drawdown does not cancel the other orders.
+- **Reporting:** the EA reports `X-EA-Currency`, `X-EA-Daily-Loss-Limit`,
+  `X-EA-Daily-Loss` and `X-EA-Loss-Blocked` on its feed polls. The website shows
+  them on the token.
+- **Telegram:** the watch task sends "DAILY LOSS LIMIT" once when the block
+  starts (`ea_tokens.loss_limit_alerted_at`), and silently re-arms when a new day
+  clears it.
+
+Consequences
+
+- **An unused token alerts once.** A token that polled once and was then left
+  unrevoked sends one "EA OFFLINE". That is the prompt to revoke it.
+- **Alerts lag by up to a minute or so.** `last_used_at` is written at most once
+  a minute, and the watch task runs every minute, so "offline" means 5-7 minutes
+  without a poll.
+- **The loss limit resets at the broker's midnight,** not the operator's local
+  midnight. Exness server time is UTC.
+- **Older EAs report nothing new.** An EA before 1.30 sends none of the new
+  headers, so the website shows no loss figures for it. Alerts 1-3 still work,
+  because they rely only on polls and event reports.
+
+Future Review
+
+- If the operator wants the limit as a percentage of balance, add it as a second
+  input rather than changing what `MaxDailyLoss` means.
+- If more than one operator ever holds EA tokens, send each terminal's alerts to
+  its owner only.
+
+---
+
+# ADR-171
+
+Title
+
+A Candle Collection Run Fetches Back Over Several Runs, Not Just Five Candles
+
+Status
+
+Accepted
+
+Context
+
+On 2026-09-14 production was missing about 40% of XAUUSD M1 candles (861 of
+~1,440 in a day). Every five minutes, the minutes ending in 1 and 2 (or 6 and
+7) were missing.
+
+**Why:** since ADR-140's 300-second floor, M1 is collected every five minutes,
+but each run still fetched only `_LOOKBACK_INTERVALS` (5) candles back - five
+minutes. At each run Twelve Data had not yet published the newest two minutes,
+so a run returned 3 candles. The next run's window started after the two it
+missed, so they were never fetched. The logs showed every M1 run as "fetched
+3, persisted 3, rejected 0". ADR-140's note that the floor is "lossless" was
+wrong for M1.
+
+**What depended on them:** M1 candles drive M15 confirmation's stop-loss and
+take-profit check (ADR-166), signal outcome tracking and the Telegram "hit"
+messages - on a live account since the same day.
+
+Decision
+
+- Each run fetches back the larger of `_LOOKBACK_INTERVALS` candles and **three
+  of that timeframe's own run intervals** (`market_data_tasks.lookback_for`). M1
+  on the 300s floor now fetches 15 minutes, so every minute falls inside about
+  three runs.
+- **Timeframes that run once per candle are unchanged** (M15: 75 minutes, H1: 5
+  hours).
+- **No quota cost.** It is still one request per run, and upserts make the
+  overlap harmless.
+- **Test:** a test fails if any timeframe's window is shorter than three of its
+  runs.
+- **Backfill:** the minutes already missing are refetched once, from the few
+  days a single Twelve Data request covers.
+
+Consequences
+
+- Each M1 run returns about 15 candles instead of 3, with slightly more upsert
+  work per run. That is negligible.
+- A candle that arrives later than three runs (15 minutes) would still be lost.
+  None has been seen.
+
+---
+
 # Review Policy
 
 Review ADRs:

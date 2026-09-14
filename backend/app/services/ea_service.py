@@ -85,6 +85,11 @@ class TerminalReport:
     applied_settings_version: int | None = None
     dry_run: bool | None = None
     paused: bool | None = None
+    #: ADR-170 (EA 1.30) - the daily loss limit, in the account currency.
+    currency: str | None = None
+    daily_loss_limit: Decimal | None = None
+    daily_loss: Decimal | None = None
+    loss_blocked: bool | None = None
 
 
 #: `TerminalReport` attribute -> `EaToken` column.
@@ -95,6 +100,10 @@ _REPORT_COLUMNS = {
     "applied_settings_version": "applied_settings_version",
     "dry_run": "effective_dry_run",
     "paused": "effective_paused",
+    "currency": "ea_currency",
+    "daily_loss_limit": "ea_daily_loss_limit",
+    "daily_loss": "ea_daily_loss",
+    "loss_blocked": "effective_loss_blocked",
 }
 
 _LOT_QUANTUM = Decimal("0.01")

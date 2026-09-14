@@ -4,13 +4,14 @@ MetaTrader 5 Expert Advisor for VC Trading AI. It runs inside your own MT5
 terminal, reads `GET /ea/signals` and trades the signals there (ADR-161).
 It reports what it did back to the website (ADR-162), and takes its
 trading settings from the website within limits you set on the terminal
-(ADR-163). The website never places trades and never sees your broker
+(ADR-163). It stops for the day at a loss limit you set on the terminal
+(ADR-170). The website never places trades and never sees your broker
 login.
 
 This folder is not part of the `backend`/`frontend` apps. Compile the EA
 in MetaEditor; CI does not build it.
 
-## VCTradingEA.mq5 (version 1.20)
+## VCTradingEA.mq5 (version 1.30)
 
 ### What it does, every `PollSeconds`
 
@@ -25,7 +26,8 @@ in MetaEditor; CI does not build it.
      or a better price.
    - price is already past the stop or target: **skips** the signal.
 3. **Cancels its own unfilled order** when the signal is no longer listed,
-   when it expires, or when trading is paused from the website.
+   when it expires, when trading is paused from the website, or when the
+   daily loss limit is reached.
 4. **Never modifies or closes a filled position.** The broker closes it at
    the stop loss or take profit.
 5. **Finds fills and closes** in MT5's own trade history, including ones
@@ -66,10 +68,37 @@ The website can never override these:
 |---|---|---|
 | MaxLotSize | 0.10 | Hard lot limit. Any lot from the website or the inputs is capped here |
 | AllowWebsiteLive | **false** | Allow the website to switch this EA to live. While false, a live request from the website is ignored and the EA stays in dry run |
+| MaxDailyLoss | 0 (off) | Loss per day, in the account currency (USC on a cent account). Once reached, no new orders until the broker's next day |
 
 A stolen website login can therefore pause the EA, lower its lot or put it
-back in dry run. It cannot make the EA riskier than these two inputs
-allow.
+back in dry run. It cannot make the EA riskier than these inputs allow.
+
+### Daily loss limit (1.30)
+
+The EA adds up the closed result (profit, commission, swap, fees) of its
+own trades since the broker server's midnight. When the loss reaches
+**MaxDailyLoss**:
+
+- it opens **no new orders** and **cancels its unfilled orders** for the
+  rest of that broker day;
+- open trades keep their stop loss and take profit - it never closes them;
+- the block holds even if a later trade closes in profit;
+- the next broker day it trades again on its own.
+
+Floating losses on open trades are not counted. The chart panel shows
+today's loss against the limit, and the website shows it on the token.
+
+Example: at 0.40 lot on XAUUSDc a stop loss costs about 200-250 USC, so
+`MaxDailyLoss = 600` stops trading after about three losses in a day.
+
+### Telegram alerts (ADR-170)
+
+Super admins with a linked Telegram get:
+- **what the EA does live**: order placed, skipped, rejected or cancelled,
+  filled, and closed with its profit. Dry-run checks are not sent;
+- **EA OFFLINE** when the terminal has not checked in for 5 minutes while
+  the market is open, and **EA BACK ONLINE** when it returns;
+- **DAILY LOSS LIMIT REACHED** once, when the limit stops it for the day.
 
 ### All inputs
 
@@ -83,6 +112,7 @@ allow.
 | BrokerSymbol | `XAUUSDc` | Symbol in this terminal |
 | MaxLotSize | 0.10 | See safety limits |
 | AllowWebsiteLive | false | See safety limits |
+| MaxDailyLoss | 0 | See daily loss limit. 0 turns it off |
 | UseWebsiteSettings | true | Take settings from the website. When false, only the inputs below are used |
 | DryRun | **true** | Used until website settings arrive |
 | LotSize | 0.01 | Used until website settings arrive, rounded down to the lot step |
@@ -115,12 +145,12 @@ On its first start, 1.20 merges the 1.10 files (`..._dry.txt` /
 5. Drag **VCTradingEA** onto the chart and paste your token into
    **EaToken**. Review **MaxLotSize** and **AllowWebsiteLive**.
 6. Check that it started:
-   - The **Experts** tab shows `VC Trading EA 1.20 started`, then
+   - The **Experts** tab shows `VC Trading EA 1.30 started`, then
      `feed: connected, reading signals`.
-   - On the website, the token shows **EA 1.20** and **Settings applied**.
+   - On the website, the token shows **EA 1.30** and **Settings applied**.
 
-When upgrading, remove the old EA from the chart before attaching 1.20.
-Its history carries over.
+When upgrading, remove the old EA from the chart before attaching the new
+one, and keep the same **MagicNumber**. Its history carries over.
 
 ### Going live
 

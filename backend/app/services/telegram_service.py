@@ -4,10 +4,13 @@ from datetime import UTC, datetime, timedelta
 
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
+from app.models.ea_execution_event import EaExecutionEvent
+from app.models.enums import SignalType, UserRole
 from app.models.signal import Signal
 from app.models.telegram_account import TelegramAccount
 from app.repositories.telegram_account_repository import TelegramAccountRepository
 from app.services.telegram.message_sections import (
+    compose_ea_event_message,
     compose_signal_cancelled_message,
     compose_signal_message,
     compose_signal_outcome_message,
@@ -135,3 +138,16 @@ class TelegramService:
             if account.telegram_chat_id is None:
                 continue
             self._provider.send_message(account.telegram_chat_id, text)
+
+    def send_to_operators(self, text: str) -> None:
+        """ADR-170: EA alerts describe the operator's own broker account, so
+        they go to super admins' linked chats only - the role that may hold an
+        EA token - never to every subscriber."""
+        for account in self._account_repository.list_linked_for_role(UserRole.SUPER_ADMIN):
+            if account.telegram_chat_id is None:
+                continue
+            self._provider.send_message(account.telegram_chat_id, text)
+
+    def send_ea_event(self, event: EaExecutionEvent, signal_type: SignalType | None) -> None:
+        """What a live EA did on the account (ADR-170)."""
+        self.send_to_operators(compose_ea_event_message(event, signal_type))

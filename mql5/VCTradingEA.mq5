@@ -10,15 +10,17 @@
 //|  can be set from the website, within limits set HERE: the        |
 //|  website can never exceed MaxLotSize, and can only switch to     |
 //|  live when AllowWebsiteLive is true on this terminal.            |
+//|  ADR-170. MaxDailyLoss stops new orders for the rest of the      |
+//|  broker day once this EA's closed losses reach it.               |
 //+------------------------------------------------------------------+
 #property copyright   "VC Trading AI"
-#property version     "1.20"
+#property version     "1.30"
 #property description "Reads the VC Trading AI signal feed and trades it in this terminal."
 #property description "Dry run by default: every order is logged and checked, never sent."
 
 #include <Trade\Trade.mqh>
 
-#define EA_VERSION "1.20"
+#define EA_VERSION "1.30"
 
 //--- inputs -----------------------------------------------------------
 input group "Connection"
@@ -34,6 +36,7 @@ input string InpBrokerSymbol = "XAUUSDc"; // Symbol in this terminal
 input group "Safety limits (the website can never override these)"
 input double InpMaxLotSize       = 0.10;  // Hard lot limit - no setting may exceed it
 input bool   InpAllowWebsiteLive = false; // Allow the website to switch this EA to LIVE
+input double InpMaxDailyLoss     = 0.0;   // Max loss per day in account currency, then no new orders (0 = off)
 
 input group "Trading (used until website settings arrive)"
 input bool   InpUseWebsiteSettings = true;     // Take settings from the website
@@ -119,6 +122,11 @@ double g_lotSize         = 0.01;
 int    g_maxTrades       = 1;
 int    g_deviation       = 50;
 
+// Daily loss limit (ADR-170).
+double   g_dailyLoss   = 0.0;   // closed loss of this EA's trades today, 0 when none
+bool     g_lossBlocked = false; // MaxDailyLoss reached - no new orders until the next broker day
+datetime g_lossDay     = 0;     // broker-server midnight the two above belong to
+
 //+------------------------------------------------------------------+
 int OnInit()
   {
@@ -135,6 +143,11 @@ int OnInit()
    if(InpLotSize <= 0.0 || InpMaxLotSize <= 0.0 || InpMaxOpenTrades < 1)
      {
       Alert("VC Trading EA: LotSize and MaxLotSize must be above 0, and MaxOpenTrades at least 1.");
+      return(INIT_PARAMETERS_INCORRECT);
+     }
+   if(InpMaxDailyLoss < 0.0)
+     {
+      Alert("VC Trading EA: MaxDailyLoss cannot be negative (0 turns it off).");
       return(INIT_PARAMETERS_INCORRECT);
      }
 
@@ -155,8 +168,8 @@ int OnInit()
    if(!EventSetTimer(MathMax(InpPollSeconds, 5)))
       return(INIT_FAILED);
 
-   PrintFormat("VC Trading EA %s started - %s | %s -> %s | max lot %.2f | website live switch %s | reporting %s",
-               EA_VERSION, ModeText(), InpSignalSymbol, InpBrokerSymbol, InpMaxLotSize,
+   PrintFormat("VC Trading EA %s started - %s | %s -> %s | max lot %.2f | daily loss limit %s | website live switch %s | reporting %s",
+               EA_VERSION, ModeText(), InpSignalSymbol, InpBrokerSymbol, InpMaxLotSize, DailyLimitText(),
                InpAllowWebsiteLive ? "ALLOWED" : "not allowed", InpReportActivity ? "on" : "off");
    UpdatePanel();
    return(INIT_SUCCEEDED);
@@ -178,15 +191,19 @@ void OnTick()
 //+------------------------------------------------------------------+
 void OnTimer()
   {
+// First, so the feed request reports today's figures and a limit reached
+// by a close since the last check stops new orders on this very check.
+   UpdateDailyLoss();
+
    FeedSignal signals[];
    bool fetched = FetchFeed(signals);
 
 // These use only this terminal's own clock, history and last-known
 // settings, so they run even when the website cannot be reached: an
-// unfilled order must not outlive its signal or a pause, and a fill is
-// recorded (and queued) when it happens.
+// unfilled order must not outlive its signal, a pause or the daily loss
+// limit, and a fill is recorded (and queued) when it happens.
    CancelExpiredOrders();
-   CancelOrdersWhilePaused();
+   CancelOrdersWhileBlocked();
    ReconcileTrades();
 
 // Everything below trusts the feed, so it runs only on a response that
@@ -368,7 +385,12 @@ bool FetchFeed(FeedSignal &signals[])
                     "X-EA-Settings-Version: " +
                     IntegerToString((InpUseWebsiteSettings && g_web.received) ? g_web.version : 0) + "\r\n" +
                     "X-EA-Dry-Run: " + (g_dryRun ? "1" : "0") + "\r\n" +
-                    "X-EA-Paused: " + (g_paused ? "1" : "0") + "\r\n";
+                    "X-EA-Paused: " + (g_paused ? "1" : "0") + "\r\n" +
+                    // ADR-170 - lets the website show the limit and Telegram announce it.
+                    "X-EA-Currency: " + AccountInfoString(ACCOUNT_CURRENCY) + "\r\n" +
+                    "X-EA-Daily-Loss-Limit: " + DoubleToString(InpMaxDailyLoss, 2) + "\r\n" +
+                    "X-EA-Daily-Loss: " + DoubleToString(g_dailyLoss, 2) + "\r\n" +
+                    "X-EA-Loss-Blocked: " + (g_lossBlocked ? "1" : "0") + "\r\n";
    char   body[];
    char   result[];
    string resultHeaders;
@@ -549,6 +571,11 @@ void HandleSignal(const FeedSignal &s)
      {
       LogOnce("paused from the website - not acting on new signals");
       return; // not remembered - still considered after resuming, while active
+     }
+   if(g_lossBlocked)
+     {
+      LogOnce("daily loss limit reached - not acting on new signals until the next broker day");
+      return; // not remembered - still considered tomorrow, while active
      }
    if((long)s.expiresAt - (long)WebsiteNow() < MIN_SECONDS_BEFORE_EXPIRY)
       return;
@@ -736,15 +763,83 @@ void CancelExpiredOrders()
   }
 
 //+------------------------------------------------------------------+
-//| Paused means no exposure the EA has not already taken on: unfilled
-//| orders go, filled positions stay under their broker stop and target.
-void CancelOrdersWhilePaused()
+//| Paused, or stopped by the daily loss limit, means no exposure the EA
+//| has not already taken on: unfilled orders go, filled positions stay
+//| under their broker stop and target.
+void CancelOrdersWhileBlocked()
   {
-   if(!g_paused)
+   if(!g_paused && !g_lossBlocked)
       return;
+   string reason = g_paused ? "trading is paused from the website" : "the daily loss limit was reached";
    for(int i = 0; i < ArraySize(g_handled); i++)
       if(g_handled[i].ticket > 0 && IsOwnPendingOrder(g_handled[i].ticket))
-         CancelOrder(i, "trading is paused from the website");
+         CancelOrder(i, reason);
+  }
+
+//+------------------------------------------------------------------+
+//| Daily loss limit (ADR-170)                                       |
+//+------------------------------------------------------------------+
+//| Adds up the closed net result (profit, commission, swap, fees) of this
+//| EA's own trades since the broker server's midnight. Floating losses are
+//| not counted, so a trade in drawdown does not cancel the other orders.
+//| Once the loss reaches MaxDailyLoss the block holds for the rest of the
+//| day - a later win does not reopen trading.
+void UpdateDailyLoss()
+  {
+   datetime serverNow = TimeTradeServer();
+   datetime dayStart  = (datetime)((long)serverNow - (long)serverNow % 86400);
+   if(dayStart != g_lossDay)
+     {
+      if(g_lossBlocked)
+         Print("new broker day - the daily loss limit is reset, trading resumes");
+      g_lossDay     = dayStart;
+      g_lossBlocked = false;
+      g_dailyLoss   = 0.0;
+     }
+   if(!HistorySelect(dayStart, serverNow + 60))
+      return; // history not available right now - keep the last figure
+
+   double net = 0.0;
+   for(int i = 0; i < HistoryDealsTotal(); i++)
+     {
+      ulong deal = HistoryDealGetTicket(i);
+      if(deal == 0 || HistoryDealGetString(deal, DEAL_SYMBOL) != InpBrokerSymbol)
+         continue;
+      // A stop-loss or take-profit close does not always carry the magic
+      // number, so a deal also counts when it belongs to a position this EA opened.
+      if((ulong)HistoryDealGetInteger(deal, DEAL_MAGIC) != InpMagicNumber &&
+         !IsOwnPosition((ulong)HistoryDealGetInteger(deal, DEAL_POSITION_ID)))
+         continue;
+      net += HistoryDealGetDouble(deal, DEAL_PROFIT) + HistoryDealGetDouble(deal, DEAL_COMMISSION) +
+             HistoryDealGetDouble(deal, DEAL_SWAP) + HistoryDealGetDouble(deal, DEAL_FEE);
+     }
+   g_dailyLoss = MathMax(0.0, -net);
+
+   if(InpMaxDailyLoss > 0.0 && !g_lossBlocked && g_dailyLoss >= InpMaxDailyLoss - 1e-9)
+     {
+      g_lossBlocked = true;
+      PrintFormat("DAILY LOSS LIMIT reached: lost %.2f %s today (limit %.2f) - no new orders until the next broker day",
+                  g_dailyLoss, AccountInfoString(ACCOUNT_CURRENCY), InpMaxDailyLoss);
+     }
+  }
+
+//+------------------------------------------------------------------+
+bool IsOwnPosition(const ulong positionId)
+  {
+   if(positionId == 0)
+      return(false);
+   for(int i = 0; i < ArraySize(g_handled); i++)
+      if(g_handled[i].positionId == positionId)
+         return(true);
+   return(false);
+  }
+
+//+------------------------------------------------------------------+
+string DailyLimitText()
+  {
+   if(InpMaxDailyLoss <= 0.0)
+      return("off");
+   return(StringFormat("%.2f %s", InpMaxDailyLoss, AccountInfoString(ACCOUNT_CURRENCY)));
   }
 
 //+------------------------------------------------------------------+
@@ -1382,10 +1477,14 @@ void LogOnce(const string message)
 //+------------------------------------------------------------------+
 void UpdatePanel()
   {
-   Comment(StringFormat("VC Trading EA %s  -  %s\nFeed: %s  (checked %s)\nOpen signals: %d   EA trades: %d / %d\n%s -> %s   lot %.2f (limit %.2f)\nSettings: %s   website live switch: %s\nReports waiting: %d",
+   string lossLine = (InpMaxDailyLoss <= 0.0)
+                     ? StringFormat("Daily loss today: %.2f   limit: off", g_dailyLoss)
+                     : StringFormat("Daily loss today: %.2f / %s%s", g_dailyLoss, DailyLimitText(),
+                                    g_lossBlocked ? "   LIMIT REACHED - no new orders today" : "");
+   Comment(StringFormat("VC Trading EA %s  -  %s\nFeed: %s  (checked %s)\nOpen signals: %d   EA trades: %d / %d\n%s -> %s   lot %.2f (limit %.2f)\n%s\nSettings: %s   website live switch: %s\nReports waiting: %d",
                         EA_VERSION, ModeText(), g_status, TimeToString(TimeLocal(), TIME_SECONDS),
                         g_openSignalCount, CountOwnTrades(), g_maxTrades, InpSignalSymbol, InpBrokerSymbol,
-                        g_lotSize, InpMaxLotSize, SettingsSource(), InpAllowWebsiteLive ? "allowed" : "not allowed",
-                        ArraySize(g_events)));
+                        g_lotSize, InpMaxLotSize, lossLine, SettingsSource(),
+                        InpAllowWebsiteLive ? "allowed" : "not allowed", ArraySize(g_events)));
   }
 //+------------------------------------------------------------------+

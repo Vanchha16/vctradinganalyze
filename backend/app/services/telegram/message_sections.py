@@ -14,8 +14,11 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
+from app.models.ea_execution_event import EaExecutionEvent
+from app.models.ea_token import EaToken
 from app.models.enums import MarketType, SignalStatus, SignalType
 from app.models.signal import Signal
+from app.utils.time import as_aware_utc
 
 _SEPARATOR = "━━━━━━━━━━━━━━━━━━"
 
@@ -251,7 +254,164 @@ def compose_signal_cancelled_message(signal: Signal, asset: Asset, *, now: datet
     return "\n\n".join(sections)
 
 
+# --- ADR-170: the operator's own account and terminals -------------------
+# Sent only to super admins, never broadcast like the signal messages above.
+
+_EA_EVENT_TITLES = {
+    "order_placed": "📥 ORDER PLACED",
+    "order_skipped": "⏭️ ORDER SKIPPED",
+    "order_rejected": "⛔ ORDER REJECTED",
+    "order_cancelled": "🗑️ ORDER CANCELLED",
+    "position_opened": "🎯 ORDER FILLED",
+}
+_EA_ORDER_TYPES = {
+    "buy": "BUY",
+    "sell": "SELL",
+    "buy_limit": "BUY LIMIT",
+    "sell_limit": "SELL LIMIT",
+}
+_EA_CLOSE_REASONS = {
+    "tp": "Take profit",
+    "sl": "Stop loss",
+    "stop_out": "Stop out (margin)",
+    "manual": "Closed by hand",
+    "expert": "Closed by an EA",
+    "other": "Other",
+}
+#: Event types whose `message` explains what happened (why it was skipped,
+#: refused or cancelled). For the others it adds nothing.
+_EA_EXPLAINED_EVENTS = frozenset({"order_skipped", "order_rejected", "order_cancelled"})
+
+
+def _broker_price(value: Decimal) -> str:
+    """A broker price as reported, without trailing zeros (4339.670 -> 4339.67)."""
+    return f"{Decimal(value).normalize():f}"
+
+
+def _money(value: Decimal | None, currency: str | None) -> str:
+    amount = f"{Decimal(value or 0):.2f}"
+    return f"{amount} {currency}" if currency else amount
+
+
+def _ea_header(title: str, subject: str) -> str:
+    return f"{_SEPARATOR}\n{title} • {escape_markdown_v2(subject)}\n{_SEPARATOR}"
+
+
+def _ea_event_title(event: EaExecutionEvent) -> str:
+    if event.event_type != "position_closed":
+        return _EA_EVENT_TITLES.get(event.event_type, escape_markdown_v2(event.event_type.upper()))
+    if event.profit is None or event.profit == 0:
+        return "➖ TRADE CLOSED"
+    return "✅ TRADE CLOSED" if event.profit > 0 else "❌ TRADE CLOSED"
+
+
+def render_ea_event_body(event: EaExecutionEvent, signal_type: SignalType | None) -> str:
+    closed = event.event_type == "position_closed"
+    fields: list[str] = []
+    if signal_type is not None:
+        fields.append(_field("📌 Signal", signal_type.value.upper()))
+    if event.order_type:
+        order = _EA_ORDER_TYPES.get(event.order_type, event.order_type.upper())
+        fields.append(_field("🧾 Order", order))
+    if event.volume is not None:
+        fields.append(_field("📦 Lot", f"{Decimal(event.volume):.2f}"))
+    if event.price is not None:
+        label = "🏁 Close price" if closed else "🎯 Price"
+        fields.append(_field(label, _broker_price(event.price)))
+    if event.stop_loss is not None:
+        fields.append(_field("🛑 Stop Loss", _broker_price(event.stop_loss)))
+    if event.take_profit is not None:
+        fields.append(_field("💰 Take Profit", _broker_price(event.take_profit)))
+    if closed:
+        reason = _EA_CLOSE_REASONS.get(event.close_reason or "other", "Other")
+        fields.append(_field("📍 Closed by", reason))
+        if event.profit is not None:
+            profit = f"{Decimal(event.profit):+.2f}"
+            fields.append(_field("💵 Profit", f"{profit} {event.currency or ''}".strip()))
+    if event.message and event.event_type in _EA_EXPLAINED_EVENTS:
+        fields.append(escape_markdown_v2(event.message))
+    fields.append(_field("🖥️ Terminal", f"{event.token_name} · {event.account_login}"))
+    return "\n\n".join(fields)
+
+
+def compose_ea_event_message(event: EaExecutionEvent, signal_type: SignalType | None) -> str:
+    """What a live EA did on the account: an order placed, skipped, refused or
+    cancelled, a fill, or a close with its profit (ADR-170). Timestamped with
+    when it happened, which can be earlier than when the terminal reported it."""
+    sections = [
+        _ea_header(_ea_event_title(event), event.broker_symbol),
+        render_ea_event_body(event, signal_type),
+        render_timestamp(as_aware_utc(event.occurred_at)),
+    ]
+    return "\n\n".join(sections)
+
+
+def _ea_mode(token: EaToken) -> str:
+    if token.effective_paused:
+        return "Paused"
+    if token.effective_dry_run is False:
+        return "LIVE"
+    return "Dry run" if token.effective_dry_run else "Not reported"
+
+
+def _last_check_in(token: EaToken, now: datetime) -> str:
+    if token.last_used_at is None:
+        return "Never"
+    seen = as_aware_utc(token.last_used_at)
+    minutes = max(0, int((now - seen).total_seconds() // 60))
+    return f"{seen:%Y-%m-%d %H:%M} UTC ({minutes} min ago)"
+
+
+def compose_ea_offline_message(token: EaToken, *, now: datetime) -> str:
+    """ADR-170 - the terminal stopped polling while the market is open."""
+    body = "\n\n".join(
+        [
+            _field("🕒 Last check-in", _last_check_in(token, now)),
+            _field("⚙️ Mode", _ea_mode(token)),
+            escape_markdown_v2(
+                "It is not trading new signals or cancelling its unfilled orders. "
+                "Orders already at the broker keep their stop loss and take profit. "
+                "Check that MT5 is running with Algo Trading on. "
+                "If this terminal is no longer used, revoke its token."
+            ),
+        ]
+    )
+    return "\n\n".join([_ea_header("⚠️ EA OFFLINE", token.name), body, render_timestamp(now)])
+
+
+def compose_ea_back_online_message(token: EaToken, *, now: datetime) -> str:
+    """ADR-170 - the first poll after an offline alert."""
+    body = "\n\n".join(
+        [
+            _field("🕒 Checked in", _last_check_in(token, now)),
+            _field("⚙️ Mode", _ea_mode(token)),
+        ]
+    )
+    return "\n\n".join([_ea_header("✅ EA BACK ONLINE", token.name), body, render_timestamp(now)])
+
+
+def compose_ea_loss_limit_message(token: EaToken, *, now: datetime) -> str:
+    """ADR-170 - the EA's daily loss limit stopped new orders for the day."""
+    body = "\n\n".join(
+        [
+            _field("📉 Lost today", _money(token.ea_daily_loss, token.ea_currency)),
+            _field("🧱 Daily limit", _money(token.ea_daily_loss_limit, token.ea_currency)),
+            escape_markdown_v2(
+                "No new orders until the broker's next trading day, and its unfilled "
+                "orders are cancelled. Open trades keep their stop loss and take profit."
+            ),
+        ]
+    )
+    return "\n\n".join(
+        [_ea_header("🛑 DAILY LOSS LIMIT REACHED", token.name), body, render_timestamp(now)]
+    )
+
+
 __all__ = [
+    "compose_ea_back_online_message",
+    "compose_ea_event_message",
+    "compose_ea_loss_limit_message",
+    "compose_ea_offline_message",
     "compose_signal_message",
     "compose_signal_cancelled_message",
     "compose_signal_outcome_message",
@@ -261,6 +421,7 @@ __all__ = [
     "render_outcome_header",
     "render_cancelled_body",
     "render_cancelled_header",
+    "render_ea_event_body",
     "render_outcome_result",
     "render_risk_management",
     "render_timestamp",

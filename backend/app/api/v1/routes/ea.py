@@ -51,6 +51,7 @@ from app.schemas.ea import (
 from app.services.ea_event_service import EaEventService
 from app.services.ea_service import EaPrincipal, EaService, FeedSignal
 from app.utils.time import as_aware_utc
+from app.workers.telegram_tasks import enqueue_ea_event_delivery
 
 router = APIRouter(prefix="/ea", tags=["expert-advisor"])
 
@@ -164,6 +165,10 @@ def _token_response(token: EaToken) -> EaTokenResponse:
             applied_settings_version=token.applied_settings_version,
             dry_run=token.effective_dry_run,
             paused=token.effective_paused,
+            currency=token.ea_currency,
+            daily_loss_limit=_float(token.ea_daily_loss_limit),
+            daily_loss=_float(token.ea_daily_loss),
+            loss_blocked=token.effective_loss_blocked,
         ),
     )
 
@@ -176,8 +181,10 @@ async def report_ea_events(
 ) -> EaEventBatchResponse:
     """ADR-162: the EA's report of what it did. Idempotent per
     `event_key` - re-sending a batch is safe and expected after a lost
-    response."""
-    result = service.ingest(principal, payload.events)
+    response. ADR-170: newly stored live events are sent to Telegram."""
+    result = service.ingest(principal, payload.events, datetime.now(UTC))
+    for event_id in result.notify:
+        enqueue_ea_event_delivery(str(event_id))
     return EaEventBatchResponse(
         accepted=result.accepted,
         duplicates=result.duplicates,

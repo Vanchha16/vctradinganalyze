@@ -236,7 +236,53 @@ def test_the_terminals_report_is_recorded(client: TestClient, db: Session) -> No
         "applied_settings_version": 1,
         "dry_run": True,
         "paused": False,
+        "currency": None,
+        "daily_loss_limit": None,
+        "daily_loss": None,
+        "loss_blocked": None,
     }
+
+
+def test_the_daily_loss_report_is_recorded(client: TestClient, db: Session) -> None:
+    """ADR-170 - an EA 1.30 reports its daily loss limit on every poll."""
+    user = _user(db)
+    token = _token(client, user)
+    _logout()
+
+    _poll(
+        client,
+        token["token"],
+        **{
+            "X-EA-Currency": "USC",
+            "X-EA-Daily-Loss-Limit": "500.00",
+            "X-EA-Daily-Loss": "520.40",
+            "X-EA-Loss-Blocked": "1",
+        },
+    )
+
+    terminal = _listed(client, user)["terminal"]
+    assert terminal["currency"] == "USC"
+    assert terminal["daily_loss_limit"] == 500.0
+    assert terminal["daily_loss"] == 520.4
+    assert terminal["loss_blocked"] is True
+
+
+def test_garbled_daily_loss_headers_are_ignored(client: TestClient, db: Session) -> None:
+    user = _user(db)
+    token = _token(client, user)
+    _logout()
+
+    response = _poll(
+        client,
+        token["token"],
+        **{"X-EA-Daily-Loss-Limit": "-5", "X-EA-Daily-Loss": "lots", "X-EA-Loss-Blocked": "?"},
+    )
+
+    assert response.status_code == 200
+    terminal = _listed(client, user)["terminal"]
+    assert terminal["daily_loss_limit"] is None
+    assert terminal["daily_loss"] is None
+    assert terminal["loss_blocked"] is None
 
 
 def test_garbled_report_headers_never_fail_a_poll(client: TestClient, db: Session) -> None:

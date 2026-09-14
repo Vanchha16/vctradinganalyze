@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database.session import SessionLocal
 from app.dependencies.telegram import get_telegram_provider
+from app.models.ea_execution_event import EaExecutionEvent
 from app.models.enums import Timeframe
 from app.repositories.ai_analysis_repository import AIAnalysisRepository
 from app.repositories.asset_repository import AssetRepository
@@ -332,6 +333,38 @@ def send_signal_cancelled_telegram_task(signal_id: str) -> None:
         telegram_service.send_cancelled(signal, asset)
     finally:
         session.close()
+
+
+@celery_app.task(name="telegram.send_ea_event", ignore_result=True)  # type: ignore[untyped-decorator]
+def send_ea_event_telegram_task(event_id: str) -> None:
+    """Tells the operator what a live EA did on the account (ADR-170), queued by
+    `POST /ea/events` for each newly stored event worth telling."""
+    session = SessionLocal()
+    try:
+        event = session.get(EaExecutionEvent, uuid.UUID(event_id))
+        if event is None:
+            return
+
+        signal = SignalRepository(session).get_by_id(event.signal_id)
+        telegram_service = TelegramService(
+            account_repository=TelegramAccountRepository(session),
+            provider=get_telegram_provider(),
+        )
+        telegram_service.send_ea_event(event, signal.signal_type if signal else None)
+    finally:
+        session.close()
+
+
+def enqueue_ea_event_delivery(event_id: str) -> None:
+    """Best-effort enqueue of `send_ea_event_telegram_task` - the event is
+    already stored and the EA already has its response; a broker outage here
+    must never turn that into an error the EA would retry."""
+    try:
+        send_ea_event_telegram_task.delay(event_id)
+    except Exception:
+        logger.warning(
+            "telegram_ea_event_delivery_enqueue_failed", event_id=event_id, exc_info=True
+        )
 
 
 def enqueue_signal_outcome_delivery(signal_id: str) -> None:

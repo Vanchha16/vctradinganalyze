@@ -197,6 +197,14 @@ class Settings(BaseSettings):
     # ADR-162 - per-IP limit on EA event reports. The EA sends at most one
     # batch per poll, so this is the same ceiling as the feed.
     ea_events_rate_limit: int = 30
+    # ADR-170 - Telegram alerts about the terminals themselves. A terminal that
+    # has not polled for this many minutes while the market is open is reported
+    # offline once, and again when it is back. The watch runs this often.
+    ea_offline_alert_minutes: int = 5
+    ea_watch_interval_seconds: int = 60
+    # ADR-170 - a live EA event that arrives this long after it happened (a
+    # terminal catching up after an outage) is stored but not sent to Telegram.
+    ea_event_alert_max_age_hours: int = 6
 
     # Phase 9B (ADR-133, docs/23 §17) - failed-login lockout. docs/23 §17
     # names the requirement ("Temporary Lock") with no threshold/duration;

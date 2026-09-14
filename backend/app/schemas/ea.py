@@ -70,6 +70,14 @@ class EaTerminalState(BaseModel):
     #: differ from the saved settings (e.g. live requested, not allowed).
     dry_run: bool | None
     paused: bool | None
+    #: ADR-170 (EA 1.30). The account currency - USC on a cent account.
+    currency: str | None
+    #: The EA's `MaxDailyLoss` input; 0 means no limit.
+    daily_loss_limit: float | None
+    #: Closed loss of this EA's trades today, 0 when none.
+    daily_loss: float | None
+    #: The limit was reached: no new orders until the broker's next day.
+    loss_blocked: bool | None
 
 
 class EaTokenResponse(BaseModel):

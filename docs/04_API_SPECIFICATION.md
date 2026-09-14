@@ -860,12 +860,14 @@ Response
       "created_at": "2026-09-11T10:00:00Z",
       "last_used_at": "2026-09-11T10:05:00Z",
       "settings": { "paused": false, "dry_run": true, "lot_size": 0.01, "max_open_trades": 1, "max_slippage_points": 50, "version": 3, "updated_at": "2026-09-11T10:04:00Z" },
-      "terminal": { "ea_version": "1.20", "max_lot": 0.1, "allow_remote_live": false, "applied_settings_version": 3, "dry_run": true, "paused": false }
+      "terminal": { "ea_version": "1.30", "max_lot": 1.0, "allow_remote_live": false, "applied_settings_version": 3, "dry_run": false, "paused": false, "currency": "USC", "daily_loss_limit": 600.0, "daily_loss": 245.2, "loss_blocked": false }
     }
   ]
 }
 
 ADR-163: `settings` is what the website saved for this terminal. `terminal` is what the terminal last reported about itself in its feed poll headers: all null until an EA 1.20 or later has polled. `terminal.dry_run`/`paused` are what it is actually doing, which can differ from `settings` (for example live saved, but `allow_remote_live` false).
+
+ADR-170: `currency`, `daily_loss_limit` (the EA's `MaxDailyLoss`, 0 = off), `daily_loss` (closed loss of its trades today) and `loss_blocked` (limit reached, no new orders until the broker's next day) are null until an EA 1.30 or later has polled.
 
 ---
 
@@ -939,6 +941,7 @@ The EA may describe itself in optional request headers:
 - `X-EA-Allow-Live` (`1`/`0`)
 - `X-EA-Settings-Version` (the version it applied)
 - `X-EA-Dry-Run` and `X-EA-Paused` (what it is actually doing)
+- ADR-170, EA 1.30: `X-EA-Currency`, `X-EA-Daily-Loss-Limit`, `X-EA-Daily-Loss` (amounts, 0 or more) and `X-EA-Loss-Blocked` (`1`/`0`)
 
 These are recorded on the token and shown on the website. A missing or unreadable header is ignored and never fails the request, and an absent header never clears an earlier report.
 
@@ -977,6 +980,8 @@ Request
 Response
 
 { "accepted": 1, "duplicates": 0, "rejected": [] }
+
+ADR-170: each newly stored live (`dry_run: false`) `order_placed`, `order_skipped`, `order_rejected`, `order_cancelled`, `position_opened` or `position_closed` is sent to super admins' linked Telegram - not for dry-run events, duplicates, or events that happened more than `EA_EVENT_ALERT_MAX_AGE_HOURS` (default 6) before they arrived. Delivery is queued and never affects the response.
 
 `event_key` is unique per user: re-sending an already-stored event counts as a duplicate, not an error. An event for an unknown `signal_id` is listed in `rejected` (`{"event_key", "reason"}`) and the rest of the batch is still stored. 422 only for a malformed batch (shape, unknown `event_type`, 0 or more than 50 events). 401 as for the feed.
 

@@ -80,3 +80,22 @@ class EaToken(Base, UUIDMixin, CreatedAtMixin):
     applied_settings_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     effective_dry_run: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     effective_paused: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # --- ADR-170: the terminal's daily loss limit, as it last reported -----
+    #: `ea_daily_loss_limit` is the EA's `MaxDailyLoss` input (0 = off) and
+    #: `ea_daily_loss` today's closed loss, both in `ea_currency` (USC on a
+    #: cent account). `effective_loss_blocked`: the limit stopped new orders.
+    ea_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    ea_daily_loss_limit: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), nullable=True)
+    ea_daily_loss: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), nullable=True)
+    effective_loss_blocked: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # --- ADR-170: Telegram alerts already sent, so each goes out once ------
+    #: Set when "EA OFFLINE" was sent, cleared when "back online" was.
+    offline_alerted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Set when "DAILY LOSS LIMIT" was sent, cleared once the block lifts.
+    loss_limit_alerted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

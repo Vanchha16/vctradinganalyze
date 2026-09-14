@@ -880,6 +880,14 @@ export interface EaTerminalState {
   applied_settings_version: number | null;
   dry_run: boolean | null;
   paused: boolean | null;
+  /** ADR-170 (EA 1.30). Account currency - USC on a cent account. */
+  currency: string | null;
+  /** The EA's MaxDailyLoss input; 0 means no limit. */
+  daily_loss_limit: number | null;
+  /** Closed loss of this EA's trades today. */
+  daily_loss: number | null;
+  /** The limit was reached: no new orders until the broker's next day. */
+  loss_blocked: boolean | null;
 }
 
 export interface EaTokenResponse {

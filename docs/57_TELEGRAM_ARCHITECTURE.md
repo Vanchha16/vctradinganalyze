@@ -38,6 +38,17 @@ when the super admin cancels a published signal from the website (ADR-169). This
 a generation-time gate rather than a delivery-time notification preference
 (the broadcast model in §5 is unchanged).
 
+**Operator alerts (ADR-170)** are the one exception to broadcasting. They
+describe the operator's own broker account, so they go only to the linked
+Telegram of active super admins (`TelegramService.send_to_operators`):
+- **what a live EA did** - order placed, skipped, rejected or cancelled,
+  filled, closed with profit - queued by `POST /ea/events` for newly stored
+  live events (`telegram.send_ea_event`);
+- **EA OFFLINE / EA BACK ONLINE**, and **DAILY LOSS LIMIT REACHED** - from
+  the `ea.watch_terminals` Beat task (`app/workers/ea_tasks.py`), once per
+  episode, recorded on `ea_tokens.offline_alerted_at` /
+  `loss_limit_alerted_at`.
+
 ---
 
 # 2. Persistence Model

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from celery.schedules import crontab
@@ -20,6 +20,10 @@ logger = structlog.get_logger(__name__)
 # catches up on the intervening candles - the collection itself is
 # idempotent (PriceCandleRepository.upsert), so re-fetching overlap is safe.
 _LOOKBACK_INTERVALS = 5
+# ADR-171 - and never less than this many of the timeframe's own run
+# intervals, so a candle the provider has not published yet at one run is
+# still inside the window of the next ones.
+_LOOKBACK_RUNS = 3
 
 
 def build_beat_schedule_seconds(
@@ -71,6 +75,20 @@ BEAT_SCHEDULE_SECONDS: dict[Timeframe, float] = build_beat_schedule_seconds(
     settings.market_data_min_collection_interval_seconds,
     settings.market_data_collection_interval_overrides,
 )
+
+def lookback_for(timeframe: Timeframe) -> timedelta:
+    """How far back one collection run fetches (ADR-171).
+
+    `_LOOKBACK_INTERVALS` candles alone was only enough while each timeframe
+    ran once per candle. On the 300s floor (ADR-140) M1 runs every five
+    minutes, so a five-minute window left no overlap: the newest two minutes,
+    not yet published by Twelve Data at each run, fell outside the next run's
+    window and were never stored - about 40% of M1 candles. Spanning several
+    runs fixes that at no quota cost: it is still one request per run."""
+    by_candles = TIMEFRAME_DURATIONS[timeframe] * _LOOKBACK_INTERVALS
+    by_runs = timedelta(seconds=BEAT_SCHEDULE_SECONDS[timeframe] * _LOOKBACK_RUNS)
+    return max(by_candles, by_runs)
+
 
 #: Seconds in a day - named rather than inlined as `86400` in the
 #: projection arithmetic below.
@@ -147,7 +165,7 @@ def collect_market_data_task(timeframe_value: str) -> None:
         )
 
         end = datetime.now(UTC)
-        start = end - TIMEFRAME_DURATIONS[timeframe] * _LOOKBACK_INTERVALS
+        start = end - lookback_for(timeframe)
 
         for asset in asset_repository.list_active(limit=1000):
             service.collect(asset, timeframe, start=start, end=end)

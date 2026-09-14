@@ -40,6 +40,10 @@ def get_ea_principal(
     x_ea_settings_version: Annotated[str | None, Header(alias="X-EA-Settings-Version")] = None,
     x_ea_dry_run: Annotated[str | None, Header(alias="X-EA-Dry-Run")] = None,
     x_ea_paused: Annotated[str | None, Header(alias="X-EA-Paused")] = None,
+    x_ea_currency: Annotated[str | None, Header(alias="X-EA-Currency")] = None,
+    x_ea_daily_loss_limit: Annotated[str | None, Header(alias="X-EA-Daily-Loss-Limit")] = None,
+    x_ea_daily_loss: Annotated[str | None, Header(alias="X-EA-Daily-Loss")] = None,
+    x_ea_loss_blocked: Annotated[str | None, Header(alias="X-EA-Loss-Blocked")] = None,
 ) -> EaPrincipal:
     """Authenticates an Expert Advisor by its `X-EA-Token` header (ADR-161).
 
@@ -48,8 +52,9 @@ def get_ea_principal(
     and a session JWT can never be accepted here.
 
     The other `X-EA-*` headers are what the terminal reports about itself
-    (ADR-163). They are parsed leniently: a missing or garbled one becomes
-    None and never fails a request an EA depends on for its signals.
+    (ADR-163, and ADR-170's daily loss limit). They are parsed leniently: a
+    missing or garbled one becomes None and never fails a request an EA
+    depends on for its signals.
     """
     report = TerminalReport(
         ea_version=_text(x_ea_version, 16),
@@ -58,6 +63,10 @@ def get_ea_principal(
         applied_settings_version=_count(x_ea_settings_version),
         dry_run=_flag(x_ea_dry_run),
         paused=_flag(x_ea_paused),
+        currency=_text(x_ea_currency, 8),
+        daily_loss_limit=_money(x_ea_daily_loss_limit),
+        daily_loss=_money(x_ea_daily_loss),
+        loss_blocked=_flag(x_ea_loss_blocked),
     )
     return service.authenticate(x_ea_token, datetime.now(UTC), report)
 
@@ -100,3 +109,19 @@ def _lot(value: str | None) -> Decimal | None:
     except (InvalidOperation, ValueError):
         return None
     return lot if Decimal("0") < lot <= Decimal("100") else None
+
+
+#: `ea_daily_loss*` are `Numeric(20, 2)`: anything this large is garbage, and
+#: storing it would fail the write - and with it the EA's poll.
+_MAX_MONEY = Decimal("1000000000000")
+
+
+def _money(value: str | None) -> Decimal | None:
+    """An amount in the account currency, 0 or more (0 means "off" for a limit)."""
+    if value is None:
+        return None
+    try:
+        amount = Decimal(value.strip()).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return None
+    return amount if Decimal("0") <= amount < _MAX_MONEY else None

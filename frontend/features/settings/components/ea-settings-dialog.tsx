@@ -305,6 +305,9 @@ export function EaTerminalSummary({ token }: { token: EaTokenResponse }) {
   // MaxLotSize can be lowered on the server after a larger lot was saved;
   // the EA then quietly trades the smaller one.
   const lotCapped = terminal.max_lot !== null && settings.lot_size > terminal.max_lot + 1e-9;
+  // ADR-170 - null before EA 1.30, 0 when MaxDailyLoss is off.
+  const lossLimit = terminal.daily_loss_limit ?? 0;
+  const money = (value: number) => `${value.toFixed(2)}${terminal.currency ? ` ${terminal.currency}` : ""}`;
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -325,6 +328,16 @@ export function EaTerminalSummary({ token }: { token: EaTokenResponse }) {
       )}
       {liveBlocked ? <span className="text-warning">Live not allowed on the server</span> : null}
       {lotCapped ? <span className="text-warning">EA caps the lot at {terminal.max_lot?.toFixed(2)}</span> : null}
+      {lossLimit > 0 ? (
+        <span className="text-muted-foreground">
+          · loss today {money(terminal.daily_loss ?? 0)} / {money(lossLimit)}
+        </span>
+      ) : null}
+      {terminal.loss_blocked ? (
+        <Badge variant="destructive" title="No new orders until the broker's next trading day">
+          Daily loss limit reached
+        </Badge>
+      ) : null}
     </div>
   );
 }

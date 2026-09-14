@@ -39,6 +39,7 @@ def _log_market_data_quota_projection(*_: object, **__: object) -> None:
 # Imported after `celery_app` is defined above (the task modules import it
 # back) - registers each domain's task(s) and Beat schedule.
 from app.workers import (  # noqa: E402
+    ea_tasks,
     economic_calendar_tasks,
     market_data_tasks,
     news_sentiment_tasks,
@@ -56,4 +57,5 @@ celery_app.conf.beat_schedule = {
     **signal_monitoring_tasks.register_signal_monitoring_schedule(),
     **signal_confirmation_tasks.register_signal_confirmation_schedule(),
     **telegram_tasks.register_telegram_schedule(),
+    **ea_tasks.register_ea_schedule(),
 }

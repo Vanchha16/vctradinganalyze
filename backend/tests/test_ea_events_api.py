@@ -19,6 +19,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1.routes import ea as ea_routes
 from app.database.base import Base
 from app.dependencies import get_db
 from app.dependencies.auth import get_current_user
@@ -50,6 +51,14 @@ def session_engine() -> Generator[object, None, None]:
     )
     Base.metadata.create_all(engine, tables=_TABLES)
     yield engine
+
+
+@pytest.fixture(autouse=True)
+def queued(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """ADR-170 - event ids queued for Telegram, instead of reaching Celery."""
+    sent: list[str] = []
+    monkeypatch.setattr(ea_routes, "enqueue_ea_event_delivery", sent.append)
+    return sent
 
 
 @pytest.fixture
@@ -292,6 +301,73 @@ def test_a_report_never_changes_the_signals_status(client: TestClient, db: Sessi
     assert stored.status == SignalStatus.ACTIVE
     assert stored.closed_at is None
     assert stored.profit_loss is None
+
+
+# --- Telegram (ADR-170) -----------------------------------------------------
+
+
+def test_live_events_the_operator_acts_on_are_queued_for_telegram(
+    client: TestClient, db: Session, queued: list[str]
+) -> None:
+    token = _token(client, _user(db))
+    signal = _signal(db)
+
+    _report(
+        client,
+        token["token"],
+        [
+            _event(signal, "dry", "dry_run_checked"),
+            _event(signal, "placed", "order_placed", dry_run=False, order_ticket=9001),
+            _event(signal, "closed", "position_closed", dry_run=False, profit=-245.2),
+        ],
+    )
+
+    stored = {r.event_key: str(r.id) for r in db.query(EaExecutionEvent).all()}
+    assert queued == [stored["placed"], stored["closed"]]
+
+
+def test_a_resent_batch_is_not_queued_again(
+    client: TestClient, db: Session, queued: list[str]
+) -> None:
+    """The EA re-sends after a lost response - one fill must not become two
+    Telegram messages."""
+    token = _token(client, _user(db))
+    signal = _signal(db)
+    batch = [_event(signal, "opened:1", "position_opened", dry_run=False)]
+
+    _report(client, token["token"], batch)
+    _report(client, token["token"], batch)
+
+    assert len(queued) == 1
+
+
+def test_dry_run_events_are_never_queued(
+    client: TestClient, db: Session, queued: list[str]
+) -> None:
+    token = _token(client, _user(db))
+    signal = _signal(db)
+
+    _report(client, token["token"], [_event(signal, "placed", "order_placed", dry_run=True)])
+
+    assert queued == []
+
+
+def test_a_late_arriving_event_is_stored_but_not_queued(
+    client: TestClient, db: Session, queued: list[str]
+) -> None:
+    """A terminal catching up after an outage must not flood the chat."""
+    token = _token(client, _user(db))
+    signal = _signal(db)
+    hours_ago = int((datetime.now(UTC) - timedelta(hours=7)).timestamp())
+
+    response = _report(
+        client,
+        token["token"],
+        [_event(signal, "old", "position_closed", dry_run=False, occurred_at=hours_ago)],
+    )
+
+    assert response.json()["accepted"] == 1
+    assert queued == []
 
 
 # --- Listing ----------------------------------------------------------------

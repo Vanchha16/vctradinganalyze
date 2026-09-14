@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import timedelta
 
 import pytest
 from celery.schedules import crontab
@@ -86,6 +87,29 @@ def test_collect_market_data_task_persists_candles_for_active_assets(
     with session_factory() as session:
         repo = PriceCandleRepository(session)
         assert repo._count(repo._query()) > 0
+
+
+# --- ADR-171: collection windows overlap between runs ---
+
+
+def test_every_collection_window_spans_several_runs() -> None:
+    """A window no longer than the time between runs loses every candle the
+    provider has not published yet when a run happens - production lost about
+    40% of M1 candles this way on the 300s floor."""
+    for timeframe, interval in market_data_tasks.BEAT_SCHEDULE_SECONDS.items():
+        assert market_data_tasks.lookback_for(timeframe) >= timedelta(seconds=interval * 3)
+
+
+def test_m1_on_a_slower_schedule_fetches_three_runs_back() -> None:
+    interval = market_data_tasks.BEAT_SCHEDULE_SECONDS[Timeframe.M1]
+
+    assert market_data_tasks.lookback_for(Timeframe.M1) == max(
+        timedelta(minutes=5), timedelta(seconds=interval * 3)
+    )
+
+
+def test_timeframes_run_once_per_candle_keep_their_candle_based_window() -> None:
+    assert market_data_tasks.lookback_for(Timeframe.H1) == timedelta(hours=5)
 
 
 # --- Phase 9H (ADR-140): collection cadence floor + quota projection ---

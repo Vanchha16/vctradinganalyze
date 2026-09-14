@@ -377,6 +377,16 @@ Last updated: 2026-09-08 (ADR-141 signal monitoring range scan). Note: entries b
   - **Repeats:** a draft in the same direction with its entry within half the open signal's risk is the same setup, and is cancelled at once.
   - **To measure after two weeks:** replacements, same-setup cancellations, and how replacements ended compared with the signals they replaced.
 - **Cancel button (2026-09-12, ADR-169).** The super admin can cancel a draft or an unfilled signal from its detail page (`POST /signals/{id}/cancel`). An active signal's Telegram subscribers get "SIGNAL CANCELLED", the EA deletes its pending order, and the cancel is audited. A live trade is refused - it has to be closed in MT5. The hourly job may draft the same setup again; revisit only if that bothers the operator.
+- **EA safety for live trading (2026-09-14, ADR-170, built locally).** The operator went live at 0.40 lot on the cent account, then asked for three safety features:
+  - **Offline alert:** Telegram "EA OFFLINE" after 5 minutes without a poll while the market is open, then "BACK ONLINE" (`ea.watch_terminals`, every minute).
+  - **Trade messages:** live EA events (order placed/skipped/rejected/cancelled, filled, closed with profit) go to Telegram. Dry run, duplicates and events over 6 hours late are not sent.
+  - **Daily loss limit:** EA 1.30 input `MaxDailyLoss`, counting closed losses since the broker's midnight. It blocks new orders and cancels unfilled ones for the rest of the day, and is reported to the website and Telegram.
+  - EA alerts go to super admins' Telegram only, not every subscriber.
+  - **To deploy:** migration `b4e7d2a91c35`, restart worker and beat, rebuild the frontend, then the operator installs EA 1.30 and sets `MaxDailyLoss`.
+- **M1 candle gaps fixed (2026-09-14, ADR-171).** Production had about 40% of XAUUSD M1 candles missing: the minutes ending in 1-2 and 6-7 of every five.
+  - **Cause:** a five-minute fetch window on a five-minute schedule. Twelve Data had not yet published the newest two minutes at each run, and no later run went back for them.
+  - **Fix:** each run fetches back three of its own runs (M1: 15 minutes), still one request per run. The missing minutes were backfilled once.
+  - **To watch:** M1 candles per day should now be close to 1,440 on a full trading day.
 - **Signal confirmation (built, ADR-166).** The operator did not want a signal published on every hourly check, only once confirmed.
   - **Higher timeframes:** a setup whose H4 or D1 trend runs against it is WAIT.
   - **Drafts:** a passing BUY/SELL is saved as DRAFT (not published, not in the EA feed).

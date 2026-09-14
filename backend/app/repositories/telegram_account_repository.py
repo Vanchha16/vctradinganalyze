@@ -1,6 +1,10 @@
 import uuid
 
+from sqlalchemy import select
+
+from app.models.enums import UserRole
 from app.models.telegram_account import TelegramAccount
+from app.models.user import User
 from app.repositories.base import BaseRepository
 
 
@@ -29,6 +33,21 @@ class TelegramAccountRepository(BaseRepository[TelegramAccount]):
 
     def list_linked(self) -> list[TelegramAccount]:
         query = self._query().filter(TelegramAccount.linked_at.is_not(None))
+        return list(self.session.execute(query).scalars().all())
+
+    def list_linked_for_role(self, role: UserRole) -> list[TelegramAccount]:
+        """Linked accounts of active, not-deleted users holding `role` -
+        ADR-170's EA alerts go to super admins only, not to every subscriber."""
+        query = (
+            select(TelegramAccount)
+            .join(User, User.id == TelegramAccount.user_id)
+            .where(
+                TelegramAccount.linked_at.is_not(None),
+                User.role == role,
+                User.is_active.is_(True),
+                User.deleted_at.is_(None),
+            )
+        )
         return list(self.session.execute(query).scalars().all())
 
     def delete(self, account: TelegramAccount) -> None:

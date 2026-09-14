@@ -11,7 +11,11 @@ login.
 This folder is not part of the `backend`/`frontend` apps. Compile the EA
 in MetaEditor; CI does not build it.
 
-## VCTradingEA.mq5 (version 1.30)
+## VCTradingEA.mq5 (version 1.31)
+
+1.31 fixes fill detection: 1.30 looked for a fill only in trade history and,
+on the first live fill, never found it or logged why. It now finds an open
+position directly, and logs whenever a fill or close cannot be found yet.
 
 ### What it does, every `PollSeconds`
 
@@ -145,9 +149,9 @@ On its first start, 1.20 merges the 1.10 files (`..._dry.txt` /
 5. Drag **VCTradingEA** onto the chart and paste your token into
    **EaToken**. Review **MaxLotSize** and **AllowWebsiteLive**.
 6. Check that it started:
-   - The **Experts** tab shows `VC Trading EA 1.30 started`, then
+   - The **Experts** tab shows `VC Trading EA 1.31 started`, then
      `feed: connected, reading signals`.
-   - On the website, the token shows **EA 1.30** and **Settings applied**.
+   - On the website, the token shows **EA 1.31** and **Settings applied**.
 
 When upgrading, remove the old EA from the chart before attaching the new
 one, and keep the same **MagicNumber**. Its history carries over.

@@ -14,13 +14,13 @@
 //|  broker day once this EA's closed losses reach it.               |
 //+------------------------------------------------------------------+
 #property copyright   "VC Trading AI"
-#property version     "1.30"
+#property version     "1.31"
 #property description "Reads the VC Trading AI signal feed and trades it in this terminal."
 #property description "Dry run by default: every order is logged and checked, never sent."
 
 #include <Trade\Trade.mqh>
 
-#define EA_VERSION "1.30"
+#define EA_VERSION "1.31"
 
 //--- inputs -----------------------------------------------------------
 input group "Connection"
@@ -60,6 +60,10 @@ input ulong  InpMagicNumber        = 16112026; // Magic number marking this EA's
 
 // An order needs at least this long before the signal expires to be worth placing.
 #define MIN_SECONDS_BEFORE_EXPIRY 300
+
+// How much trade history reconciliation loads: records are kept a week past
+// their signal's expiry, and a signal lives a day.
+#define HISTORY_LOOKBACK_SECONDS (9 * 24 * 3600)
 
 // Activity reports waiting to be sent. Bounded so a terminal offline for
 // weeks cannot grow the file without limit; the oldest go first.
@@ -813,7 +817,7 @@ void UpdateDailyLoss()
       net += HistoryDealGetDouble(deal, DEAL_PROFIT) + HistoryDealGetDouble(deal, DEAL_COMMISSION) +
              HistoryDealGetDouble(deal, DEAL_SWAP) + HistoryDealGetDouble(deal, DEAL_FEE);
      }
-   g_dailyLoss = MathMax(0.0, -net);
+   g_dailyLoss = (net < 0.0) ? -net : 0.0; // not MathMax(0, -net): that can print "-0.00"
 
    if(InpMaxDailyLoss > 0.0 && !g_lossBlocked && g_dailyLoss >= InpMaxDailyLoss - 1e-9)
      {
@@ -869,36 +873,69 @@ void CancelOrder(const int index, const string reason)
 //| being tracked after switching to dry run.
 void ReconcileTrades()
   {
+// 1.31: history lookups read what the terminal has loaded for this program,
+// so load the whole period the records can refer to before any of them.
+   if(ArraySize(g_handled) > 0)
+      HistorySelect((datetime)((long)TimeTradeServer() - HISTORY_LOOKBACK_SECONDS), TimeTradeServer() + 60);
+
    bool changed = false;
    for(int i = 0; i < ArraySize(g_handled); i++)
      {
-      ulong order = g_handled[i].orderTicket;
-      if(order > 0 && g_handled[i].positionId == 0 && !IsOwnPendingOrder(order) && HistoryOrderSelect(order))
+      ulong  order   = g_handled[i].orderTicket;
+      string shortId = StringSubstr(g_handled[i].id, 0, 8);
+      if(order > 0 && g_handled[i].positionId == 0 && !IsOwnPendingOrder(order))
         {
-         ENUM_ORDER_STATE state      = (ENUM_ORDER_STATE)HistoryOrderGetInteger(order, ORDER_STATE);
-         ulong            positionId = (ulong)HistoryOrderGetInteger(order, ORDER_POSITION_ID);
-         if((state == ORDER_STATE_FILLED || state == ORDER_STATE_PARTIAL) && positionId > 0)
+         // 1.31: a fill that is still open is found among the live positions,
+         // which needs no history at all. 1.30 looked only in history, and on
+         // the first live fill (2026-09-14) never found it - silently.
+         ulong openId = FindOpenPositionForOrder(order, COMMENT_PREFIX + shortId);
+         if(openId > 0)
            {
-            if(ReportOpened(i, positionId))
+            if(ReportOpened(i, openId) || ReportOpenedFromPosition(i, openId))
               {
-               g_handled[i].positionId = positionId;
+               g_handled[i].positionId = openId;
                g_handled[i].ticket     = 0;
                changed                 = true;
               }
            }
          else
-            if(state == ORDER_STATE_CANCELED || state == ORDER_STATE_EXPIRED || state == ORDER_STATE_REJECTED)
+            if(HistoryOrderSelect(order))
               {
-               string why = (state == ORDER_STATE_EXPIRED) ? "expired at the broker"
-                            : (state == ORDER_STATE_REJECTED) ? "rejected by the broker after it was placed"
-                            : "cancelled outside the EA";
-               QueueEvent("cancelled:" + IntegerToString((long)order), "order_cancelled", g_handled[i].id,
-                          JI("order_ticket", (long)order) + "," + JS("message", why), true);
-               PrintFormat("[LIVE] order %I64u %s [%s]", order, why, StringSubstr(g_handled[i].id, 0, 8));
-               g_handled[i].ticket      = 0;
-               g_handled[i].orderTicket = 0;
-               changed                  = true;
+               ENUM_ORDER_STATE state      = (ENUM_ORDER_STATE)HistoryOrderGetInteger(order, ORDER_STATE);
+               ulong            positionId = (ulong)HistoryOrderGetInteger(order, ORDER_POSITION_ID);
+               if((state == ORDER_STATE_FILLED || state == ORDER_STATE_PARTIAL) && positionId > 0)
+                 {
+                  // Filled and already closed again before the EA looked.
+                  if(ReportOpened(i, positionId))
+                    {
+                     g_handled[i].positionId = positionId;
+                     g_handled[i].ticket     = 0;
+                     changed                 = true;
+                    }
+                  else
+                     LogOnce(StringFormat("[LIVE] order %I64u filled as position %I64u, but its opening deal is not in history yet - checking again [%s]",
+                                          order, positionId, shortId));
+                 }
+               else
+                  if(state == ORDER_STATE_CANCELED || state == ORDER_STATE_EXPIRED || state == ORDER_STATE_REJECTED)
+                    {
+                     string why = (state == ORDER_STATE_EXPIRED) ? "expired at the broker"
+                                  : (state == ORDER_STATE_REJECTED) ? "rejected by the broker after it was placed"
+                                  : "cancelled outside the EA";
+                     QueueEvent("cancelled:" + IntegerToString((long)order), "order_cancelled", g_handled[i].id,
+                                JI("order_ticket", (long)order) + "," + JS("message", why), true);
+                     PrintFormat("[LIVE] order %I64u %s [%s]", order, why, shortId);
+                     g_handled[i].ticket      = 0;
+                     g_handled[i].orderTicket = 0;
+                     changed                  = true;
+                    }
+                  else
+                     LogOnce(StringFormat("[LIVE] order %I64u is no longer pending, history state %s - checking again [%s]",
+                                          order, EnumToString(state), shortId));
               }
+            else
+               LogOnce(StringFormat("[LIVE] order %I64u is no longer pending, but is neither an open position nor in history (error %d) - checking again [%s]",
+                                    order, GetLastError(), shortId));
         }
 
       if(g_handled[i].positionId > 0 && g_handled[i].closedReported == 0 && !PositionOpen(g_handled[i].positionId))
@@ -908,6 +945,9 @@ void ReconcileTrades()
             g_handled[i].closedReported = 1;
             changed                     = true;
            }
+         else
+            LogOnce(StringFormat("[LIVE] position %I64u is closed, but its closing deal is not in history yet - checking again [%s]",
+                                 g_handled[i].positionId, shortId));
         }
      }
    if(changed)
@@ -936,6 +976,50 @@ bool ReportOpened(const int index, const ulong positionId)
       return(true);
      }
    return(false); // history not loaded yet - try again next check
+  }
+
+//+------------------------------------------------------------------+
+//| The open position a filled order became. A position's identifier is the
+//| ticket of the order that opened it, and the order's comment carries over,
+//| so either finds it - by identifier first, since a broker may rewrite comments.
+ulong FindOpenPositionForOrder(const ulong order, const string comment)
+  {
+   ulong byComment = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      if(PositionGetTicket(i) == 0 || (ulong)PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+         continue;
+      ulong identifier = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      if(identifier == order)
+         return(identifier);
+      if(byComment == 0 && StringFind(PositionGetString(POSITION_COMMENT), comment) == 0)
+         byComment = identifier;
+     }
+   return(byComment);
+  }
+
+//+------------------------------------------------------------------+
+//| The fill report built from the open position itself, for when its opening
+//| deal is not in history. Same event key as ReportOpened, so the website
+//| stores it once whichever of the two sends it.
+bool ReportOpenedFromPosition(const int index, const ulong positionId)
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      if(PositionGetTicket(i) == 0 || (ulong)PositionGetInteger(POSITION_IDENTIFIER) != positionId)
+         continue;
+      string side  = ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? "buy" : "sell";
+      double price = PositionGetDouble(POSITION_PRICE_OPEN);
+      double lots  = PositionGetDouble(POSITION_VOLUME);
+      QueueEvent("opened:" + IntegerToString((long)positionId), "position_opened", g_handled[index].id,
+                 JS("order_type", side) + "," + JI("order_ticket", (long)g_handled[index].orderTicket) + "," +
+                 JI("position_id", (long)positionId) + "," + JV("volume", lots) + "," + JP("price", price),
+                 true, ServerToWebsite((datetime)PositionGetInteger(POSITION_TIME)));
+      PrintFormat("[LIVE] filled %s %.2f lots @ %s | position %I64u (from the open position) [%s]", side, lots,
+                  PriceText(price), positionId, StringSubstr(g_handled[index].id, 0, 8));
+      return(true);
+     }
+   return(false);
   }
 
 //+------------------------------------------------------------------+

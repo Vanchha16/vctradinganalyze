@@ -5,6 +5,9 @@ from structlog.types import EventDict, WrappedLogger
 
 _SENSITIVE_KEYS = {"password", "token", "secret", "authorization", "api_key"}
 
+#: HTTP client libraries that log full request URLs at INFO.
+_URL_LOGGING_LIBRARIES = ("httpx", "httpcore")
+
 
 def _redact_sensitive_keys(_: WrappedLogger, __: str, event_dict: EventDict) -> EventDict:
     for key in list(event_dict):
@@ -56,3 +59,9 @@ def configure_logging(log_level: str) -> None:
         uvicorn_logger = logging.getLogger(logger_name)
         uvicorn_logger.handlers = [handler]
         uvicorn_logger.propagate = False
+
+    # httpx logs every request URL at INFO, and the Telegram Bot API puts the
+    # bot token in the URL path - so each poll wrote the token to the worker
+    # log (found 2026-09-14). Warnings and errors still come through.
+    for logger_name in _URL_LOGGING_LIBRARIES:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)

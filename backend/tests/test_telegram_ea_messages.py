@@ -139,3 +139,62 @@ def test_the_loss_limit_alert_shows_the_loss_and_the_limit() -> None:
     assert "🛑 DAILY LOSS LIMIT REACHED • WinserverEA" in text
     assert "📉 Lost today : 520\\.40 USC" in text
     assert "🧱 Daily limit : 500\\.00 USC" in text
+
+
+_RESERVED = set(r"_*[]()~`>#+-=|{}.!")
+
+
+def _unescaped_reserved(text: str) -> list[str]:
+    """MarkdownV2 characters not preceded by a backslash. These messages use
+    no formatting, so any such character makes Telegram refuse the whole
+    message - which silently lost every EA OFFLINE alert in production."""
+    found: list[str] = []
+    escaped = False
+    for char in text:
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char in _RESERVED:
+            found.append(char)
+    return found
+
+
+def test_every_ea_message_is_valid_markdown_v2() -> None:
+    token = _token(
+        name="Win-server_EA (1)",
+        ea_daily_loss=Decimal("520.4"),
+        ea_daily_loss_limit=Decimal("500"),
+        ea_currency="USC",
+    )
+    messages = [
+        compose_ea_offline_message(token, now=_NOW),
+        compose_ea_back_online_message(token, now=_NOW),
+        compose_ea_loss_limit_message(token, now=_NOW),
+    ]
+    for event_type in (
+        "order_placed",
+        "order_skipped",
+        "order_rejected",
+        "order_cancelled",
+        "position_opened",
+        "position_closed",
+        "dry_run_checked",
+    ):
+        event = _event(
+            event_type,
+            token_name="Win-server",
+            order_type="sell_limit",
+            volume=Decimal("0.4"),
+            price=Decimal("4331.607"),
+            stop_loss=Decimal("4342.428"),
+            take_profit=Decimal("4309.966"),
+            profit=Decimal("-12.5"),
+            currency="USC",
+            close_reason="stop_out",
+            message="Invalid price (x=1.5)!",
+        )
+        messages.append(compose_ea_event_message(event, SignalType.SELL))
+
+    for text in messages:
+        assert _unescaped_reserved(text) == [], text

@@ -77,7 +77,9 @@ def render_header(signal: Signal, asset: Asset) -> str:
 
 
 def _field(label: str, value: str) -> str:
-    return f"{label} : {escape_markdown_v2(value)}"
+    # The label is escaped too: an unescaped "-" in "Last check-in" made
+    # Telegram reject every EA OFFLINE alert (production, 2026-09-14).
+    return f"{escape_markdown_v2(label)} : {escape_markdown_v2(value)}"
 
 
 def render_trade_setup(signal: Signal, asset: Asset) -> str:

@@ -179,23 +179,126 @@ on. BACKLOG.md §10's "~1.2GB free disk" is stale.
 
 # 8. Backup
 
-Daily Database
+## Daily Database
 
-Configuration Backup
+A systemd timer dumps Postgres every 24h at 03:00 UTC (ADR-173). Units and
+script live in `deploy/`:
 
-Logs
+| File | Role |
+|---|---|
+| `deploy/backup_production.sh` | dump, prune, optional S3 upload |
+| `deploy/claudetrading-backup.service` | oneshot unit that runs it |
+| `deploy/claudetrading-backup.timer` | daily schedule, `Persistent=true` |
 
-Retention Policy
+Output is `~/deploy_backups/auto_<ts>.dump` (`pg_dump -Fc`, ~41MB).
+
+Check it is scheduled and see the last run:
+
+```bash
+systemctl list-timers claudetrading-backup.timer
+sudo journalctl -u claudetrading-backup --since "2 days ago"
+```
+
+Run one on demand: `sudo systemctl start claudetrading-backup`.
+
+## Off-Box Copy
+
+The same run uploads to **Cloudflare R2** - deliberately outside AWS, so an
+AWS account suspension cannot lock the backups at the same moment it takes
+the site down (ADR-173). S3 would not survive that case.
+
+Config and credentials live in `/etc/claudetrading-backup.env`, root-owned
+and `chmod 600`, never in `backend/.env`:
+
+```bash
+BACKUP_S3_BUCKET=claudetrading-backups
+BACKUP_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+BACKUP_S3_PREFIX=db
+AWS_ACCESS_KEY_ID=<r2 token access key id>
+AWS_SECRET_ACCESS_KEY=<r2 token secret>
+AWS_DEFAULT_REGION=auto
+```
+
+The R2 token is scoped to this one bucket. Rotate it by editing this file
+alone; nothing else reads it.
+
+List what has been uploaded:
+
+```bash
+aws s3 ls s3://claudetrading-backups/db/   --endpoint-url https://<account-id>.r2.cloudflarestorage.com
+```
+
+With no bucket set, the dump is still taken and kept locally. An upload
+failure is logged and tolerated; only a `pg_dump` failure fails the unit.
+
+## Configuration Backup
+
+`backend/.env` is **not** in the dump and not in git. It holds
+`CREDENTIAL_ENCRYPTION_KEY`, without which the `api_credentials` rows cannot
+be decrypted - **a database dump alone is not a complete backup.** Copy it
+off the box whenever it changes, to `.backup/` locally (gitignored).
+
+## Logs
+
+Journald only, not backed up. Nothing depends on log history for recovery.
+
+## Retention Policy
+
+The newest 7 `auto_*.dump` files are kept, older ones deleted on each run.
+Pruning matches the `auto_` prefix only, so manual `pre_<change>_*` and
+`rescue_*` dumps are never removed automatically - delete those by hand.
 
 ---
 
 # 9. Disaster Recovery
 
-Recovery Procedures
+## Recovery Procedures
 
-Recovery Objectives
+**Restore the database onto a working box:**
 
-Backup Verification
+```bash
+# 1. Stop anything writing to it
+sudo systemctl stop claudetrading-worker claudetrading-beat claudetrading-backend
+
+# 2. Restore (--clean drops existing objects first)
+pg_restore --clean --if-exists -d "$URL" ~/deploy_backups/auto_<ts>.dump
+
+# 3. Bring the schema to head, in case the dump predates a migration
+cd ~/ClaudeTradingAI/backend && venv/bin/python -m alembic upgrade head
+
+# 4. Restart
+sudo systemctl start claudetrading-backend claudetrading-worker claudetrading-beat
+```
+
+`$URL` is `settings.database_url` with the `postgresql+psycopg` prefix
+stripped to `postgresql`.
+
+**Rebuilding from nothing** (no dump available): the repo restores the
+schema but not the rows. `alembic upgrade head`, then
+`python -m scripts.seed_prod_assets`, then re-enter credentials in
+Admin -> Credentials, regenerate the EA token and re-pair the terminal.
+`signals`, `ai_analysis` and `ea_execution_events` cannot be regenerated.
+
+## Recovery Objectives
+
+| Objective | Value |
+|---|---|
+| RPO (data loss window) | 24h - the gap between nightly dumps |
+| RTO, restore onto the existing box | ~15 min |
+| RTO, rebuild onto a new host | hours, and the rows are lost |
+
+## Backup Verification
+
+**A dump that has never been restored is not a backup.** The timer does not
+verify its own output. Quarterly, restore the newest dump into a scratch
+database and check it opens:
+
+```bash
+createdb ct_restore_test
+pg_restore --no-owner -d ct_restore_test ~/deploy_backups/auto_<ts>.dump
+psql -d ct_restore_test -c "select count(*) from signals;"
+dropdb ct_restore_test
+```
 
 ---
 

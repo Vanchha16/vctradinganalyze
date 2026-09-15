@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the ClaudeTrading AI database backup daily (ADR-173)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+# Take a missed dump on the next boot rather than skipping the day.
+Persistent=true
+# Avoid landing exactly on the hour alongside other scheduled work.
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

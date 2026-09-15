@@ -1,0 +1,21 @@
+[Unit]
+Description=ClaudeTrading AI nightly database backup (ADR-173)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ClaudeTradingAI
+# Bucket, endpoint and R2 credentials come from this file, not from
+# backend/.env (ADR-173). Root-owned, chmod 600, readable by this unit.
+# Absent or empty, the dump is still taken and kept locally.
+EnvironmentFile=-/etc/claudetrading-backup.env
+Environment=BACKUP_KEEP=7
+ExecStart=/home/ubuntu/ClaudeTradingAI/deploy/backup_production.sh
+# A dump is ~41MB on a 909MB box; keep it from competing with the worker.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

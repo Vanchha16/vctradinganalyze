@@ -45,3 +45,6 @@ coverage/
 .playwright-mcp/
 .mcp.json
 .claude/settings.local.json
+.backup
+# Local production backups (dumps + .env) - never commit
+.backup/

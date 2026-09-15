@@ -10791,6 +10791,107 @@ Alternatives Considered
 - **A tolerance on the candle entry check.** Rejected: any fixed tolerance is a
   guess, and would mark fills that never happened.
 
+# ADR-173
+
+Title
+
+Nightly Production Database Backup, On-Box Plus Off-AWS Object Storage
+
+Status
+
+Accepted
+
+Context
+
+Production data existed in exactly one place until 2026-09-15: the EBS volume
+attached to `i-0f42ea4746f0a9f54`. `docs/27` sections 8 and 9 have been empty
+headings since Phase 1. The only dumps were the manual `pg_dump` the deploy
+procedure takes before a migration, written to `~/deploy_backups/` on that same
+volume.
+
+On 2026-09-15 the AWS account was suspended for an unpaid $27.85 and the site
+was unreachable for 8h40m. Nothing was lost - AWS cut network access and left
+the instance running - but the outage made the exposure plain. A terminated
+instance would have destroyed the database and every backup of it in the same
+moment, and the operator had no copy anywhere else. `signals`, `ai_analysis`
+and `ea_execution_events` cannot be regenerated: they only accumulate by
+running live.
+
+The constraint is memory, not disk. The box is a `t3.micro` with 909MB RAM and
+~180MB available, against 38GB free disk. A dump is ~41MB.
+
+Decision
+
+- **A dump every 24h**, at 03:00 UTC, by a systemd timer
+  (`claudetrading-backup.timer`) rather than cron, matching how every other
+  unit on this box is run. `Persistent=true`, so a dump missed while the box
+  was down is taken on the next boot.
+- **`pg_dump -Fc`** to `~/deploy_backups/auto_<ts>.dump`, the same format and
+  directory the manual pre-migration dumps already use.
+- **Keep the last 7 automatic dumps**, delete older. Pruning matches only the
+  `auto_` prefix, so a manual `pre_<change>` or `rescue_` dump is never
+  deleted by the timer.
+- **Then upload to Cloudflare R2**, so a copy survives losing the instance
+  *or the AWS account*. On-box dumps sit on the volume they protect against,
+  and S3 sits in the account that gets suspended - neither is reachable in the
+  failure that actually happened. R2 is a different company with separate
+  billing, so an AWS suspension does not lock it. The upload is written
+  against the S3 API, so the destination is a URL change, not a rewrite.
+- **A failed upload does not fail the backup.** The local dump is taken first
+  and kept whatever the remote does. The unit exits non-zero only if `pg_dump` itself
+  fails, so a broken bucket is visible in the journal without destroying the
+  local copy.
+- **The upload is optional at runtime.** With no bucket configured, or no `aws` binary,
+  the script logs that it is skipping the upload and still dumps locally. This
+  keeps the local half working before the bucket and IAM role exist, and keeps
+  the script usable on any box that has no AWS identity.
+- **Credentials live in `/etc/claudetrading-backup.env`**, root-owned and
+  `chmod 600`, read by the unit through `EnvironmentFile=-`. R2 has no
+  equivalent of an EC2 instance role, so a stored token is unavoidable. It is
+  kept out of `backend/.env` deliberately: that file is the project's only
+  other secret store and has leaked once already, and the R2 token is scoped
+  to this one bucket, so a repeat cannot reach anything else.
+
+Consequences
+
+- Losing the instance now costs at most 24h of data, not everything.
+- `~/deploy_backups/` stops growing without bound. It held 725MB of 18 manual
+  dumps when this was written; the automatic half is capped at ~290MB.
+- The operator must create the bucket and token by hand. Until then the timer
+  still runs and the local dump is still taken.
+- 7x41MB and ~30 uploads a month sit inside R2's free tier, so the off-site
+  copy costs nothing and adds nothing to the AWS bill whose non-payment caused
+  the outage.
+- **A stored token is a real cost of leaving AWS.** An instance role would have
+  needed no secret at all. This is accepted because a backup that cannot be
+  reached during a suspension does not do the job.
+- `pg_dump` competes for memory with the worker. At 03:00 UTC with one active
+  asset this is the quietest hour, but a future second asset would need this
+  revisited.
+- Restores are not automated and not tested by the timer. The procedure is
+  written in `docs/27` section 9; it is a manual `pg_restore`.
+
+Alternatives Considered
+
+- **On-box only.** Rejected: it fails the exact scenario this ADR exists for.
+  It would have survived 2026-09-15, which was a suspension, but not a
+  termination.
+- **AWS S3.** Rejected, and this ADR was revised to say so before it was built.
+  S3 covers a lost instance or a failed volume, but it lives in the same
+  account: a suspension locks the backups at the same moment it takes the site
+  down, which is precisely what happened on 2026-09-15. The operator raised
+  this; it is the reason the destination is outside AWS.
+- **Pull nightly to the operator's PC.** Rejected as the primary: it is only as
+  current as the last time the machine was on and the script was run. Kept as
+  the manual `.backup/` habit for a dump the operator wants in hand.
+- **EBS snapshots instead of `pg_dump`.** Rejected: a snapshot is a
+  crash-consistent block copy, restorable only as a whole volume, and gives no
+  way to read one table or move the data to another host. A logical dump does.
+- **Cron.** Rejected: systemd timers match the rest of this box, and give
+  `Persistent=true` plus journal output for free.
+- **Keeping 14 or adding weeklies.** Rejected for now: 7 covers the questions
+  actually asked, and disk is not the constraint worth optimising against.
+
 ---
 
 # Review Policy

@@ -291,7 +291,17 @@ Admin -> Credentials, regenerate the EA token and re-pair the terminal.
 
 **A dump that has never been restored is not a backup.** The timer does not
 verify its own output. Quarterly, restore the newest dump into a scratch
-database and check it opens:
+database and check it opens.
+
+**Last verified: 2026-09-15** - `auto_20260915_092406.dump`, downloaded from
+R2 (not the local copy, so the whole chain was exercised) and restored into a
+scratch database. 25 tables, `alembic_version` `b4e7d2a91c35`, and row counts
+matching production for `signals` (104), `ea_execution_events` (18) and
+`users` (6). `price_candles` was lower than production by the candles written
+after the dump was taken, as expected.
+
+Restore as the `postgres` superuser: `claudetrading_user` has neither
+`rolcreatedb` nor superuser, so it cannot create the scratch database.
 
 ```bash
 createdb ct_restore_test

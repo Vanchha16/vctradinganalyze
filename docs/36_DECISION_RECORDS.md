@@ -10892,6 +10892,134 @@ Alternatives Considered
 - **Keeping 14 or adding weeklies.** Rejected for now: 7 covers the questions
   actually asked, and disk is not the constraint worth optimising against.
 
+# ADR-174
+
+Title
+
+Signal Performance Metrics, Computed at Read Time
+
+Status
+
+Accepted
+
+Context
+
+This project has run live since 2026-08 and cannot report whether it makes
+money. `AdminSystemService.get_analytics` returns daily active users and a
+BUY/SELL count; there is no win rate, expectancy, profit factor or realised
+P&L anywhere in the backend. Every performance question so far has been
+answered by hand-querying Postgres over SSH.
+
+Two measurements this backlog already committed to were never built:
+
+- ADR-167's risk review has run in `shadow` on every BUY/SELL since
+  2026-09-11, costing a second `gpt-6-astra` call each time and changing
+  nothing. Promoting it to `enforce` was gated on "compare outcomes for
+  approved vs vetoed" - a query that does not exist, so the decision cannot
+  be made and the spend continues.
+- ADR-168's replacement behaviour was to be reviewed after two weeks by
+  comparing how replacements ended against the signals they replaced. Also
+  not built.
+
+A hand-query on 2026-09-16 showed why this matters. Across 28 filled trades
+since ADR-137, win rate falls as confidence rises: 80% in the 46-50 band, 20%
+in the 72-80 band. If that survives more data, the confidence score is
+inverted, and it already ranks and gates signals. Nobody could have seen this
+from the product.
+
+The same query showed the trap any implementation must avoid. Raw all-time
+figures suggest BUY fills at 14%; the true post-fix rate is 56%. 55 BUY
+signals created 2026-08-05 to 2026-08-07 predate ADR-137's TRIGGERED gate,
+when stop loss and take profit were evaluated before price ever reached
+entry. 34 of them are stored `SUCCESSFUL`/`STOPPED_OUT` with
+`triggered_at IS NULL` - a state current code cannot produce. Included
+silently, they corrupt every rate they touch.
+
+Decision
+
+- **Computed on every request from `signals`, never stored.** No metrics
+  table, no migration, no scheduled rollup. This follows the precedent set
+  for Technical Analysis (ADR-027) and Market Regime (ADR-038): derive from
+  the rows that already exist rather than persisting a second copy that can
+  drift. Volume makes this cheap - 106 signals today, and one asset
+  generates roughly 20 a week.
+- **No caching**, consistent with every other engine here. A stale win rate
+  is worse than a slow one.
+- **A metrics epoch excludes the pre-ADR-137 rows.** `SIGNAL_METRICS_EPOCH`
+  (default `2026-08-08T00:00:00Z`) filters on `created_at`. A setting rather
+  than a constant because the next correctness fix will need its own cutoff,
+  and hunting a hardcoded date in a query is how the wrong number gets
+  shipped. Every response states the epoch it used, so a caller can never
+  read a rate without knowing what it excludes.
+- **Win and loss counts come from `triggered_at IS NOT NULL` plus the stored
+  terminal status.** `SUCCESSFUL` and `STOPPED_OUT` are terminal and pass
+  through `effective_status` unchanged, so reading them directly is safe.
+  Open/expired counts are NOT safe that way and must call
+  `effective_status` (ADR-088): `ACTIVE` past its TTL is `EXPIRED`, and a
+  `TRIGGERED` trade past its TTL is `CLOSED` with null `profit_loss`. This
+  is the exact bug already recorded against the status filter, where an
+  unfilled signal past its TTL showed as active.
+- **P&L is in price points, not money.** `profit_loss` is
+  `closed_price - entry_price` (inverted for a SELL), so summing it assumes
+  every trade carried the same size and every instrument the same tick
+  value. True today - one asset, one fixed EA lot - and false the moment a
+  second symbol or variable sizing arrives. The field is named
+  `total_points` rather than `total_pnl` so the assumption is visible at the
+  call site, and the response carries a note saying so.
+- **Metrics returned:** trades, wins, losses, win rate, total points,
+  average win, average loss, expectancy per trade, profit factor, and fill
+  rate (filled / created). Each is also broken down by `strategy`,
+  `timeframe`, `signal_type` and confidence band.
+- **Every figure ships with its denominator.** A win rate over 3 trades and
+  one over 300 render identically otherwise, and this project has already
+  drawn a wrong conclusion from a small sample. The UI labels any breakdown
+  under 30 trades as not yet meaningful rather than hiding it.
+- **Two purpose-built comparisons**, because they are the decisions actually
+  waiting: outcomes for risk-review `approve` versus `veto` (ADR-167), and
+  outcomes for replacement signals versus the signals they replaced
+  (ADR-168).
+- **`GET /admin/performance`**, admin-gated, its own route module and
+  service alongside the existing admin routes rather than growing
+  `get_analytics`, which is about users and counts and shares nothing with
+  this. Surfaced on a new admin page.
+
+Consequences
+
+- The risk review can be judged and either enforced or switched off, instead
+  of running indefinitely at cost.
+- The confidence inversion becomes observable from the product, and testable
+  as more trades close.
+- Nothing is written, so this is reversible by deleting the route, and it
+  cannot corrupt signal data.
+- Cost is a handful of aggregate queries per request against a table of
+  hundreds of rows. Revisit only if a second data provider lifts the symbol
+  limit enough to change the order of magnitude.
+- The metrics answer "did the stored signals work", not "would a different
+  strategy have worked". No backtest is implied or provided.
+- The epoch must be advanced by hand after any future fix that invalidates
+  earlier outcomes. Forgetting silently reintroduces the 14%-versus-56%
+  class of error.
+
+Alternatives Considered
+
+- **A nightly rollup table.** Rejected: a second copy of a number already
+  derivable, a migration, and a staleness window, for a volume that does not
+  need it. Reconsider only when a query is measurably slow.
+- **Extending `GET /admin/analytics`.** Rejected: that endpoint answers
+  "who is using this", this one answers "does it work". Merging them would
+  couple a user-activity response to trade outcomes.
+- **Recomputing outcomes from `price_candles` instead of trusting
+  `profit_loss`.** Rejected: it would silently re-decide trades the monitor
+  and ADR-172's EA reports already settled, and produce a second, conflicting
+  history. Metrics report what happened; they do not re-adjudicate it.
+- **Currency P&L.** Rejected for now: it needs position size and tick value,
+  neither of which the signal carries. Points are honest with one symbol and
+  one lot size, and the naming makes the limit explicit.
+- **Waiting for more data first.** Rejected as backwards - the measurement is
+  what turns waiting into evidence. 28 trades is too few to conclude
+  anything, which is precisely the argument for building the thing that
+  tells you when it stops being too few.
+
 ---
 
 # Review Policy

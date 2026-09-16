@@ -1,0 +1,16 @@
+[Unit]
+Description=ClaudeTrading AI Next.js Frontend
+After=network.target claudetrading-backend.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ClaudeTradingAI/frontend/.next/standalone
+Environment=PORT=3000
+Environment=HOSTNAME=127.0.0.1
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

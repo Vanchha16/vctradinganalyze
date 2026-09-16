@@ -1,0 +1,14 @@
+[Unit]
+Description=ClaudeTrading AI FastAPI Backend
+After=network.target postgresql.service redis-server.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ClaudeTradingAI/backend
+EnvironmentFile=/home/ubuntu/ClaudeTradingAI/backend/.env
+ExecStart=/home/ubuntu/ClaudeTradingAI/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

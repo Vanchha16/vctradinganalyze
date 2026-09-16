@@ -187,8 +187,8 @@ script live in `deploy/`:
 | File | Role |
 |---|---|
 | `deploy/backup_production.sh` | dump, prune, optional S3 upload |
-| `deploy/claudetrading-backup.service` | oneshot unit that runs it |
-| `deploy/claudetrading-backup.timer` | daily schedule, `Persistent=true` |
+| `deploy/systemd/claudetrading-backup.service` | oneshot unit that runs it |
+| `deploy/systemd/claudetrading-backup.timer` | daily schedule, `Persistent=true` |
 
 Output is `~/deploy_backups/auto_<ts>.dump` (`pg_dump -Fc`, ~41MB).
 
@@ -312,7 +312,126 @@ dropdb ct_restore_test
 
 ---
 
-# 10. Future
+# 10. Migrating to a New Host
+
+Written 2026-09-16, after the AWS suspension of 2026-09-15. **Nothing needed
+to rebuild lives inside AWS**, which is what makes this possible while the
+account is locked:
+
+| Asset | Lives at | Reachable during an AWS suspension |
+|---|---|---|
+| Code, migrations, these units | GitHub | yes |
+| Database dump | Cloudflare R2 | yes |
+| `backend/.env` | operator's PC, `.backup/prod.env` | yes |
+| DNS | Hostinger (`*.dns-parking.com`), **not Route 53** | yes |
+
+**You cannot take a fresh dump while suspended** - SSH is gone too. You
+restore the last nightly, so expect to lose up to 24h (section 9's RPO).
+
+## What to provision
+
+The current box is a `t3.micro`: 909MB RAM, ~180MB free, leaning on a 1GB
+swapfile to get through `npm run build`. Memory is the binding constraint
+(BACKLOG.md section 10), so do not match it - beat it. **2GB minimum, 4GB
+comfortable.** Ubuntu 24.04 LTS keeps every version below unchanged.
+
+Stack as built: PostgreSQL 16.15, Redis 7.0.15, Python 3.12.3, Node 20.20.2,
+npm 10.8.2, nginx 1.24.0.
+
+## Steps
+
+```bash
+# 1. Packages
+sudo apt update && sudo apt install -y     postgresql redis-server nginx git curl unzip     python3-venv python3-pip
+# Node 20 (NodeSource - Ubuntu's own node is older)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# 2. Database and role. Match DATABASE_URL in .env exactly, or edit .env.
+sudo -u postgres createuser claudetrading_user --pwprompt
+sudo -u postgres createdb claudetrading --owner claudetrading_user
+
+# 3. Code
+git clone https://github.com/Vanchha16/vctradinganalyze.git ~/ClaudeTradingAI
+cd ~/ClaudeTradingAI/backend
+python3 -m venv venv          # note: venv, not .venv (section 7)
+venv/bin/pip install -e .
+
+# 4. Secrets - from the operator's PC, NOT from git
+scp .backup/prod.env <newhost>:~/ClaudeTradingAI/backend/.env
+
+# 5. Restore the database. Fetch the newest dump from R2 first.
+aws s3 cp s3://claudetrading-backups/db/<newest>.dump /tmp/restore.dump   --endpoint-url https://<account-id>.r2.cloudflarestorage.com
+sudo -u postgres pg_restore --no-owner -d claudetrading /tmp/restore.dump
+venv/bin/python -m alembic upgrade head   # in case the dump predates a migration
+
+# 6. Frontend. Standalone output excludes .next/static - the copy is
+#    mandatory (section 7), and `npm run build` recreates standalone from
+#    scratch every time, wiping anything copied in earlier.
+cd ~/ClaudeTradingAI/frontend
+npm ci && npm run build
+cp -r .next/static .next/standalone/.next/static
+
+# 7. Services
+sudo cp ~/ClaudeTradingAI/deploy/systemd/*.service /etc/systemd/system/
+sudo cp ~/ClaudeTradingAI/deploy/systemd/*.timer   /etc/systemd/system/
+chmod +x ~/ClaudeTradingAI/deploy/backup_production.sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now claudetrading-backend claudetrading-worker     claudetrading-beat claudetrading-frontend claudetrading-backup.timer
+
+# 8. Backups - recreate the credentials file (section 8), root:ubuntu 640.
+sudo install -o root -g ubuntu -m 640 /dev/null /etc/claudetrading-backup.env
+sudo nano /etc/claudetrading-backup.env
+
+# 9. Web server and TLS
+sudo cp ~/ClaudeTradingAI/deploy/nginx-vcanalyzetrading.conf     /etc/nginx/sites-available/claudetrading
+sudo ln -sf /etc/nginx/sites-available/claudetrading /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**Cut DNS over before requesting the certificate.** Certbot validates over
+HTTP against the live A record, so it fails if the domain still points at the
+old host. Update the A record for `vcanalyzetrading.site` (and `www`) at
+Hostinger, wait for it to propagate, then:
+
+```bash
+sudo certbot --nginx -d vcanalyzetrading.site -d www.vcanalyzetrading.site
+```
+
+## By hand afterwards
+
+Neither can be automated from the server side:
+
+- **EA token.** Regenerate it and enter it in the MT5 terminal, then re-apply
+  that terminal's ADR-163 settings (paused, lot size, ADR-170 daily loss
+  limit). Until this is done the EA places no orders.
+- **Telegram.** Re-link the operator account. Nothing is sent until then.
+
+## Verify
+
+Section 7's warning applies with full force here: **`curl` status codes prove
+nothing about a frontend deploy.** Next.js answers 200 for the SSR shell even
+when every asset behind it 404s. Fetch a real asset:
+
+```bash
+systemctl is-active claudetrading-{backend,worker,beat,frontend}
+curl -o /dev/null -w "%{http_code}
+"   "http://localhost:3000/_next/static/chunks/$(ls ~/ClaudeTradingAI/frontend/.next/standalone/.next/static/chunks/*.js | head -1 | xargs basename)"
+sudo systemctl start claudetrading-backup   # prove backups work on the new host
+```
+
+Then confirm in the database that the worker is writing new candles, and that
+the newest `signals` row is recent.
+
+## Keep the old host until the new one is proven
+
+Do not delete the old instance the moment DNS moves. Keep it until the new
+host has generated signals, taken a backup and served real traffic - the DNS
+record can point back within minutes if something is wrong.
+
+---
+
+# 11. Future
 
 Kubernetes
 

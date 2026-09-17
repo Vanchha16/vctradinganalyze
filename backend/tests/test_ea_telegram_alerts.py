@@ -44,6 +44,17 @@ _TABLES = [
 
 
 def _token(**fields: object) -> EaToken:
+    """A token for the pure-decision tests, which pass `_NOW` into
+    `decide()` explicitly.
+
+    **`last_used_at` defaults to `_NOW - 30s`, a fixed instant.** That is
+    correct only when the test also supplies `_NOW` as "now". Any test that
+    drives `ea_tasks.watch_terminals_task()` is measured against the real
+    clock instead, and must seed `last_used_at` relative to
+    `datetime.now(UTC)` - otherwise the terminal reads as offline the day
+    after this constant, and an OFFLINE alert displaces whatever the test
+    was actually about.
+    """
     values: dict[str, object] = {
         "user_id": uuid.uuid4(),
         "name": "WinserverEA",
@@ -243,7 +254,17 @@ def test_a_failed_send_is_retried_on_the_next_run(
     provider: MockTelegramProvider,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    token_id = _seed(session_factory, effective_loss_blocked=True, ea_currency="USC")
+    # `last_used_at` is seeded relative to the REAL clock, not `_NOW`.
+    # `watch_terminals_task` calls `datetime.now(UTC)` itself, so a token
+    # anchored to `_NOW` reads as long-silent once real time moves past it -
+    # the terminal is then reported OFFLINE and that alert, not the loss
+    # limit, is `sent_messages[0]`. This test passed only on 2026-09-16.
+    token_id = _seed(
+        session_factory,
+        effective_loss_blocked=True,
+        ea_currency="USC",
+        last_used_at=datetime.now(UTC) - timedelta(seconds=30),
+    )
 
     def broken(chat_id: str, text: str, **_: object) -> None:
         raise RuntimeError("telegram is down")

@@ -16,7 +16,10 @@ export function StatCard({
   isLoading,
 }: {
   label: string;
-  value: number | undefined;
+  /** A string is for a value that is already formatted and whose "no
+   * value" case is not zero - a null win rate renders "—" (ADR-174), and
+   * turning that into a number here would lose the distinction. */
+  value: number | string | undefined;
   icon: LucideIcon;
   isLoading: boolean;
 }) {

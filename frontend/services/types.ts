@@ -954,3 +954,81 @@ export interface EaEventListResponse {
   limit: number;
   total: number;
 }
+
+/* ---------------- Signal performance (ADR-174) ---------------- */
+
+/** Every ratio is `number | null` and is null - never 0 - when its
+ * denominator is zero. A 0% win rate and "no trades yet" are different
+ * facts; render null as an em dash, never as 0%.
+ *
+ * Decimal fields arrive as strings (`Numeric(20, 8)` via Pydantic), so
+ * they stay strings here and become numbers only at the point of display. */
+export interface PerformanceMetrics {
+  /** Filled trades only. May exceed `wins + losses`: a live trade past
+   * its TTL reads as CLOSED with no P&L and is neither. */
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  /** Price points, not currency - see `points_note`. */
+  total_points: string | null;
+  avg_win: string | null;
+  avg_loss: string | null;
+  expectancy: string | null;
+  profit_factor: number | null;
+}
+
+/** `key` is null for a real group with no value - a signal predating the
+ * `strategy` column, or an analysis where the risk review never ran.
+ * Label those rows; never drop them. */
+export interface PerformanceBreakdownRow {
+  key: string | null;
+  metrics: PerformanceMetrics;
+}
+
+export interface FillMetrics {
+  created: number;
+  filled: number;
+  fill_rate: number | null;
+}
+
+export interface FillBreakdownRow {
+  key: string | null;
+  metrics: FillMetrics;
+}
+
+/** Counts by the status a reader sees at request time (ADR-088), not the
+ * stored column. */
+export interface OpenStateCounts {
+  active: number;
+  expired: number;
+  triggered: number;
+  closed: number;
+}
+
+export interface ReplacementSummary {
+  signals_replaced: number;
+  /** False: ADR-168's outcome comparison is not answerable from the
+   * current schema. Show the note rather than implying a zero. */
+  comparable: boolean;
+  note: string;
+}
+
+export interface AdminPerformanceResponse {
+  /** Signals created before this are excluded from every figure. */
+  epoch: string;
+  /** Render verbatim next to the totals - never bury it. */
+  points_note: string;
+  generated_at: string;
+  overall: PerformanceMetrics;
+  closed_without_outcome: number;
+  open_state: OpenStateCounts;
+  fills: FillMetrics;
+  fills_by_signal_type: FillBreakdownRow[];
+  by_strategy: PerformanceBreakdownRow[];
+  by_timeframe: PerformanceBreakdownRow[];
+  by_signal_type: PerformanceBreakdownRow[];
+  by_confidence: PerformanceBreakdownRow[];
+  risk_review: PerformanceBreakdownRow[];
+  replacements: ReplacementSummary;
+}

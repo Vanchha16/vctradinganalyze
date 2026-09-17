@@ -26,6 +26,7 @@ from app.services.admin_user_service import AdminUserService
 from app.services.economic_calendar_ingestion_pipeline import EconomicCalendarIngestionPipeline
 from app.services.news_ingestion_pipeline import NewsIngestionPipeline
 from app.services.news_sentiment.ai_summary_generator import AISummaryGenerator
+from app.services.signal_performance_service import SignalPerformanceService
 from app.services.user_service import UserService
 
 
@@ -58,6 +59,14 @@ def get_admin_audit_log_service(db: Annotated[Session, Depends(get_db)]) -> Admi
     return AdminAuditLogService(
         audit_log_repository=AuditLogRepository(db), user_repository=UserRepository(db)
     )
+
+
+def get_signal_performance_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> SignalPerformanceService:
+    """ADR-174 - one repository, no pipelines, nothing to configure: this
+    service reads the `signals` table and computes."""
+    return SignalPerformanceService(signal_repository=SignalRepository(db))
 
 
 def get_admin_system_service(db: Annotated[Session, Depends(get_db)]) -> AdminSystemService:

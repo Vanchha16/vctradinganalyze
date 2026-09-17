@@ -1,5 +1,6 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/services/api-client";
 import type {
+  AdminPerformanceResponse,
   AdminApiUsageResponse,
   ApiCredentialListResponse,
   ApiCredentialResponse,
@@ -192,4 +193,11 @@ export function activateAdminAsset(id: string): Promise<Asset> {
 
 export function deactivateAdminAsset(id: string): Promise<Asset> {
   return apiPost<Asset>(`/admin/assets/${id}/deactivate`);
+}
+
+/** `GET /admin/performance` (ADR-174) - did the stored signals work.
+ * No parameters: the epoch is the window, and it is a server setting so
+ * two readers cannot quote different numbers at each other. */
+export function getAdminPerformance(): Promise<AdminPerformanceResponse> {
+  return apiGet<AdminPerformanceResponse>("/admin/performance");
 }

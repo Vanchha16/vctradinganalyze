@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -130,6 +131,16 @@ class Settings(BaseSettings):
     ai_risk_review_mode: str = "shadow"
 
     signal_ttl_hours: int = 24
+
+    #: Signals created before this are excluded from every performance metric
+    #: (ADR-174). They predate ADR-137's TRIGGERED gate and carry outcomes that
+    #: current code cannot produce - stored SUCCESSFUL/STOPPED_OUT with
+    #: `triggered_at IS NULL`, from when SL/TP were evaluated before price ever
+    #: reached entry. Counted in, they drag the BUY fill rate from 56% to 14%.
+    #: Advance this after any future fix that invalidates earlier outcomes;
+    #: forgetting silently reintroduces that class of error. A setting, not a
+    #: constant buried in SQL, for exactly that reason.
+    signal_metrics_epoch: datetime = datetime(2026, 8, 8, tzinfo=UTC)
 
     # Phase 9E (ADR-137) - separate TTL for an already-`TRIGGERED` (live)
     # signal, distinct from `signal_ttl_hours` (pending-order TTL). A live

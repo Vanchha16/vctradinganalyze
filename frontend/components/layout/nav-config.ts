@@ -17,6 +17,7 @@ import {
   Settings as SettingsIcon,
   ShieldCheck,
   Signal,
+  Target,
   Terminal,
   UserRound,
   Users,
@@ -96,6 +97,9 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Admin Dashboard", href: "/admin", icon: ShieldCheck },
       { label: "Users", href: "/admin/users", icon: Users },
       { label: "Symbols", href: "/admin/assets", icon: Coins },
+      // ADR-174 - "did the signals work", distinct from Admin Dashboard's
+      // "who is using this".
+      { label: "Signal Performance", href: "/admin/performance", icon: Target },
       { label: "Audit Logs", href: "/admin/audit-logs", icon: FileClock },
       { label: "System Health", href: "/admin/system-health", icon: Server },
       { label: "API Usage", href: "/admin/api-usage", icon: Terminal },

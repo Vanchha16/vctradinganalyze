@@ -4,6 +4,7 @@ from app.api.v1.routes import (
     admin_assets,
     admin_credentials,
     admin_logs,
+    admin_performance,
     admin_system,
     admin_users,
     ai_analysis,
@@ -79,6 +80,8 @@ api_router.include_router(admin_users.router)
 api_router.include_router(admin_assets.router)
 api_router.include_router(admin_credentials.router)
 api_router.include_router(admin_logs.router)
+#: ADR-174 - read-only signal outcome metrics, admin-gated like the rest.
+api_router.include_router(admin_performance.router)
 api_router.include_router(admin_system.router)
 api_router.include_router(market_data.router, dependencies=[_data_rate_limit, _require_auth])
 api_router.include_router(

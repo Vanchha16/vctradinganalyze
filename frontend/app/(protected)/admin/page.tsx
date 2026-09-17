@@ -109,6 +109,8 @@ export default function AdminDashboardPage() {
 
         <p className="mt-4 text-center text-[11px] text-muted-foreground">
           Looking for more? <Link href="/admin/users" className="text-primary hover:underline">Manage all users →</Link>
+          {" · "}
+          <Link href="/admin/performance" className="text-primary hover:underline">Signal performance →</Link>
         </p>
       </PageContainer>
     </div>

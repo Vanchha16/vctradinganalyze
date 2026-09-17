@@ -6,8 +6,11 @@ trend direction is unambiguous - never fabricates a price, only derives
 entry/stop/target from already-computed Technical Analysis/SMC evidence.
 """
 
+from dataclasses import dataclass
 from decimal import Decimal
 
+from app.config import settings
+from app.models.enums import Timeframe
 from app.services.analysis_confidence.types import ConfidenceResult
 from app.services.risk_management.types import TradeDirection
 from app.services.strategy.types import StrategyEvaluation
@@ -17,6 +20,48 @@ from .types import CandidateSetup
 
 _STOP_ATR_MULTIPLE = Decimal("1.5")
 _MIN_RISK_REWARD_MULTIPLE = Decimal("2")
+
+
+@dataclass(frozen=True)
+class FixedDistances:
+    """ADR-176 - stop and target as fixed price distances from entry,
+    instead of ATR/structure.
+
+    Exists because the ATR path cannot go tight: it takes the *more
+    conservative* of 1.5 x ATR or the nearest structural level, which on
+    XAUUSD H1 is 20-22 points. Nothing about that path changes when this
+    is supplied; this is a second route through `build`, not a tweak to
+    the first.
+
+    The distances must match the timeframe of the analysis that produced
+    the signal. A 5-point stop on an H1 thesis is a quarter of one H1
+    candle's true range and gets closed by noise before the thesis
+    resolves - which is why ADR-176 puts 5 points on M5 and 10 on H1,
+    rather than honouring the original request literally.
+    """
+
+    stop: Decimal
+    target: Decimal
+
+
+def fixed_distances_for(timeframe: Timeframe) -> FixedDistances | None:
+    """The configured tight profile for `timeframe`, or None for the
+    ordinary ATR/structure path (ADR-176).
+
+    Resolved from settings here rather than threaded through every caller,
+    so the API path and the Celery worker behave identically and a flag
+    flip needs no code change. Both profiles default off: deploying this
+    code must not silently change what the EA trades.
+    """
+    if timeframe is Timeframe.H1 and settings.tight_h1_enabled:
+        return FixedDistances(
+            stop=settings.tight_h1_stop_distance, target=settings.tight_h1_target_distance
+        )
+    if timeframe is Timeframe.M5 and settings.tight_m5_enabled:
+        return FixedDistances(
+            stop=settings.tight_m5_stop_distance, target=settings.tight_m5_target_distance
+        )
+    return None
 
 
 def _direction_for(confidence: ConfidenceResult) -> TradeDirection | None:
@@ -78,6 +123,7 @@ def build(
     confidence: ConfidenceResult,
     strategy: StrategyEvaluation,
     latest_close: Decimal | None,
+    fixed_distances: FixedDistances | None = None,
 ) -> CandidateSetup | None:
     """`latest_close` is the real most-recent traded price, supplied by
     the caller (ADR-145).
@@ -116,6 +162,26 @@ def build(
     entry_price = latest_close
     if entry_price is None:
         return None
+
+    #: ADR-176: fixed distances short-circuit both the stop and the target.
+    #: Deliberately placed after the direction and entry checks and before
+    #: any ATR work - a tight setup must still refuse to exist when the
+    #: regime is ambiguous or there is no real price, exactly like an
+    #: ATR-derived one. Only the distances differ.
+    if fixed_distances is not None:
+        if direction is TradeDirection.LONG:
+            return CandidateSetup(
+                direction=direction,
+                entry_price=entry_price,
+                stop_loss=entry_price - fixed_distances.stop,
+                take_profit=entry_price + fixed_distances.target,
+            )
+        return CandidateSetup(
+            direction=direction,
+            entry_price=entry_price,
+            stop_loss=entry_price + fixed_distances.stop,
+            take_profit=entry_price - fixed_distances.target,
+        )
 
     atr = technical.volatility.atr
     atr_stop_distance = (

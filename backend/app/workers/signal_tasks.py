@@ -41,9 +41,12 @@ _TIMEFRAME = Timeframe.H1
 
 
 def _has_open_signal(
-    signal_repository: SignalRepository, asset_id: uuid.UUID, now: datetime
+    signal_repository: SignalRepository,
+    asset_id: uuid.UUID,
+    now: datetime,
+    timeframe: Timeframe = _TIMEFRAME,
 ) -> bool:
-    """True if this asset already has a BUY/SELL call on `_TIMEFRAME`
+    """True if this asset already has a BUY/SELL call on `timeframe`
     that hasn't expired/closed yet (ADR-088/ADR-137's `effective_status`,
     same check `signal_monitoring_tasks.py` uses) - the hourly job's
     confirmation gate: don't re-signal an asset that already has an
@@ -64,7 +67,7 @@ def _has_open_signal(
     confirmation there is no replacement step, so ACTIVE still blocks."""
     drafts = signal_repository.find_paginated(
         asset_id=asset_id,
-        timeframe=_TIMEFRAME,
+        timeframe=timeframe,
         status=SignalStatus.DRAFT,
         limit=1,
     )
@@ -77,7 +80,7 @@ def _has_open_signal(
     if not settings.signal_confirmation_enabled:
         active = signal_repository.find_paginated(
             asset_id=asset_id,
-            timeframe=_TIMEFRAME,
+            timeframe=timeframe,
             status=SignalStatus.ACTIVE,
             limit=1,
         )
@@ -89,14 +92,12 @@ def _has_open_signal(
 
     triggered = signal_repository.find_paginated(
         asset_id=asset_id,
-        timeframe=_TIMEFRAME,
+        timeframe=timeframe,
         status=SignalStatus.TRIGGERED,
         limit=1,
     )
     return any(
-        effective_status(
-            signal.status, signal.created_at, now, triggered_at=signal.triggered_at
-        )
+        effective_status(signal.status, signal.created_at, now, triggered_at=signal.triggered_at)
         == SignalStatus.TRIGGERED
         for signal in triggered
     )
@@ -104,14 +105,43 @@ def _has_open_signal(
 
 @celery_app.task(name="signals.generate_for_watchlist")  # type: ignore[untyped-decorator]
 def generate_signals_task() -> None:
-    """Hourly automatic signal generation (docs/51 §6 extended to a
-    scheduled trigger). Calls the exact same `SignalEngine.generate()`
-    path `POST /signals/generate/{symbol}` already uses - zero new
-    decision/scoring logic, only a new trigger. Builds the same
-    dependency graph FastAPI would per-request by calling the existing
+    """Hourly automatic signal generation on H1 (docs/51 §6 extended to a
+    scheduled trigger)."""
+    _generate_for_timeframe(_TIMEFRAME)
+
+
+@celery_app.task(name="signals.generate_tight_m5")  # type: ignore[untyped-decorator]
+def generate_tight_m5_signals_task() -> None:
+    """ADR-176 - the tight M5 strategy, every five minutes.
+
+    Gated on the setting rather than on the Beat schedule so the switch is
+    one place: Beat always enqueues, and a disabled strategy returns
+    immediately having touched no engine and spent nothing. The
+    alternative - registering the schedule conditionally - would need a
+    Beat restart to take effect, and would make "is it on?" answerable in
+    two different places.
+
+    Takes no LLM call while enabled (ADR-176 §4), so the 12x cadence is
+    12x of almost nothing rather than 12x of the AI bill.
+    """
+    if not settings.tight_m5_enabled:
+        return
+    _generate_for_timeframe(Timeframe.M5)
+
+
+def _generate_for_timeframe(timeframe: Timeframe) -> None:
+    """Shared body for both scheduled generators. Calls the exact same
+    `SignalEngine.generate()` path `POST /signals/generate/{symbol}` already
+    uses - zero new decision/scoring logic, only a new trigger. Builds the
+    same dependency graph FastAPI would per-request by calling the existing
     `app.dependencies.*` composition functions directly (mirrors
-    `market_data_tasks.py`'s manual-construction convention for
-    Celery tasks, which have no request-scoped `Depends` resolution).
+    `market_data_tasks.py`'s manual-construction convention for Celery
+    tasks, which have no request-scoped `Depends` resolution).
+
+    ADR-176: `timeframe` is a parameter rather than the module constant it
+    used to be, because the tight strategy runs the identical pipeline on
+    M5. Everything that made this H1-only - the dedup gate, the engine
+    call - now follows the timeframe it is given.
     """
     session = SessionLocal()
     try:
@@ -163,7 +193,7 @@ def generate_signals_task() -> None:
         # `MarketDataService.collect()`, which doesn't self-commit.
         now = datetime.now(UTC)
         for asset in asset_repository.list_active(limit=1000):
-            if _has_open_signal(signal_repository, asset.id, now):
+            if _has_open_signal(signal_repository, asset.id, now, timeframe):
                 # A live trade or a waiting draft already exists for this
                 # asset/timeframe (ADR-088 EXPIRED is read-time-only, so
                 # this re-checks effective_status rather than trusting
@@ -173,7 +203,7 @@ def generate_signals_task() -> None:
                 # cancelled at confirmation, so Telegram is not spammed.
                 continue
 
-            result = signal_engine.generate(asset, _TIMEFRAME)
+            result = signal_engine.generate(asset, timeframe)
             # ADR-166: a DRAFT is announced by the confirmation task once M15
             # confirms it, not here.
             if result.signal is not None and result.signal.status is SignalStatus.ACTIVE:
@@ -202,5 +232,14 @@ def register_signal_schedule() -> dict[str, dict[str, object]]:
         "generate-signals-watchlist": {
             "task": "signals.generate_for_watchlist",
             "schedule": crontab(minute=str(settings.signal_generation_minute)),
-        }
+        },
+        #: ADR-176 - the tight M5 strategy. Registered unconditionally; the
+        #: task itself returns immediately when the strategy is off, so the
+        #: switch needs no Beat restart. `*/5` lines up with the M5 candle
+        #: close, and M5 candles already arrive every 300s under
+        #: `market_data_min_collection_interval_seconds`.
+        "generate-signals-tight-m5": {
+            "task": "signals.generate_tight_m5",
+            "schedule": crontab(minute="*/5"),
+        },
     }

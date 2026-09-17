@@ -171,6 +171,27 @@ class AIOrchestratorEngine:
         decision: RecommendationDecision,
         extracted: ExtractedEvidence,
     ) -> _Narration:
+        #: ADR-176 - the M5 tight strategy takes no LLM call. Per ADR-077
+        #: every field on the result except `reasoning` is already
+        #: deterministic, and this is the same branch ADR-081 takes when the
+        #: provider fails: a real analysis row with a deterministic summary,
+        #: `ai_available=False`, `model_name="none"`. Taken on purpose here
+        #: rather than on failure, because a 5-minute cadence would be ~12x
+        #: the AI spend for prose on trades that live minutes.
+        #:
+        #: No warning is appended: unlike a provider failure, nothing went
+        #: wrong, and a warning would make a deliberate configuration look
+        #: like an incident.
+        if self._skips_narration(context.timeframe):
+            return _Narration(
+                reasoning=summary_fallback.build(
+                    context, decision.recommendation, decision.reasons
+                ),
+                ai_available=False,
+                model_name="none",
+                warnings=[],
+            )
+
         request = AIGenerationRequest(
             system_prompt=prompt_builder.SYSTEM_PROMPT,
             user_prompt=prompt_builder.build_user_prompt(
@@ -216,6 +237,12 @@ class AIOrchestratorEngine:
             reasoning=fallback, ai_available=False, model_name="none", warnings=warnings
         )
 
+    @staticmethod
+    def _skips_narration(timeframe: Timeframe) -> bool:
+        """True where ADR-176 chose determinism over narration - currently
+        only the M5 tight strategy, and only while it is switched on."""
+        return timeframe is Timeframe.M5 and settings.tight_m5_enabled
+
     def _review(
         self,
         context: AnalysisContext,
@@ -233,6 +260,14 @@ class AIOrchestratorEngine:
                 extra={"value": settings.ai_risk_review_mode},
             )
             mode = RiskReviewMode.OFF
+
+        #: ADR-176 - the same skip as the narration, and for the same
+        #: reason: the review is a second LLM call, so leaving it on would
+        #: put most of the 12x spend back. A tight M5 signal therefore
+        #: carries no verdict, which ADR-174's breakdown reads as "review
+        #: did not run" rather than as an approval.
+        if self._skips_narration(context.timeframe):
+            return None, []
 
         if mode is RiskReviewMode.OFF or decision.recommendation is Recommendation.WAIT:
             return None, []

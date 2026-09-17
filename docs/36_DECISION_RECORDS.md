@@ -11022,6 +11022,202 @@ Alternatives Considered
 
 ---
 
+# ADR-176
+
+Title
+
+Fixed-Distance ("Tight") Setups, at Two Timeframes
+
+Status
+
+Accepted
+
+Context
+
+The operator asked for a strategy with small, fixed price distances -
+the example given verbatim was `entry 4255, SL 4250, TP 4265-4270` on
+XAUUSD, a 5-point stop against a 10-15 point target (BACKLOG §44). The
+request was parked because the entry rule was never supplied and because
+it needed a decision record before code.
+
+`ai_orchestrator/candidate_setup_builder.py` cannot produce this. It
+derives the stop from `_STOP_ATR_MULTIPLE = 1.5` × ATR or the nearest
+structural level, whichever is *more conservative*, and the target from
+`_MIN_RISK_REWARD_MULTIPLE = 2` or structure, whichever is further. On
+XAUUSD H1 that yields roughly 20-22 point stops. The requested 5 points
+is about four times tighter than anything that path can emit, so this is
+a second route into candidate construction, not a parameter tweak.
+
+**Measured on production, 2026-09-17**, using the project's own candles
+and indicator code:
+
+| Timeframe | ATR(14) | Median candle range |
+|---|---|---|
+| H1 | 20.14 | 13.82 |
+| M15 | 8.37 | 8.38 |
+| M5 | 5.45 | 4.15 |
+| M1 | 2.23 | 1.98 |
+
+Two conclusions follow, and they are why this ADR splits the request in
+two rather than implementing it as asked:
+
+1. **A 5-point stop on an H1 signal is incoherent.** It is a quarter of
+   one H1 candle's true range and smaller than one average M5 candle. An
+   H1 signal's edge is an H1 thesis that needs hours to resolve; a
+   5-point stop gives it minutes, so it would be closed by ordinary
+   noise before being right or wrong. The risk distance must match the
+   timeframe of the analysis that produced it.
+2. **Tightening does not improve the edge, and it raises costs.** 5/10
+   and 33/67 are both 1:2 and both need better than a 33% win rate. What
+   changes is friction: spread is 0.26, which is 0.8% of a 33-point stop
+   and 5.2% of a 5-point one. `swap_long` on `XAUUSDc` is -547.6, so
+   tight longs held overnight bleed further.
+
+The operator, shown the above, chose to build both: a tightened H1
+variant sized to H1, and a genuinely tight variant relocated to M5.
+
+The M5 variant raises a cost question. Generation currently runs hourly
+on H1 only, explicitly "to keep OpenAI/market-data usage predictable"
+(`signal_tasks._TIMEFRAME`). Production ran 97 analyses in 7 days for
+91,380 input and 41,502 output tokens. A 5-minute cadence is 12× the
+clock rate, and tight trades resolve quickly so the "already open" skip
+clears sooner - realistically about 12× the AI spend.
+
+Decision
+
+**1. A fixed-distance mode in `candidate_setup_builder.build()`,
+additive.** The existing ATR/structure path remains the default and is
+untouched. When a fixed-distance profile is supplied, the builder takes
+entry from `latest_close` exactly as now, and sets stop and target at
+configured distances from it. Direction still comes from
+`_direction_for`, i.e. Market Regime's unambiguous trend - the entry
+*trigger* is unchanged from today's, which is what the operator chose
+when asked what condition should produce a tight entry.
+
+**2. Two applications of that mode, each switchable off on its own, and
+they are deliberately not the same shape.**
+
+| Name | Timeframe | Stop | Target | Shape | Sizing rationale |
+|---|---|---|---|---|---|
+| H1 tight mode | H1 | 10 | 20 | **Mode switch on the existing H1 signal** | 0.5 × H1 ATR - a third of today's distance, still outside M15 noise |
+| `tight_m5` | M5 | 5 | 10 | **New parallel strategy** | ≈1 × M5 ATR - the requested 5 points, on the timeframe where it is proportionate |
+
+Both are 1:2 and satisfy `_MIN_RISK_REWARD_MULTIPLE`. The distances are
+settings, not constants, so they can be retuned without a deploy - the
+numbers above are a starting point measured on one morning's volatility,
+not a calibration.
+
+**BACKLOG §44 recorded the operator as explicit that this must be
+additive and leave existing strategies unchanged. For H1 that is
+superseded here, at the operator's decision**, because the two
+constraints turned out to be incompatible. An additive H1 variant fires
+on exactly the same trigger as the normal H1 signal, and §5 below keeps
+them sharing one ADR-125 slot - so whichever ran first would take the
+slot every time and the tight variant would effectively never fire.
+Given the choice between reversing the slot decision (two correlated
+positions on one asset) and making H1 a mode, the operator chose the
+mode. The M5 strategy remains additive in the original sense.
+
+**3. The M5 strategy carries `strategy="tight"`. The H1 mode changes no
+tag**, because it is not a different strategy - the same setup is
+recorded, with different distances. The two H1 populations are still
+separable after the fact: risk distance is `abs(entry_price -
+stop_loss)`, stored on every row, and a tight-mode H1 signal has exactly
+10 where an ATR-derived one has 20-33. That is enough to compare them
+without a migration, so none is added.
+
+**4. The M5 variant takes no LLM call.** It reuses the deterministic path
+that already exists: per ADR-077/078/079/080 every field on
+`AIAnalysisResult` except `reasoning` is already deterministic, and
+ADR-081's provider-failure fallback already writes a complete analysis
+row with `summary_fallback`, `ai_available=False` and
+`model_name="none"` - a path production has exercised. The M5 variant
+takes that branch deliberately rather than on failure. This is not new
+architecture; it is an existing branch selected on purpose, which is why
+AI spend stays flat instead of rising 12×.
+
+**5. ADR-125's one-open-signal gate is unchanged, and needs no change.**
+`_has_open_signal` already filters by timeframe, so `tight_m5` is
+independent of the H1 signal for free. The H1 mode raises no collision
+question at all, because it does not add a second H1 signal - it changes
+the distances of the one that already exists. The operator explicitly
+rejected giving a tight H1 variant its own slot, which would have
+allowed two correlated positions on one asset with the EA acting on
+both.
+
+**6. ADR-166's M15 confirmation does not apply to `tight_m5`.** A 4-hour
+confirmation window on a trade with a 5-point stop is incoherent - the
+trade would be long dead before the window closed. `tight_m5` publishes
+on creation. H1 keeps confirmation exactly as it is; the mode changes
+distances, nothing about the lifecycle.
+
+**7. M5 candle collection needs no change.**
+`market_data_min_collection_interval_seconds` is 300 with no overrides in
+production, so M5 candles already arrive every five minutes.
+
+Consequences
+
+- The operator gets the tight strategy asked for, on the timeframe where
+  its stop distance is defensible, plus a tightened H1 variant that can
+  be compared directly against the existing one.
+- Both are additive and independently switchable. If either proves bad it
+  goes off with nothing else affected, which was the operator's explicit
+  condition.
+- `tight_m5` signals carry a deterministic summary, not an AI narration.
+  They will read as thinner than H1 signals in the UI and on Telegram.
+  That is the cost of not paying 12× for prose.
+- **The H1 mode changes every live H1 signal the moment it is switched
+  on.** That is the point of it, and it is the largest blast radius in
+  this ADR: the distances on the signals the EA actually trades change.
+  It is reversible by one setting, and the previous behaviour returns
+  with no data migration - but signals created while it was on keep the
+  distances they were created with, as they should.
+- Because the H1 mode is a switch rather than a tag, "when was tight mode
+  on" is not recorded in the database. The switch date must be noted by
+  the operator, or inferred from the 10-point risk distance, when reading
+  any before/after comparison.
+- More trades on M5 means more EA executions and more spread paid.
+  Spread is 5.2% of risk at a 5-point stop against 0.8% today, so this
+  strategy needs a materially better win rate than the H1 one just to
+  match it.
+- No fixed stop survives a repeat of the 2026-09-16 18:00 candle, which
+  ranged 112 points in an hour. That is an argument about position size,
+  which this ADR does not address.
+- `GET /admin/performance` (ADR-174) already breaks down by strategy and
+  timeframe, so both variants are measurable from day one without any
+  further work.
+
+Alternatives Considered
+
+- **5-point stop on the H1 trigger, as originally described.** Rejected
+  on the measured numbers above: a quarter of one H1 candle's range, so
+  it would stop out on noise and the resulting win rate would say nothing
+  about whether the setup was any good. Offered to the operator with that
+  caveat and declined in favour of splitting by timeframe.
+- **An additive parallel `tight_h1` strategy, as BACKLOG §44 asked.**
+  Rejected once the slot decision was made: sharing one ADR-125 slot with
+  an identically-triggered strategy means the tight one never wins the
+  race, so it would have been dead code that looked like a feature.
+- **Giving a tight H1 variant its own ADR-125 slot.** Rejected by the
+  operator: it permits two same-direction positions on one asset, and the
+  EA would act on both.
+- **Running the full AI pipeline on M5.** Rejected on cost: ~12× the
+  current spend for narration on trades that live minutes.
+- **Calling the AI only when a tight setup qualifies.** Rejected for now
+  as unpredictable - a busy session could still be expensive, and the
+  deterministic path is already proven.
+- **A TP range (4265-4270) or partial take-profits.** Rejected, as in
+  BACKLOG §44: `signals.take_profit` is a single column, and a range
+  would need the schema, backend, frontend and MQL5 EA changed together.
+- **Making the tight stop a smaller ATR multiple rather than a fixed
+  distance.** Genuinely tempting, and it would self-adjust to volatility.
+  Rejected because the operator asked for fixed, predictable distances,
+  and because a multiple reintroduces the behaviour where the stop moves
+  when volatility spikes - the opposite of what was requested. Worth
+  revisiting if the fixed distances prove fragile across sessions.
+
+---
+
 # Review Policy
 
 Review ADRs:

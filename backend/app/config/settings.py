@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -131,6 +132,31 @@ class Settings(BaseSettings):
     ai_risk_review_mode: str = "shadow"
 
     signal_ttl_hours: int = 24
+
+    # --- ADR-176: fixed-distance ("tight") setups --------------------------
+    #
+    # Both default OFF. Turning either on changes what the EA actually
+    # trades, so a deploy of this code must not silently change behaviour -
+    # the operator flips them deliberately.
+    #
+    # Distances are in price points on XAUUSD, measured against ATR(14) on
+    # production candles 2026-09-17: H1 20.14, M5 5.45. They are settings,
+    # not constants, because they were sized on one morning's volatility and
+    # will need retuning without a deploy.
+
+    #: H1 tight mode. Not a separate strategy - when on, the ordinary H1
+    #: signal is built with fixed distances instead of ATR/structure, so
+    #: every live H1 signal changes shape. Reversible by setting this back.
+    tight_h1_enabled: bool = False
+    tight_h1_stop_distance: Decimal = Decimal("10")
+    tight_h1_target_distance: Decimal = Decimal("20")
+
+    #: The M5 tight strategy - genuinely additive, its own timeframe, and
+    #: independent of the H1 signal because ADR-125's gate already filters
+    #: by timeframe. Takes no LLM call (ADR-176 §4).
+    tight_m5_enabled: bool = False
+    tight_m5_stop_distance: Decimal = Decimal("5")
+    tight_m5_target_distance: Decimal = Decimal("10")
 
     #: Signals created before this are excluded from every performance metric
     #: (ADR-174). They predate ADR-137's TRIGGERED gate and carry outcomes that

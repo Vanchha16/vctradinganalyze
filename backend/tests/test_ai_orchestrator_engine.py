@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database.base import Base
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
@@ -336,3 +337,61 @@ def test_an_unknown_focus_event_id_still_returns_an_analysis(
 
     assert result.ai_available is True
     assert "asking specifically about" not in provider.calls[-1].user_prompt
+
+
+# --- ADR-176: the tight M5 strategy takes no LLM call -------------------
+
+
+def test_tight_m5_skips_the_provider_entirely(
+    session: Session, asset: Asset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cost guarantee. A 5-minute cadence is 12x the clock rate, so the
+    strategy is only affordable if it never calls the provider.
+
+    Proven by handing it a provider that raises: if it were called at all,
+    the failure path would append an "AI narration unavailable" warning.
+    A clean result with `ai_available=False` and no warning means the call
+    was skipped deliberately, not attempted and lost.
+    """
+    monkeypatch.setattr(settings, "tight_m5_enabled", True)
+    _seed_trending_candles(session, asset, Timeframe.M5, 300, drift=0.3)
+    engine = _make_engine(session, MockAIProvider(raises=PermanentAIProviderError("must not run")))
+
+    result = engine.generate(asset, Timeframe.M5)
+
+    assert result.ai_available is False
+    assert result.model_name == "none"
+    assert not any("AI narration unavailable" in w for w in result.warnings)
+    #: Still a real analysis, not an empty shell - every field but the
+    #: narration is deterministic anyway (ADR-077).
+    assert result.reasoning.summary != ""
+
+
+def test_tight_m5_records_no_token_usage(
+    session: Session, asset: Asset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "tight_m5_enabled", True)
+    _seed_trending_candles(session, asset, Timeframe.M5, 300, drift=0.3)
+    engine = _make_engine(session, MockAIProvider(raises=PermanentAIProviderError("must not run")))
+
+    result = engine.generate(asset, Timeframe.M5)
+
+    row = session.get(AIAnalysis, result.id)
+    assert row is not None
+    assert row.input_tokens is None
+    assert row.output_tokens is None
+    #: ADR-167's review is a second LLM call. Leaving it on would put most
+    #: of the 12x spend back, so it is skipped by the same rule.
+    assert row.risk_review_verdict is None
+    assert row.risk_review_input_tokens is None
+
+
+def test_m5_still_narrates_while_the_tight_strategy_is_off(session: Session, asset: Asset) -> None:
+    """The skip is tied to the strategy being switched on, not to M5 being
+    M5 - an ordinary M5 analysis is unaffected."""
+    _seed_trending_candles(session, asset, Timeframe.M5, 300, drift=0.3)
+    engine = _make_engine(session, MockAIProvider())
+
+    result = engine.generate(asset, Timeframe.M5)
+
+    assert result.ai_available is True

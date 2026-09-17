@@ -87,7 +87,15 @@ class ContextBuilder:
         latest_candle = self._price_candle_repository.get_latest(asset.id, timeframe)
         latest_close = latest_candle.close if latest_candle is not None else None
 
-        candidate_setup = candidate_setup_builder.build(confidence, strategy, latest_close)
+        #: ADR-176 - a configured tight profile replaces the ATR/structure
+        #: distances for this timeframe. None for every timeframe that has
+        #: no profile enabled, which is the default everywhere.
+        candidate_setup = candidate_setup_builder.build(
+            confidence,
+            strategy,
+            latest_close,
+            fixed_distances=candidate_setup_builder.fixed_distances_for(timeframe),
+        )
 
         risk = None
         if candidate_setup is not None:

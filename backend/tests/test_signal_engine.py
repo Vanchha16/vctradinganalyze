@@ -68,11 +68,12 @@ def _make_result(
     entry_price: Decimal | None = None,
     stop_loss: Decimal | None = None,
     take_profit: Decimal | None = None,
+    timeframe: Timeframe = Timeframe.H1,
 ) -> AIAnalysisResult:
     return AIAnalysisResult(
         id=uuid.uuid4(),
         symbol="EURUSD",
-        timeframe=Timeframe.H1,
+        timeframe=timeframe,
         recommendation=recommendation,
         confidence_score=87.0,
         confidence_level="high",
@@ -186,3 +187,64 @@ def test_ai_orchestrator_engine_called_exactly_once(session: Session, asset: Ass
     engine.generate(asset, Timeframe.H1)
 
     assert fake_engine.call_count == 1
+
+
+# --- ADR-176: the tight M5 strategy never drafts ------------------------
+
+
+def test_tight_m5_publishes_immediately_despite_confirmation_being_on(
+    session: Session, asset: Asset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-176 - a 4-hour M15 confirmation window on a trade with a
+    5-point stop would outlive the trade several times over. Confirmation
+    is an H1 mechanism and stays one."""
+    monkeypatch.setattr(settings, "signal_confirmation_enabled", True)
+    monkeypatch.setattr(settings, "tight_m5_enabled", True)
+    result = _make_result(
+        recommendation=Recommendation.BUY,
+        entry_price=Decimal("1.17540"),
+        stop_loss=Decimal("1.17120"),
+        take_profit=Decimal("1.18150"),
+        timeframe=Timeframe.M5,
+    )
+    engine = SignalEngine(_FakeAIOrchestratorEngine(result), SignalRepository(session))
+
+    generation = engine.generate(asset, Timeframe.M5)
+
+    assert generation.signal is not None
+    assert generation.signal.status is SignalStatus.ACTIVE
+
+
+def test_h1_still_drafts_while_the_tight_m5_strategy_is_on(
+    session: Session, asset: Asset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Switching the M5 strategy on must not quietly stop H1 signals from
+    being confirmed."""
+    monkeypatch.setattr(settings, "signal_confirmation_enabled", True)
+    monkeypatch.setattr(settings, "tight_m5_enabled", True)
+    engine = SignalEngine(_FakeAIOrchestratorEngine(_buy_result()), SignalRepository(session))
+
+    generation = engine.generate(asset, Timeframe.H1)
+
+    assert generation.signal is not None
+    assert generation.signal.status is SignalStatus.DRAFT
+
+
+def test_m5_still_drafts_while_the_tight_strategy_is_off(
+    session: Session, asset: Asset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "signal_confirmation_enabled", True)
+    monkeypatch.setattr(settings, "tight_m5_enabled", False)
+    result = _make_result(
+        recommendation=Recommendation.BUY,
+        entry_price=Decimal("1.17540"),
+        stop_loss=Decimal("1.17120"),
+        take_profit=Decimal("1.18150"),
+        timeframe=Timeframe.M5,
+    )
+    engine = SignalEngine(_FakeAIOrchestratorEngine(result), SignalRepository(session))
+
+    generation = engine.generate(asset, Timeframe.M5)
+
+    assert generation.signal is not None
+    assert generation.signal.status is SignalStatus.DRAFT

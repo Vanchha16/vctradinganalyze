@@ -39,6 +39,13 @@ _SIGNAL_TYPE_BY_RECOMMENDATION = {
 }
 
 
+def _skips_confirmation(result: AIAnalysisResult) -> bool:
+    """ADR-176 - the tight M5 strategy publishes on creation rather than
+    waiting on M15. True only while that strategy is switched on, so
+    turning it off restores ordinary behaviour for M5 too."""
+    return result.timeframe is Timeframe.M5 and settings.tight_m5_enabled
+
+
 class SignalEngine:
     def __init__(
         self,
@@ -107,8 +114,16 @@ class SignalEngine:
             strategy=result.strategy.value if result.strategy is not None else None,
             #: ADR-166: saved as a DRAFT and published only once M15 confirms
             #: it. The setting restores immediate publication.
+            #:
+            #: ADR-176: the M5 tight strategy never drafts. Its stop is 5
+            #: points; a 4-hour M15 confirmation window would outlive the
+            #: trade several times over, so the signal would be confirmed
+            #: long after it was decided. Confirmation is an H1 mechanism
+            #: and stays one.
             status=(
-                SignalStatus.DRAFT if settings.signal_confirmation_enabled else SignalStatus.ACTIVE
+                SignalStatus.DRAFT
+                if settings.signal_confirmation_enabled and not _skips_confirmation(result)
+                else SignalStatus.ACTIVE
             ),
         )
         self._signal_repository.create(signal)

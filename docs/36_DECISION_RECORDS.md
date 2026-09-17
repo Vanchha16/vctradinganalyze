@@ -11218,6 +11218,151 @@ Alternatives Considered
 
 ---
 
+# ADR-177
+
+Title
+
+Confirm Signals on M1: A Delay, Not a Filter
+
+Status
+
+Accepted
+
+Context
+
+ADR-166 holds every new signal as a DRAFT until M15 breaks structure in
+its direction, within a 4-hour window. The operator noticed a draft
+(2026-09-17 08:03, XAUUSD SELL, entry 4327.49) where price reached the
+entry and then fell 17 points in their favour while the signal sat
+unconfirmed, and asked why.
+
+**The mechanism is working as designed, and the design is the problem.**
+
+A bearish BOS requires an M15 close below the most recent *still-unbroken
+swing low*, and a swing low is a fractal pivot: `FRACTAL_WINDOW = 2`, so
+a candle needs two candles either side that do not go lower. In that
+draft's case the M15 lows ran 4328 → 4324 → 4318 → 4314 → 4312 → 4310, a
+clean staircase. **No candle can become a swing low while the next one
+keeps making a new low**, so a fast one-way move in the signal's own
+direction produces no pivot to break, and therefore no confirmation. The
+faster and cleaner the move, the less likely confirmation fires.
+
+Worse, the confirmation is measured *in the trade's own direction*, so
+any move strong enough to confirm is a move that has already left the
+entry behind. That draft's nearest confirming level (4286.30) sat 70% of
+the way to its take profit, and by then price was already ten points
+below a SELL entry it would never fill at.
+
+**Measured across all 19 drafts of the confirmation era** (2026-09-11 to
+2026-09-17, all XAUUSD, all SELL):
+
+- 11 confirmed, 3 cancelled because price hit the stop or target before
+  M15 confirmed, 3 cancelled as a same-setup repeat, 2 expired
+  unconfirmed. Six of 19 drafts (32%) ever became a trade.
+- Confirmation lag 20-255 minutes, median ~105.
+- On the six where the confirming price is still readable, a median of
+  22.4% of the target was already gone at confirmation, worst case 68.1%.
+- The six that filled: one win (+21.64), one hand-closed (+23.18), four
+  stopped out (-28.35, -21.68, -21.85, -33.40). Net -60.46 points.
+
+Entering a fifth of the way into a move means carrying the full stop for
+a reduced remaining target: the real risk/reward is worse than the 1:2
+printed on the signal. This is the same class of error as ADR-145's
+entry bug - the stated R:R is not the R:R being traded.
+
+**Re-running the same decision on faster timeframes**, over the same 19
+drafts, reconstructing `bos_analyzer` over each draft's candle window:
+
+| Timeframe | Confirmed | Never | Median lag | Median % of target gone | ≥50% gone |
+|---|---|---|---|---|---|
+| M15 (today) | 14/19 | 5 | 101 min | 30.2% | 2 |
+| M5 | 19/19 | 0 | 42 min | 12.9% | 1 |
+| M1 | 19/19 | 0 | 6 min | 4.9% | 0 |
+
+M1 solves the entry problem outright - and on six drafts it confirmed
+*before* price even reached the entry, which is the ideal case.
+
+**But M5 and M1 confirm 19 out of 19. A step that passes every candidate
+is not a filter; it is a delay.** M15 rejected 5 of 19. Choosing M1
+therefore means accepting the three trades M15 kept the operator out of
+by cancelling them when price hit the stop first.
+
+The operator was shown exactly this and chose M1 on those terms.
+
+Decision
+
+**1. Confirmation runs on M1, not M15.** `signal_confirmation_timeframe`
+is a setting (default `m1`) rather than the module constant it was, so
+returning to M15 is a configuration change and not a deploy.
+
+**2. The confirmation task runs every five minutes**, replacing
+`crontab(minute="3,18,33,48")`. M1 candles are collected on a 300-second
+floor (`collect-market-data-m1`), so a 15-minute task cadence would have
+throttled M1's six-minute advantage back to fifteen. The whole benefit
+being bought here is latency; leaving the old cadence would have bought
+almost none of it.
+
+**3. The entry price is not re-priced at confirmation.** Re-pricing to
+the confirming price was recommended and declined: the operator chose to
+keep the entry the analysis proposed. With a median 4.9% of target gone
+at M1 confirmation, the staleness this leaves is small - but it is not
+zero, and it is the first thing to revisit if fills start missing.
+
+**4. The 4-hour window is unchanged.** M1's median lag is six minutes, so
+the window rarely binds; shortening it at the same time would make any
+change in behaviour impossible to attribute to either knob.
+
+**5. This ADR does not claim the filter still filters.** On this sample
+it does not. It is recorded as a latency mechanism that also provides a
+last-moment stop/target check (the `evaluate` step that cancels a draft
+whose price already played out), and nothing more.
+
+Consequences
+
+- Signals become tradeable in minutes rather than hours, at close to the
+  price the analysis intended.
+- **The operator will take trades ADR-166 previously prevented** - three
+  in this sample, all of which hit their stop. That is the accepted cost,
+  not an oversight.
+- More signals reach Telegram and the EA feed, because far fewer drafts
+  are cancelled. Volume roughly triples on this sample (6 of 19 became
+  trades; 19 of 19 now confirm, less whatever the same-setup and
+  replacement rules still cancel).
+- The confirmation task runs 3x more often. It is a database read plus an
+  SMC analysis per asset with drafts, no AI call, so the cost is
+  negligible - but it is no longer negligible if the draft count grows.
+- ADR-166's premise is materially weakened, not formally superseded. **If
+  a larger sample shows M1 rejecting nothing over a meaningful number of
+  drafts, the honest next step is to delete the confirmation step rather
+  than keep it as ceremony**, and that deserves its own decision.
+- The evidence here is 19 signals, one week, one symbol, and every one of
+  them a SELL. Directional bias is unmeasured. Nothing in this ADR should
+  be read as established.
+
+Alternatives Considered
+
+- **Re-pricing the entry at confirmation** (recommended, declined by the
+  operator). Keeps the filter's intent while removing the stale-entry
+  arithmetic entirely, so the 1:2 on the signal is the 1:2 traded.
+  Rejected in favour of keeping the analysis's own entry. Revisit first
+  if fills start missing.
+- **M5.** 42-minute lag, 12.9% of target gone, and still 19/19 - slower
+  than M1 without buying any selectivity on this sample.
+- **Dropping confirmation entirely.** Functionally close to what M1 does,
+  and simpler. Kept for now because the stop/target pre-check still has
+  value and because removing a safety step deserves more than a 19-signal
+  sample.
+- **Inverting it - publish immediately and let M1 structure *cancel* a
+  pending signal.** The most defensible design on paper: trade by
+  default, withdraw on contrary evidence. Rejected as the largest
+  behavioural change of the four, and worth its own decision once M1
+  confirmation has produced real outcomes.
+- **Shortening the window instead.** Does not address the mechanism: a
+  shorter window makes a draft expire sooner, it does not make structure
+  break any earlier.
+
+---
+
 # Review Policy
 
 Review ADRs:

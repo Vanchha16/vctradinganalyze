@@ -186,6 +186,18 @@ class Settings(BaseSettings):
     # its direction within the window. False restores immediate publication.
     signal_confirmation_enabled: bool = True
     signal_confirmation_window_hours: int = 4
+    #: ADR-177 - which timeframe's break of structure confirms a draft.
+    #:
+    #: M15 (ADR-166's original) confirmed 14 of 19 drafts at a median lag
+    #: of 101 minutes, by which point a median 30% of the target was
+    #: already gone - and a fast one-way move produces no swing pivot to
+    #: break at all, so the cleanest moves were the least likely to
+    #: confirm. M1 confirms at a median 6 minutes with 4.9% gone.
+    #:
+    #: The honest caveat, recorded in ADR-177: on that sample M1 confirmed
+    #: 19 of 19, so this is a latency mechanism, not a filter. A string
+    #: rather than a constant so it can go back to "m15" without a deploy.
+    signal_confirmation_timeframe: str = "m1"
     # ADR-168 - a confirmed draft replaces an older signal that has not filled.
     # A draft in the same direction whose entry is closer to the open signal's
     # entry than this fraction of that signal's risk (entry-to-stop distance)

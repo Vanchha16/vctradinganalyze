@@ -42,10 +42,17 @@ from app.workers.celery_app import celery_app
 logger = structlog.get_logger(__name__)
 
 _PRICE_TIMEFRAME = Timeframe.M1
-_CONFIRMATION_TIMEFRAME = Timeframe.M15
-#: Two minutes after each M15 collection (minutes 1, 16, 31, 46 -
-#: `market_data_tasks`), so every run reads the candle that just closed.
-_SCHEDULE = crontab(minute="3,18,33,48")
+#: ADR-177 - M1 by default, configurable back to M15. Resolved at import
+#: like every other settings-derived constant here; an unparseable value
+#: is loud rather than silently falling back to a different timeframe
+#: than the operator asked for.
+_CONFIRMATION_TIMEFRAME = Timeframe(settings.signal_confirmation_timeframe.lower())
+#: ADR-177 - every five minutes, matching `collect-market-data-m1`'s 300s
+#: floor. The old `minute="3,18,33,48"` was two minutes after each M15
+#: collection, which made sense when M15 confirmed; against M1 candles it
+#: would throttle a six-minute confirmation back to fifteen, and latency
+#: is the entire benefit being bought here.
+_SCHEDULE = crontab(minute="*/5")
 _DRAFT_LIMIT = 1000
 _OPEN_STATUSES = frozenset({SignalStatus.ACTIVE, SignalStatus.TRIGGERED})
 

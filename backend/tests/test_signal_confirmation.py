@@ -340,9 +340,12 @@ def test_an_expired_draft_is_cancelled_quietly(
     assert published["changed"] == [draft.id]
 
 
-def test_one_m15_analysis_per_asset_however_many_drafts(
+def test_one_structure_analysis_per_asset_however_many_drafts(
     session: Session, published: dict[str, list[Any]]
 ) -> None:
+    """One analysis per asset per run, and on the *configured* confirmation
+    timeframe (ADR-177) rather than a hardcoded M15 - the timeframe is a
+    setting now, so this asserts against the setting."""
     asset = _asset(session)
     session.add_all([_signal(asset_id=asset.id), _signal(asset_id=asset.id)])
     session.commit()
@@ -350,7 +353,43 @@ def test_one_m15_analysis_per_asset_however_many_drafts(
 
     _run(session, engine, _CREATED + timedelta(minutes=30))
 
-    assert engine.calls == [("XAUUSD", Timeframe.M15)]
+    assert engine.calls == [("XAUUSD", signal_confirmation_tasks._CONFIRMATION_TIMEFRAME)]
+
+
+# --- ADR-177: confirmation moved to M1 --------------------------------------
+
+
+def test_confirmation_runs_on_m1_by_default() -> None:
+    """ADR-177. M15 confirmed 14 of 19 drafts at a median 101-minute lag,
+    by which point a median 30% of the target was gone; M1 confirms at a
+    median 6 minutes with 4.9% gone."""
+    assert settings.signal_confirmation_timeframe == "m1"
+    assert signal_confirmation_tasks._CONFIRMATION_TIMEFRAME is Timeframe.M1
+
+
+def test_the_confirmation_task_runs_every_five_minutes() -> None:
+    """M1 candles land on a 300s floor (`collect-market-data-m1`). The old
+    15-minute cadence would throttle a six-minute confirmation back to
+    fifteen, and latency is the whole benefit ADR-177 buys."""
+    schedule = signal_confirmation_tasks.register_signal_confirmation_schedule()
+    entry = next(iter(schedule.values()))
+
+    assert set(entry["schedule"].minute) == {0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}
+
+
+def test_the_confirmation_timeframe_is_configurable_back_to_m15() -> None:
+    """Reverting ADR-177 must be a setting, not a deploy. Re-imports the
+    module so the import-time constant is rebuilt from the setting."""
+    import importlib
+
+    original = settings.signal_confirmation_timeframe
+    try:
+        settings.signal_confirmation_timeframe = "m15"
+        reloaded = importlib.reload(signal_confirmation_tasks)
+        assert reloaded._CONFIRMATION_TIMEFRAME is Timeframe.M15
+    finally:
+        settings.signal_confirmation_timeframe = original
+        importlib.reload(signal_confirmation_tasks)
 
 
 # --- Replacing a signal that has not filled (ADR-168) -----------------------

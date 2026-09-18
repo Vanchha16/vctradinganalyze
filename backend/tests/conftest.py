@@ -114,3 +114,19 @@ class _FakeRateLimitRedis:
 @pytest.fixture(autouse=True)
 def _isolate_public_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.dependencies.rate_limit._redis_client", _FakeRateLimitRedis())
+
+
+@pytest.fixture(autouse=True)
+def _isolate_runtime_settings(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    """ADR-178's overlay reads stored overrides from whatever database
+    `SessionLocal` points at, on every API request. Left alone, a runtime
+    override in a developer's local database - or one a test stored - would
+    silently change `settings` for unrelated tests. Here the overlay reads
+    nothing, and every override a test applied is undone afterwards.
+    Imported inside the fixture to keep this module's top free of `app.*`
+    imports (see the module docstring)."""
+    from app.services import runtime_settings
+
+    monkeypatch.setattr(runtime_settings, "_load_rows", lambda: {})
+    yield
+    runtime_settings.reset_for_tests()

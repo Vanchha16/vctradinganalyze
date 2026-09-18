@@ -1,5 +1,5 @@
 from celery import Celery
-from celery.signals import setup_logging, worker_ready
+from celery.signals import setup_logging, task_prerun, worker_ready
 
 from app.config import settings
 from app.core.logging import configure_logging
@@ -59,3 +59,16 @@ celery_app.conf.beat_schedule = {
     **telegram_tasks.register_telegram_schedule(),
     **ea_tasks.register_ea_schedule(),
 }
+
+
+@task_prerun.connect  # type: ignore[untyped-decorator]  # celery ships no decorator stubs
+def _refresh_runtime_settings(*_: object, **__: object) -> None:
+    """ADR-178 - pick up settings the super admin changed, before every task.
+    Cached and fail-open inside `refresh`, so this is at most one small query
+    per worker process every 30 seconds and can never fail a task. Imported
+    here, not at module level, to keep this module free of an import cycle
+    through the services it would otherwise pull in at Celery start-up."""
+    from app.services import runtime_settings
+
+    runtime_settings.refresh()
+

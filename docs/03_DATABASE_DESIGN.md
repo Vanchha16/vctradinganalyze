@@ -761,6 +761,15 @@ description
 
 updated_at
 
+Key namespaces in use:
+
+- `runtime.<setting>` (ADR-178) - strategy and signal settings the super
+  admin changed from the website. A row here outranks the same setting in
+  `.env`; no row means the `.env` value applies. Values are stored as text
+  and parsed by `app/services/runtime_settings.py`, which owns the list of
+  valid keys - a `runtime.` key it does not know is ignored.
+- the Telegram poller's update offset.
+
 ---
 
 # 16. Relationships

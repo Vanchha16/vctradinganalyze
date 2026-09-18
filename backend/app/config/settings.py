@@ -158,6 +158,13 @@ class Settings(BaseSettings):
     tight_m5_stop_distance: Decimal = Decimal("5")
     tight_m5_target_distance: Decimal = Decimal("10")
 
+    #: ADR-178 - Strategy Engine strategies an administrator has switched
+    #: off. Still scored, so the analysis stays explainable, but never
+    #: primary. A tuple, not a list: this value can be overlaid at runtime
+    #: onto a shared settings object, so it must be immutable. Normally set
+    #: from the admin page, not `.env`.
+    disabled_strategies: tuple[str, ...] = ()
+
     #: Signals created before this are excluded from every performance metric
     #: (ADR-174). They predate ADR-137's TRIGGERED gate and carry outcomes that
     #: current code cannot produce - stored SUCCESSFUL/STOPPED_OUT with

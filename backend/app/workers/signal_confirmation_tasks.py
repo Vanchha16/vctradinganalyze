@@ -42,11 +42,15 @@ from app.workers.celery_app import celery_app
 logger = structlog.get_logger(__name__)
 
 _PRICE_TIMEFRAME = Timeframe.M1
-#: ADR-177 - M1 by default, configurable back to M15. Resolved at import
-#: like every other settings-derived constant here; an unparseable value
-#: is loud rather than silently falling back to a different timeframe
-#: than the operator asked for.
-_CONFIRMATION_TIMEFRAME = Timeframe(settings.signal_confirmation_timeframe.lower())
+
+
+def _confirmation_timeframe() -> Timeframe:
+    """ADR-177's setting, read on every run rather than once at import
+    (ADR-178), so a change made from the admin page applies to the next
+    confirmation pass without a worker restart. An unparseable value is
+    loud rather than silently falling back to a different timeframe than
+    the operator asked for."""
+    return Timeframe(settings.signal_confirmation_timeframe.lower())
 #: ADR-177 - every five minutes, matching `collect-market-data-m1`'s 300s
 #: floor. The old `minute="3,18,33,48"` was two minutes after each M15
 #: collection, which made sense when M15 confirmed; against M1 candles it
@@ -59,7 +63,7 @@ _OPEN_STATUSES = frozenset({SignalStatus.ACTIVE, SignalStatus.TRIGGERED})
 
 def _m15_structure(smc_engine: SMCEngine, asset: Asset) -> SMCAnalysisResult | None:
     try:
-        return smc_engine.analyze(asset, _CONFIRMATION_TIMEFRAME)
+        return smc_engine.analyze(asset, _confirmation_timeframe())
     except ResourceNotFoundException:
         return None
 

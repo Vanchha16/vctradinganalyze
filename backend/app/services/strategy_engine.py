@@ -15,6 +15,7 @@ setup this engine doesn't have.
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from app.config import settings
 from app.indicators.types import OHLCVSeries
 from app.models.asset import Asset
 from app.models.enums import Timeframe
@@ -105,7 +106,9 @@ class StrategyEngine:
             strategy: strategy_scorer.score(strategy, evidence, timeframe)
             for strategy in StrategyName
         }
-        primary_strategy, primary_breakdown, alternatives, rejected = ranking.rank(scores)
+        primary_strategy, primary_breakdown, alternatives, rejected = ranking.rank(
+            scores, _disabled_strategies()
+        )
 
         return StrategyEvaluation(
             symbol=asset.symbol,
@@ -154,3 +157,12 @@ class StrategyEngine:
             )
             events.extend(result.events)
         return events
+
+
+def _disabled_strategies() -> frozenset[StrategyName]:
+    """ADR-178 - read per evaluation, so an admin change applies to the next
+    analysis. Unknown names are ignored rather than fatal: the admin page
+    only ever stores valid ones, and a hand-edited `.env` must not stop the
+    engine."""
+    known = {s.value: s for s in StrategyName}
+    return frozenset(known[name] for name in settings.disabled_strategies if name in known)

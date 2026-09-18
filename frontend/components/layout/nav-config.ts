@@ -17,6 +17,7 @@ import {
   Settings as SettingsIcon,
   ShieldCheck,
   Signal,
+  SlidersHorizontal,
   Target,
   Terminal,
   UserRound,
@@ -81,7 +82,11 @@ export const NAV_GROUPS: NavGroup[] = [
     // matching who can hold an EA token (ADR-161).
     group: "Automation",
     roles: ["super_admin"],
-    items: [{ label: "EA Activity", href: "/ea-activity", icon: Bot }],
+    items: [
+      { label: "EA Activity", href: "/ea-activity", icon: Bot },
+      // ADR-178 - runtime strategy/signal settings, same owner-only boundary.
+      { label: "Strategy Settings", href: "/admin/strategy-settings", icon: SlidersHorizontal },
+    ],
   },
   {
     group: "Account",

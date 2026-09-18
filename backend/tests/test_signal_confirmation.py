@@ -353,7 +353,7 @@ def test_one_structure_analysis_per_asset_however_many_drafts(
 
     _run(session, engine, _CREATED + timedelta(minutes=30))
 
-    assert engine.calls == [("XAUUSD", signal_confirmation_tasks._CONFIRMATION_TIMEFRAME)]
+    assert engine.calls == [("XAUUSD", signal_confirmation_tasks._confirmation_timeframe())]
 
 
 # --- ADR-177: confirmation moved to M1 --------------------------------------
@@ -364,7 +364,7 @@ def test_confirmation_runs_on_m1_by_default() -> None:
     by which point a median 30% of the target was gone; M1 confirms at a
     median 6 minutes with 4.9% gone."""
     assert settings.signal_confirmation_timeframe == "m1"
-    assert signal_confirmation_tasks._CONFIRMATION_TIMEFRAME is Timeframe.M1
+    assert signal_confirmation_tasks._confirmation_timeframe() is Timeframe.M1
 
 
 def test_the_confirmation_task_runs_every_five_minutes() -> None:
@@ -377,19 +377,16 @@ def test_the_confirmation_task_runs_every_five_minutes() -> None:
     assert set(entry["schedule"].minute) == {0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}
 
 
-def test_the_confirmation_timeframe_is_configurable_back_to_m15() -> None:
-    """Reverting ADR-177 must be a setting, not a deploy. Re-imports the
-    module so the import-time constant is rebuilt from the setting."""
-    import importlib
-
-    original = settings.signal_confirmation_timeframe
-    try:
-        settings.signal_confirmation_timeframe = "m15"
-        reloaded = importlib.reload(signal_confirmation_tasks)
-        assert reloaded._CONFIRMATION_TIMEFRAME is Timeframe.M15
-    finally:
-        settings.signal_confirmation_timeframe = original
-        importlib.reload(signal_confirmation_tasks)
+def test_the_confirmation_timeframe_is_read_on_every_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-178: read per run, not once at import, so a change from the
+    admin page reaches the next confirmation pass without a restart -
+    reverting ADR-177 is a setting, not a deploy."""
+    monkeypatch.setattr(settings, "signal_confirmation_timeframe", "m15")
+    assert signal_confirmation_tasks._confirmation_timeframe() is Timeframe.M15
+    monkeypatch.setattr(settings, "signal_confirmation_timeframe", "m5")
+    assert signal_confirmation_tasks._confirmation_timeframe() is Timeframe.M5
 
 
 # --- Replacing a signal that has not filled (ADR-168) -----------------------

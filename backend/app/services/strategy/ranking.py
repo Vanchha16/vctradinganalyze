@@ -24,12 +24,21 @@ def rejection_reason(strategy: StrategyName, breakdown: StrategyBreakdown) -> st
     return None
 
 
+#: ADR-178 - shown wherever rejected strategies are listed, so a strategy
+#: that "never wins" can be traced to a setting rather than to the market.
+DISABLED_REASON = "Disabled by an administrator."
+
+
 def rank(
     scores: dict[StrategyName, StrategyBreakdown],
+    disabled: frozenset[StrategyName] = frozenset(),
 ) -> tuple[
     StrategyName | None, StrategyBreakdown | None, list[RankedStrategy], list[RejectedStrategy]
 ]:
-    """Returns `(primary_strategy, primary_breakdown, alternatives, rejected)`."""
+    """Returns `(primary_strategy, primary_breakdown, alternatives, rejected)`.
+
+    `disabled` (ADR-178) strategies are always rejected. With every strategy
+    disabled there is no primary, so every analysis is WAIT."""
     declaration_order = list(StrategyName)
 
     accepted: list[tuple[StrategyName, StrategyBreakdown]] = []
@@ -37,7 +46,11 @@ def rank(
 
     for strategy in declaration_order:
         breakdown = scores[strategy]
-        reason = rejection_reason(strategy, breakdown)
+        # ADR-178: still scored, so the analysis stays explainable, but
+        # never primary. Checked first so the reason given is the real one.
+        reason = (
+            DISABLED_REASON if strategy in disabled else rejection_reason(strategy, breakdown)
+        )
         if reason is not None:
             rejected.append(
                 RejectedStrategy(strategy=strategy, score=breakdown.total, reason=reason)

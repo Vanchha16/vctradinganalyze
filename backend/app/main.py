@@ -1,14 +1,16 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 from app.api.v1.router import api_router
 from app.config import settings
 from app.core.logging import configure_logging
 from app.exceptions import register_exception_handlers
 from app.middleware import CorrelationIdMiddleware, MetricsMiddleware, SecurityHeadersMiddleware
+from app.services import runtime_settings
 from app.services.ingestion_health import log_active_providers
 
 
@@ -46,6 +48,16 @@ app.add_middleware(
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(MetricsMiddleware)
+
+
+@app.middleware("http")
+async def _refresh_runtime_settings(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """ADR-178 - pick up settings the super admin changed. Cached for 30s and
+    fail-open inside `refresh`; run in a thread so its occasional database
+    read never blocks the event loop."""
+    await run_in_threadpool(runtime_settings.refresh)
+    return await call_next(request)
+
 
 register_exception_handlers(app)
 

@@ -1144,6 +1144,20 @@ GET /subscription/history
 
 # Admin
 
+GET /admin/runtime-settings
+
+PUT /admin/runtime-settings
+
+ADR-178. Super admin only. Strategy on/off, tight setup distances and
+signal pipeline settings. `GET` returns every managed setting with its
+effective value, `.env` default, whether it is overridden and its allowed
+values. `PUT` takes `{"changes": {setting: value}}`, validated as one batch
+(an invalid batch changes nothing); `null` resets a setting to `.env`.
+Every change is audit-logged. Other processes see it within 30 seconds.
+
+---
+
+
 GET /admin/users
 
 GET /admin/assets

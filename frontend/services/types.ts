@@ -1032,3 +1032,39 @@ export interface AdminPerformanceResponse {
   risk_review: PerformanceBreakdownRow[];
   replacements: ReplacementSummary;
 }
+
+/* ---------------- Runtime strategy & signal settings (ADR-178) ---------------- */
+
+export type RuntimeSettingKind = "bool" | "int" | "decimal" | "choice" | "strategies";
+export type RuntimeSettingGroup = "strategies" | "tight" | "pipeline";
+/** bool -> boolean, int -> number, decimal -> string (exact), choice -> string,
+ * strategies -> list of disabled strategy names. */
+export type RuntimeSettingValue = boolean | number | string | string[];
+
+export interface RuntimeSetting {
+  key: string;
+  group: RuntimeSettingGroup;
+  label: string;
+  help: string;
+  kind: RuntimeSettingKind;
+  /** What the system uses right now. */
+  value: RuntimeSettingValue;
+  /** The `.env` value a reset returns to. */
+  default: RuntimeSettingValue;
+  overridden: boolean;
+  minimum: string | null;
+  maximum: string | null;
+  choices: string[];
+  updated_at: string | null;
+}
+
+export interface RuntimeSettingListResponse {
+  /** Other processes pick a change up within this many seconds. */
+  propagation_seconds: number;
+  items: RuntimeSetting[];
+}
+
+/** Validated as one batch. `null` resets a setting to its `.env` value. */
+export interface RuntimeSettingUpdateRequest {
+  changes: Record<string, RuntimeSettingValue | null>;
+}

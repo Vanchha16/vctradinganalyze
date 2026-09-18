@@ -1,5 +1,7 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/services/api-client";
 import type {
+  RuntimeSettingListResponse,
+  RuntimeSettingUpdateRequest,
   AdminPerformanceResponse,
   AdminApiUsageResponse,
   ApiCredentialListResponse,
@@ -200,4 +202,16 @@ export function deactivateAdminAsset(id: string): Promise<Asset> {
  * two readers cannot quote different numbers at each other. */
 export function getAdminPerformance(): Promise<AdminPerformanceResponse> {
   return apiGet<AdminPerformanceResponse>("/admin/performance");
+}
+
+/** `GET /admin/runtime-settings` (ADR-178) - super admin only. */
+export function getRuntimeSettings(): Promise<RuntimeSettingListResponse> {
+  return apiGet<RuntimeSettingListResponse>("/admin/runtime-settings");
+}
+
+/** `PUT /admin/runtime-settings` - one batch, validated as a whole. */
+export function updateRuntimeSettings(
+  payload: RuntimeSettingUpdateRequest,
+): Promise<RuntimeSettingListResponse> {
+  return apiPut<RuntimeSettingListResponse>("/admin/runtime-settings", payload);
 }

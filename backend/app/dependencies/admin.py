@@ -16,11 +16,13 @@ from app.repositories.news_article_repository import NewsArticleRepository
 from app.repositories.news_sentiment_repository import NewsSentimentRepository
 from app.repositories.news_source_repository import NewsSourceRepository
 from app.repositories.signal_repository import SignalRepository
+from app.repositories.system_setting_repository import SystemSettingRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.user_session_repository import UserSessionRepository
 from app.services.admin_asset_service import AdminAssetService
 from app.services.admin_audit_log_service import AdminAuditLogService
 from app.services.admin_credential_service import AdminCredentialService
+from app.services.admin_runtime_settings_service import AdminRuntimeSettingsService
 from app.services.admin_system_service import AdminSystemService
 from app.services.admin_user_service import AdminUserService
 from app.services.economic_calendar_ingestion_pipeline import EconomicCalendarIngestionPipeline
@@ -58,6 +60,16 @@ def get_admin_asset_service(db: Annotated[Session, Depends(get_db)]) -> AdminAss
 def get_admin_audit_log_service(db: Annotated[Session, Depends(get_db)]) -> AdminAuditLogService:
     return AdminAuditLogService(
         audit_log_repository=AuditLogRepository(db), user_repository=UserRepository(db)
+    )
+
+
+def get_admin_runtime_settings_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminRuntimeSettingsService:
+    """ADR-178 - runtime strategy and signal settings."""
+    return AdminRuntimeSettingsService(
+        setting_repository=SystemSettingRepository(db),
+        audit_log_repository=AuditLogRepository(db),
     )
 
 

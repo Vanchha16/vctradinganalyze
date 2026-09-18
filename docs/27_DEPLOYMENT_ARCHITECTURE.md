@@ -171,6 +171,15 @@ curl -s -o /dev/null -w "%{http_code}
 "   http://localhost:3000/_next/static/chunks/$(ls .next/static/chunks | head -1)
 ```
 
+**`.env` is not the whole truth for strategy settings (ADR-178).** The
+strategy on/off switches, tight setup distances and signal pipeline
+settings can be overridden from Admin -> Strategy Settings, stored in
+`system_settings` under `runtime.*`. A stored override outranks `.env`.
+Before editing one of those values in `.env` on the server, check that page
+(or `SELECT key, value FROM system_settings WHERE key LIKE 'runtime.%'`) -
+otherwise the edit can be silently ignored. Overrides take effect within 30
+seconds without a restart.
+
 **Resource note:** disk is not tight (48G, ~39G free). Memory is - 909MB
 RAM, ~172MB available, plus a 1GB swapfile that `npm run build` relies
 on. BACKLOG.md §10's "~1.2GB free disk" is stale.

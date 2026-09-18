@@ -11363,6 +11363,151 @@ Alternatives Considered
 
 ---
 
+# ADR-178
+
+Title
+
+Strategy and Signal Settings Editable by the Super Admin at Runtime
+
+Status
+
+Accepted
+
+Context
+
+Every strategy and signal-pipeline knob lives in `backend/.env`. Changing
+one - as on 2026-09-18, when the operator turned on the tight M5 strategy
+(ADR-176) - means an SSH session, a hand edit of a file holding every
+secret the platform has, and a service restart. The operator asked for
+these to be manageable from the website instead.
+
+Asked which controls, the operator chose three groups and declined a
+fourth:
+
+- **Strategies:** turn each of the eight Strategy Engine strategies on or
+  off - for example to stop `bbma` or `breakout` competing for the primary
+  slot while they keep losing.
+- **Tight setups (ADR-176):** switch tight M5 and tight H1 mode on or off,
+  and change their stop and target distances.
+- **Signal pipeline:** confirmation on/off, confirmation timeframe (ADR-177)
+  and window (ADR-166), AI risk-review mode (ADR-167), and the pending and
+  live signal lifetimes (ADR-088, ADR-137).
+- Declined: showing each strategy's results on the same page. They remain
+  on `GET /admin/performance` (ADR-174).
+
+Access: super admin only, chosen by the operator - the same boundary as
+EA tokens (ADR-161), because these settings change what the EA trades.
+
+Decision
+
+**1. Database first, `.env` second - ADR-156's rule, reused.** The
+credential resolver already established it: a stored value wins, and with
+no stored value every caller gets exactly the `.env` value it always did.
+The same rule applies here, so a deployment with no rows behaves
+identically to today and the current `.env` stays the default.
+
+**2. Stored in the existing `system_settings` table** (docs/03 §15), one
+row per overridden setting, keyed `runtime.<setting>`. No new table and no
+migration. The prefix keeps these apart from the table's only other use,
+the Telegram poller's offset.
+
+**3. Delivered by overlaying onto the `settings` object, not by changing
+call sites.** Every consumer already reads `settings.<name>` at call time -
+the check for this ADR found exactly one exception, the confirmation
+timeframe resolved at import in `signal_confirmation_tasks`, which this ADR
+moves to call time. So rather than thread a resolver through status
+resolution, the repository's SQL status clause, the strategy engine, the
+orchestrator and the worker tasks, one refresh function writes the stored
+overrides onto the settings object:
+
+- Called at the start of **every Celery task** (`task_prerun`) and on
+  **every API request** (middleware).
+- Cached for 30 seconds, as ADR-156's resolver is, so the cost is at most
+  one small query per process per 30 seconds, and a change takes effect
+  within 30 seconds without a restart. The admin page says so.
+- It snapshots each managed setting's `.env` value before first touching
+  it, and restores that value when an override is removed.
+- **Fail-open.** If the table cannot be read, nothing is changed and the
+  last known values stand. A settings lookup must never be the reason a
+  signal task fails.
+- It only ever writes the keys in its own registry, and only ever restores
+  a key it previously overrode. With no rows, it changes nothing - which
+  also keeps it from interfering with tests that set these values directly.
+
+**4. Disabling a strategy is a ranking rule, not a scoring change.**
+`ranking.rank` takes the set of disabled strategies and places each in
+`rejected_strategies` with the reason "Disabled by an administrator." It is
+still scored, so the analysis stays explainable; it simply can never be
+primary. With every strategy disabled there is no primary and every
+analysis is WAIT, which is the correct and visible outcome.
+
+**5. Validation is strict, because these values move money.**
+
+| Setting | Allowed |
+|---|---|
+| each strategy | on / off |
+| tight M5 / H1 enabled | on / off |
+| tight M5 stop | 1-50 points |
+| tight H1 stop | 1-100 points |
+| tight targets | at least 2 x their stop (`_MIN_RISK_REWARD_MULTIPLE`) |
+| confirmation enabled | on / off |
+| confirmation timeframe | m1, m5, m15 |
+| confirmation window | 1-24 hours |
+| AI risk review | off, shadow, enforce |
+| pending signal lifetime | 1-72 hours |
+| live trade lifetime | 1-336 hours |
+
+Changes are submitted as one batch and validated together, so a stop and
+its target can be changed in the same save without the first one failing
+against the old value of the second. An invalid batch changes nothing.
+
+**6. Every change is audit-logged** with the actor, the setting, the old
+effective value and the new one - including a reset to the `.env` default.
+`GET /admin/logs` (ADR-129) already shows these.
+
+**7. Endpoints**, super admin only: `GET /admin/runtime-settings` returns
+every managed setting with its effective value, its `.env` default,
+whether it is overridden, and its allowed values; `PUT
+/admin/runtime-settings` applies a batch, where `null` resets a setting to
+its default.
+
+Consequences
+
+- Strategy and signal settings change from the website within 30 seconds,
+  with no SSH, no hand-edited secrets file and no restart.
+- The `.env` file stops being the whole truth. A value in `.env` can be
+  silently outranked by a stored override. The admin page shows every
+  override against its default, and the audit log records who set it, but
+  anyone reading `.env` alone on the server will be misled. Documented in
+  docs/27 alongside the deploy procedure.
+- Changes are live immediately and affect every subsequent signal. There
+  is no staging or preview; the confirmation dialog and the audit log are
+  the safeguards.
+- Mutating a shared settings object is only safe because every managed
+  value is a plain immutable value (bool, int, str, Decimal, frozen list)
+  assigned atomically. A managed setting that was a mutable object would
+  break that; the registry forbids it.
+- The Beat schedule itself is not configurable here. The tight M5 and
+  confirmation tasks already run every five minutes regardless of their
+  on/off state (ADR-176, ADR-177), so switching them needs no Beat restart.
+
+Alternatives Considered
+
+- **Keep `.env` and add a "restart services" button.** Rejected: it still
+  edits the secrets file from the web, and a restart during a signal cycle
+  is riskier than a 30-second propagation delay.
+- **A resolver called at every read site, like the credential resolver.**
+  Rejected for these settings: the reads are spread across a pure status
+  function, a SQL expression builder and five services, and each would
+  need a database session threaded into it. The overlay reaches all of
+  them through the code path they already use.
+- **A dedicated `strategy_settings` table with typed columns.** Rejected:
+  a migration for what `system_settings` was designed for, and every new
+  knob would need another one.
+- **Any admin, not only the super admin.** Rejected by the operator.
+
+---
+
 # Review Policy
 
 Review ADRs:

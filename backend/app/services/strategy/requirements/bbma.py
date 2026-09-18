@@ -10,7 +10,7 @@ trend-major filter of §2.2. Every one is derived from the source
 material; none is invented here.
 """
 
-from app.services.bbma.types import BBMASetupKind
+from app.services.bbma.types import BBMAResult, BBMASetup, BBMASetupKind
 from app.services.strategy.types import RequirementsResult, StrategyEvidenceBundle
 
 #: A setup older than this many bars behind the latest candle is history,
@@ -37,13 +37,7 @@ def check(evidence: StrategyEvidenceBundle) -> RequirementsResult:
     }
 
     # 2. It is recent enough to act on rather than a historical artefact.
-    is_current = False
-    if setup is not None:
-        # `detect` walks the whole series, so the last bar index is the
-        # series length minus one; setups carry their own entry index.
-        is_current = setup.entry_index >= 0 and (
-            setup.entry_index >= _latest_index(bbma) - _MAX_SETUP_AGE_BARS
-        )
+    is_current = is_fresh(bbma, setup)
 
     # 3. It agrees with the trend major (docs/61 §2.2) - "an Extreme
     #    against the trend major is a weak Extreme".
@@ -62,18 +56,22 @@ def check(evidence: StrategyEvidenceBundle) -> RequirementsResult:
     return RequirementsResult(met_count=met_count, total_count=4)
 
 
-def _latest_index(bbma_result: object) -> int:
-    """The index of the most recent bar the detector saw.
+def is_fresh(bbma_result: BBMAResult, setup: BBMASetup | None) -> bool:
+    """Whether `setup` completed within the last `_MAX_SETUP_AGE_BARS`
+    candles the detector saw.
 
-    `BBMAResult` deliberately does not carry the series length - it
-    carries setups. The most recent setup's own index is the only
-    in-band reference available, so "recent" is measured relative to the
-    newest setup found. When there is exactly one setup this makes the
-    age check trivially true, which is the honest behaviour: with no
-    later structure to compare against, we cannot claim a setup is stale.
+    ADR-179 fixed this. It used to measure against the newest *setup*
+    rather than the newest *candle*, so the latest setup was always judged
+    current - an Extreme from fifty candles ago counted as fresh. That was
+    harmless-ish while BBMA only picked a label; once the order is priced
+    at the setup's own marked level (ADR-179), a stale setup would place an
+    order at a price the market left long ago. Unknown length is treated
+    as not fresh.
     """
-    setups = getattr(bbma_result, "setups", [])
-    return max((s.entry_index for s in setups), default=0)
+    if setup is None or setup.entry_index < 0 or bbma_result.bar_count <= 0:
+        return False
+    latest_index = bbma_result.bar_count - 1
+    return setup.entry_index >= latest_index - _MAX_SETUP_AGE_BARS
 
 
-__all__ = ["check"]
+__all__ = ["check", "is_fresh"]

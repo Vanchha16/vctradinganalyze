@@ -217,11 +217,13 @@ def test_detect_finds_a_sell_extreme_with_reverse_and_retest() -> None:
     assert setup.direction is BBMADirection.SELL
     assert setup.marked_level is not None
 
-    # Entry is the MA5/10 band, never the marked level itself (docs/61 §2).
+    # ADR-179, chosen by the operator after a six-way backtest:
+    # entry at the MA5/10 band (docs/61 §2), never the marked level;
     assert setup.entry_price != setup.marked_level
-    # A sell is invalidated above; the target sits below.
-    assert setup.stop_loss > setup.entry_price
-    assert setup.take_profit < setup.stop_loss
+    # stop beyond the whole Extreme's high - the rally topped at 118.5;
+    assert setup.stop_loss == 118.5
+    # target below the entry, at Mid BB (TP Wajib's limit).
+    assert setup.take_profit < setup.entry_price < setup.stop_loss
     assert any("CS Reverse" in note for note in setup.notes)
     assert any("CS Retest" in note for note in setup.notes)
 
@@ -233,3 +235,22 @@ def test_detect_reports_conditions_at_the_latest_bar() -> None:
     assert isinstance(result.conditions.csm, bool)
     assert isinstance(result.conditions.zzl, bool)
     assert result.conditions.trend_major in (BBMADirection.BUY, BBMADirection.SELL, None)
+
+
+def test_the_extreme_target_is_mid_bb() -> None:
+    """TP Wajib is 'at MA5/MA10, at most Mid BB - no compromise'
+    (docs/61 §3.1). ADR-179 takes its Mid BB limit: it satisfies the rule
+    and backtested far better than the nearer band edge."""
+    from app.services.bbma.detector import bollinger_series
+
+    series = _spike_then_reject_series()
+    setup = detect(series, symbol="XAUUSD", timeframe="h1").latest
+    assert setup is not None
+    middle = bollinger_series(series.closes, 20)[setup.entry_index][1]  # type: ignore[index]
+    assert setup.take_profit == middle
+
+
+def test_the_result_reports_how_many_candles_it_saw() -> None:
+    """ADR-179: needed to judge whether a setup is still fresh."""
+    series = _spike_then_reject_series()
+    assert detect(series, symbol="XAUUSD", timeframe="h1").bar_count == len(series.closes)

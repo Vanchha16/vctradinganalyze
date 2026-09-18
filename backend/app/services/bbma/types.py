@@ -45,13 +45,12 @@ class BBMASetup:
     #: against, and the reference a stop sits beyond. `None` for
     #: Re-entry, which has no reverse candle of its own.
     marked_level: float | None
-    #: Where BBMA says to enter: the MA5/10 band (docs/61 §2, "buy only
-    #: at MA5/10 Low, sell only at MA5/10 High").
+    #: ADR-179 - the MA5/10 band (docs/61 §2, "buy only at MA5/10 Low,
+    #: sell only at MA5/10 High"), as the mean of MA5 and MA10.
     entry_price: float
-    #: Beyond the structure that would invalidate the setup.
+    #: ADR-179 - beyond the whole Extreme's high (sell) / low (buy).
     stop_loss: float
-    #: Per-setup TP rule (docs/61 §6.2) - mandatory MA5/10-or-MidBB for
-    #: Extreme, Low/Top BB for MHV.
+    #: ADR-179 - Mid BB, the limit of TP Wajib (docs/61 §3.1, §6.2).
     take_profit: float
     notes: list[str] = field(default_factory=list)
 
@@ -87,6 +86,11 @@ class BBMAResult:
     setups: list[BBMASetup]
     conditions: BBMAConditions | None
     warnings: list[str] = field(default_factory=list)
+    #: How many candles the detector saw. ADR-179: needed to tell whether
+    #: a setup is fresh - `entry_index` alone cannot, and the old check
+    #: that compared the newest setup with itself always passed. `0`
+    #: means unknown, which is treated as not fresh.
+    bar_count: int = 0
 
     @property
     def latest(self) -> BBMASetup | None:

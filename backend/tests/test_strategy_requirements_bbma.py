@@ -43,8 +43,15 @@ def _conditions(
     )
 
 
-def _result(setups: list[BBMASetup], conditions: BBMAConditions | None) -> BBMAResult:
-    return BBMAResult(symbol="XAUUSD", timeframe="h1", setups=setups, conditions=conditions)
+def _result(
+    setups: list[BBMASetup], conditions: BBMAConditions | None, *, bar_count: int | None = None
+) -> BBMAResult:
+    """By default the newest setup completed on the newest candle."""
+    if bar_count is None:
+        bar_count = (setups[-1].entry_index + 1) if setups else 0
+    return BBMAResult(
+        symbol="XAUUSD", timeframe="h1", setups=setups, conditions=conditions, bar_count=bar_count
+    )
 
 
 def test_no_bbma_evidence_scores_zero_without_raising() -> None:
@@ -101,3 +108,31 @@ def test_detected_structure_without_conditions_scores_zero() -> None:
     result = bbma_requirements.check(evidence)
 
     assert result.met_count == 0
+
+
+# --- ADR-179: freshness is measured against the newest candle ------------
+
+
+def test_a_setup_on_the_latest_candle_is_fresh() -> None:
+    result = _result([_setup(entry_index=50)], _conditions(), bar_count=51)
+    assert bbma_requirements.is_fresh(result, result.latest)
+
+
+def test_a_setup_three_candles_old_is_still_fresh() -> None:
+    result = _result([_setup(entry_index=50)], _conditions(), bar_count=54)
+    assert bbma_requirements.is_fresh(result, result.latest)
+
+
+def test_an_old_setup_is_not_fresh() -> None:
+    """The bug ADR-179 fixed: this used to measure against the newest
+    setup, so a lone setup fifty candles old always counted as current.
+    Once orders are priced at the setup's marked level, that would place
+    an order at a price the market left long ago."""
+    result = _result([_setup(entry_index=50)], _conditions(), bar_count=100)
+    assert not bbma_requirements.is_fresh(result, result.latest)
+    assert bbma_requirements.check(make_evidence_bundle(bbma=result)).met_count == 3
+
+
+def test_an_unknown_candle_count_is_not_fresh() -> None:
+    result = _result([_setup(entry_index=50)], _conditions(), bar_count=0)
+    assert not bbma_requirements.is_fresh(result, result.latest)

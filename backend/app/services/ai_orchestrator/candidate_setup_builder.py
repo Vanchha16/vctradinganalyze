@@ -12,8 +12,10 @@ from decimal import Decimal
 from app.config import settings
 from app.models.enums import Timeframe
 from app.services.analysis_confidence.types import ConfidenceResult
+from app.services.bbma.types import BBMADirection
 from app.services.risk_management.types import TradeDirection
-from app.services.strategy.types import StrategyEvaluation
+from app.services.strategy.requirements.bbma import is_fresh
+from app.services.strategy.types import StrategyEvaluation, StrategyName
 from app.services.technical_analysis.types import TrendDirection
 
 from .types import CandidateSetup
@@ -149,6 +151,15 @@ def build(
     if strategy.primary_strategy is None or confidence.technical is None:
         return None
 
+    #: ADR-179 - a BBMA signal is priced by BBMA's own rules, from the
+    #: setup the detector found: entry at the marked level, stop beyond
+    #: the reverse candle's wick, target at TP Wajib. Direction comes from
+    #: the setup too. Checked before the generic path and never falls back
+    #: to it: a "BBMA" order priced by the ATR formula is exactly what this
+    #: replaces. No fresh setup means no BBMA trade.
+    if strategy.primary_strategy is StrategyName.BBMA:
+        return _bbma_setup(strategy)
+
     direction = _direction_for(confidence)
     if direction is None:
         return None
@@ -212,4 +223,27 @@ def build(
 
     return CandidateSetup(
         direction=direction, entry_price=entry_price, stop_loss=stop_loss, take_profit=take_profit
+    )
+
+
+def _bbma_setup(strategy: StrategyEvaluation) -> CandidateSetup | None:
+    bbma = strategy.bbma
+    setup = bbma.latest if bbma is not None else None
+    if bbma is None or setup is None or not is_fresh(bbma, setup):
+        return None
+    direction = (
+        TradeDirection.LONG if setup.direction is BBMADirection.BUY else TradeDirection.SHORT
+    )
+    entry = Decimal(str(setup.entry_price))
+    stop = Decimal(str(setup.stop_loss))
+    target = Decimal(str(setup.take_profit))
+    # The detector already refuses inverted geometry; checked again here
+    # because a wrong-side order is the one failure that must never reach
+    # the EA.
+    if direction is TradeDirection.SHORT and not stop > entry > target:
+        return None
+    if direction is TradeDirection.LONG and not stop < entry < target:
+        return None
+    return CandidateSetup(
+        direction=direction, entry_price=entry, stop_loss=stop, take_profit=target
     )

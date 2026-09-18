@@ -138,6 +138,7 @@ def detect(series: OHLCVSeries, *, symbol: str, timeframe: str) -> BBMAResult:
             setups=[],
             conditions=None,
             warnings=[f"Insufficient history for BBMA: {n} candles"],
+            bar_count=n,
         )
 
     bands = bollinger_series(closes, _BB_PERIOD)
@@ -211,6 +212,7 @@ def detect(series: OHLCVSeries, *, symbol: str, timeframe: str) -> BBMAResult:
         setups=setups,
         conditions=conditions,
         warnings=warnings,
+        bar_count=n,
     )
 
 
@@ -251,8 +253,12 @@ def _complete_from_extreme(
         if not _is_retest(direction, highs[k], lows[k], closes[k], level, tolerance):
             continue
 
-        # Entry at the MA5/10 band, per BBMA's entry law - never at the
-        # marked level itself (docs/61 §2).
+        # ADR-179 - the three levels, chosen by the operator after the
+        # backtest in ADR-179 compared six combinations.
+        #
+        # ENTRY at the MA5/10 band - docs/61 §2's entry law, "sell only at
+        # MA5/10 High, buy only at MA5/10 Low" - as the mean of MA5 and
+        # MA10 at the retest bar.
         if direction is BBMADirection.SELL:
             band_values = [v for v in (ma5h[k], ma10h[k]) if v is not None]
         else:
@@ -261,18 +267,33 @@ def _complete_from_extreme(
             continue
         entry = sum(band_values) / len(band_values)
 
-        # Invalidation sits beyond the extreme wick of the move, not
-        # beyond the marked body - a new extreme is what kills the setup.
+        # STOP beyond the whole Extreme's high (sell) / low (buy), from the
+        # Extreme bar to the retest. The source defines no stop; a new
+        # extreme beyond the move is what kills the setup. The tighter
+        # alternative - the reverse candle's wick - was backtested and
+        # rejected: a median 2.6-point stop against a 13.7-point ATR was
+        # stopped out by noise on 13 of 15 fills.
         window_highs = highs[start : k + 1]
         window_lows = lows[start : k + 1]
-        if direction is BBMADirection.SELL:
-            stop = max(window_highs)
-            band = bands[k]
-            target = band[1] if band is not None else entry - (stop - entry) * 2
-        else:
-            stop = min(window_lows)
-            band = bands[k]
-            target = band[1] if band is not None else entry + (entry - stop) * 2
+        stop = max(window_highs) if direction is BBMADirection.SELL else min(window_lows)
+
+        # TARGET is Mid BB - TP Wajib, "at MA5/MA10, at most Mid BB - no
+        # compromise" (docs/61 §3.1, §6.2), taken at its Mid BB limit. The
+        # nearer MA5/10 edge also satisfies the rule but was backtested
+        # at a fraction of the result (+13.1 vs +72.1 points on the same
+        # ten fills). No band means no target, and no setup: the old
+        # fallback of 2x risk was not a BBMA rule.
+        band = bands[k]
+        if band is None:
+            continue
+        target = band[1]
+
+        # A target on the wrong side of the entry, or a stop that is not
+        # beyond it, is not a tradeable setup.
+        if direction is BBMADirection.SELL and not (stop > entry > target):
+            continue
+        if direction is BBMADirection.BUY and not (stop < entry < target):
+            continue
 
         return (
             BBMASetup(
@@ -282,9 +303,6 @@ def _complete_from_extreme(
                 marked_level=level,
                 entry_price=entry,
                 stop_loss=stop,
-                # Extreme's TP is mandatory at MA5/10, at most Mid BB
-                # (docs/61 §6.2) - Mid BB is used as the conservative
-                # single value.
                 take_profit=target,
                 notes=[
                     f"Extreme {direction.value} at bar {start}",
@@ -319,9 +337,7 @@ def _conditions_at_latest(
 
     highs_band = [v for v in (ma5h[i], ma10h[i]) if v is not None]
     lows_band = [v for v in (ma5l[i], ma10l[i]) if v is not None]
-    csk = bool(
-        (highs_band and close > max(highs_band)) or (lows_band and close < min(lows_band))
-    )
+    csk = bool((highs_band and close > max(highs_band)) or (lows_band and close < min(lows_band)))
 
     ema = ema50[i]
     trend_major: BBMADirection | None = None

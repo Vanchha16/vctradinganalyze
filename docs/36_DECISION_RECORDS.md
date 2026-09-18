@@ -11508,6 +11508,145 @@ Alternatives Considered
 
 ---
 
+# ADR-179
+
+Title
+
+BBMA Signals Are Priced by BBMA's Own Rules
+
+Status
+
+Accepted
+
+Context
+
+ADR-148 made BBMA the eighth strategy. Its detector finds an Extreme
+(MA5 leaves the BB), its CS Reverse and its CS Retest, and computes an
+entry, stop and target for the setup. **None of those three numbers ever
+reached an order.** When BBMA won the strategy ranking, the order was
+priced like every other strategy's - entry at the latest H1 close, stop at
+1.5 x ATR or structure, target at 2 x risk - and its direction came from
+the EMA-stack trend, not from the BBMA setup. A "BBMA" signal was the
+generic trade with a BBMA label. On production: 7 BBMA signals, 2 filled,
+0 wins, 1 loss.
+
+A second defect: the freshness check ("the setup is recent enough to act
+on") measured the newest setup against itself, so it always passed. An
+Extreme from fifty candles earlier counted as current. That mattered little
+while BBMA only chose a label; it matters a great deal once the order is
+priced at the setup's own levels, because a stale setup would place an
+order at a price the market has left.
+
+The operator asked for BBMA orders to follow the BBMA lesson (docs/61) and,
+while this was built, switched all eight strategies off on production
+(ADR-178), so nothing trades on either the old or the new pricing until
+they switch a strategy back on.
+
+**What the lesson actually defines.** Read word for word, docs/61 fixes the
+target but not the other two:
+
+- **Target:** "TP is mandatory at MA5/MA10, at most Mid BB - no
+  compromise" (§3.1, §3.2, §6.2).
+- **Stop loss:** not defined anywhere in the source.
+- **Entry:** defined twice, inconsistently - §3.1 "CS Retest - price
+  returns to the marked level. This is the entry", and §2's law "sell only
+  at MA5/10 High, buy only at MA5/10 Low".
+
+The operator first chose the marked-level entry and a stop at the reverse
+candle's wick. A backtest then compared six combinations on every fresh
+BBMA Extreme on XAUUSD H1 since 2026-08-08 (candles exported read-only from
+production; the monitor's own fill and stop rules on M1; one trade open at
+a time):
+
+| Entry | Stop | Target | Filled | W/L | Points |
+|---|---|---|---|---|---|
+| marked level | reverse wick | nearest band edge | 15 | 2/13 | -16.5 |
+| marked level | Extreme high/low | nearest band edge | 15 | 8/7 | -7.2 |
+| MA5/10 band | reverse wick | nearest band edge | 8 | 3/5 | +7.3 |
+| MA5/10 band | Extreme high/low | nearest band edge | 10 | 5/5 | +13.1 |
+| **MA5/10 band** | **Extreme high/low** | **Mid BB** | 10 | 5/5 | +72.1 |
+| H1 close | 1.5 x ATR | 2 x risk | 19 | 7/12 | +7.5 |
+
+The wick stop's median distance was 2.6 points against a 13.7-point ATR:
+normal noise stopped it out on 13 of 15 fills, and the risk engine's
+"stop tighter than 0.5 x ATR" check would have blocked 19 of 20 of those
+setups live. The nearer band edge and Mid BB both satisfy "at MA5/MA10, at
+most Mid BB"; Mid BB returned several times more. Shown this, the operator
+changed both choices.
+
+Re-run on the final detector (which finds 21 setups rather than 20, because
+a setup whose levels are the wrong way round now moves on to the next
+retest candidate instead of being dropped):
+
+| Pricing | Filled | W/L | Points | Passing the risk checks |
+|---|---|---|---|---|
+| This ADR | 12 | 5/7 | +52.9 | 6 trades, 3/3, +67.2 |
+| Generic (before) | 19 | 6/13 | -66.7 | 14 trades, 5/9, -34.1 |
+
+Decision
+
+**1. A BBMA signal is priced from the BBMA setup.** When BBMA is the
+primary strategy, `candidate_setup_builder` takes direction, entry, stop
+and target from the detector's latest setup. It never falls back to the
+generic formula: with no fresh setup there is no BBMA trade, which is WAIT.
+Every other strategy is untouched.
+
+**2. The levels:**
+
+- **Entry** - the MA5/10 band, as the mean of MA5 and MA10 at the retest
+  bar (docs/61 §2's law).
+- **Stop** - beyond the whole Extreme's high (sell) or low (buy), from the
+  Extreme bar to the retest. Chosen by the operator; the source defines
+  none.
+- **Target** - Mid BB at the retest bar, the limit of TP Wajib.
+- A setup whose stop is not beyond its entry, or whose target is on the
+  wrong side of it, is skipped. The previous fallback of a 2 x risk target
+  when the bands were missing is removed: it was not a BBMA rule.
+
+**3. Direction comes from the setup**, not the EMA-stack trend. BBMA's own
+trend filter - the setup must agree with the trend major, EMA50 - stays in
+its requirements checklist and still counts toward whether BBMA wins.
+
+**4. Freshness is measured against the newest candle.** `BBMAResult` now
+carries the number of candles the detector saw; a setup is fresh if it
+completed within the last three of them. An unknown count is not fresh.
+
+**5. Every other gate still applies** - confidence, conflict, higher
+timeframe, and the risk engine's R:R >= 2 and stop >= 0.5 x ATR checks.
+They are not relaxed for BBMA.
+
+Consequences
+
+- BBMA signals now trade the structure BBMA found, at BBMA's levels.
+- **Few trades.** The risk checks block 10 of 21 setups for R:R and 4 for
+  a tight stop, so roughly 6 in six weeks - fewer still, since BBMA must
+  also win the strategy ranking. That is the cost of keeping the risk
+  engine's rules uniform across strategies.
+- The evidence is small: 21 setups, one symbol, six weeks, only the
+  Extreme setup. It favours this pricing clearly over the generic one; it
+  does not validate BBMA.
+- **Still not the lesson in full**, and recorded so it is not mistaken for
+  it: only Extreme is detected (the lesson's primary entry, Re-entry, and
+  MHV are not); the trend major is EMA50 on H1, where the lesson says D1
+  minimum; and the TF1/TF2/TF3 multi-timeframe combination is not built.
+- Nothing trades on this until the operator switches BBMA back on from
+  Strategy Settings (ADR-178).
+
+Alternatives Considered
+
+- **The operator's first choice: marked-level entry, reverse-wick stop.**
+  Rejected on the backtest - 2 wins in 15 fills, and 19 of 20 setups
+  blocked by the risk engine's tight-stop check.
+- **TP Wajib at the nearer MA5/10 edge.** Equally faithful to the lesson;
+  rejected on the backtest (+13.1 against +72.1 on the same fills).
+- **Relaxing the risk engine for BBMA** so more setups trade. Not done: a
+  per-strategy exception to the R:R and stop checks deserves its own
+  decision, with evidence.
+- **Keeping the generic pricing.** Rejected: -66.7 points on the same 21
+  setups.
+
+---
+
 # Review Policy
 
 Review ADRs:

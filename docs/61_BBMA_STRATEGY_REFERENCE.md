@@ -367,5 +367,27 @@ in ADR-030.
 Extreme/MHV/Re-entry state machine, and any notion of a setup that spans
 three timeframes simultaneously.
 
-**Not started. No ADR yet. No code.** §7's gaps — particularly 7.1, 7.3 and
-7.4 — need operator answers before an implementation spec can be written.
+## 8.1 Implementation status (updated 2026-09-18)
+
+**Partly implemented** - this section was written before any code and said
+"not started"; that is no longer true.
+
+- **ADR-148** added BBMA as the eighth Strategy Engine strategy: a detector
+  for the **Extreme** setup (MA5 leaves BB -> CS Reverse -> CS Retest), with
+  four operator-approved thresholds standing in for §7.3's undefined
+  reverse/retest, MA10L on **Low** (§7.1) and Extreme = **MA5 leaves the BB**
+  (§7.4).
+- **ADR-179** made BBMA signals use BBMA's own levels instead of the generic
+  ATR pricing, and fixed a freshness check that never failed. Operator
+  decisions on this document's gaps, chosen after a backtest:
+  - **Entry:** the MA5/10 band (§2's law), not the marked level (§3.1). The
+    two are contradictory in the source.
+  - **Stop:** beyond the whole Extreme's high/low. **Not in the source** -
+    the source defines no stop loss at all.
+  - **Target:** Mid BB, the limit of TP Wajib ("at MA5/MA10, at most Mid BB").
+
+**Still not implemented** - so the system's BBMA is not yet this document:
+MHV and **Re-entry** (§3.5, the primary entry) are not detected; the trend
+major is EMA50 on **H1**, where §2.2 says **D1 minimum**; the TF1/TF2/TF3
+combination (§5) is not built; exits (§6.1) are not managed - a trade runs
+to its stop or target.

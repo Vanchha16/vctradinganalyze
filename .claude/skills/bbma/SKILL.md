@@ -149,7 +149,11 @@ operator decision plus an ADR before it can be coded.
 
 ## Project context before implementing
 
-- **Nothing is implemented.** No ADR, no code, no engine.
+- **Partly implemented - read docs/61 §8.1 first.** ADR-148: Extreme
+  detection only, as the 8th Strategy Engine strategy. ADR-179: BBMA signals
+  priced by BBMA's own levels - entry at the MA5/10 band, stop beyond the
+  whole Extreme's high/low (operator's choice; the source has no stop), target
+  Mid BB. MHV, Re-entry, D1 trend major and TF1/TF2/TF3 are **not** built.
 - BB and EMA already exist in `technical_analysis/`; the four
   **linear-weighted High/Low MAs do not**.
 - BBMA would be the "second, independent recommendation source" ADR-085

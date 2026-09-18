@@ -156,3 +156,115 @@ def test_build_returns_none_without_a_price_rather_than_guessing_one() -> None:
     strategy = make_strategy_evaluation()
 
     assert build(confidence, strategy, None) is None
+
+
+# --- ADR-179: a BBMA signal is priced by BBMA's own rules -----------------
+
+from app.services.bbma.types import (  # noqa: E402
+    BBMAConditions,
+    BBMADirection,
+    BBMAResult,
+    BBMASetup,
+    BBMASetupKind,
+)
+from app.services.strategy.types import StrategyName  # noqa: E402
+
+
+def _bbma(
+    *,
+    direction: BBMADirection = BBMADirection.SELL,
+    entry: float = 118.0,
+    stop: float = 118.4,
+    target: float = 112.0,
+    entry_index: int = 99,
+    bar_count: int = 100,
+) -> BBMAResult:
+    setup = BBMASetup(
+        kind=BBMASetupKind.EXTREME,
+        direction=direction,
+        entry_index=entry_index,
+        marked_level=entry,
+        entry_price=entry,
+        stop_loss=stop,
+        take_profit=target,
+    )
+    conditions = BBMAConditions(
+        csm=False, csak=False, csk=False, zzl=False, trend_major=direction, bb_expanding=True
+    )
+    return BBMAResult(
+        symbol="XAUUSD", timeframe="h1", setups=[setup], conditions=conditions, bar_count=bar_count
+    )
+
+
+def test_a_bbma_signal_uses_the_setups_own_levels() -> None:
+    """Entry at the marked level, stop beyond the reverse wick, target TP
+    Wajib - taken from the setup, not from the ATR formula."""
+    strategy = make_strategy_evaluation(primary_strategy=StrategyName.BBMA, bbma=_bbma())
+
+    setup = build(make_confidence_result(), strategy, _CLOSE)
+
+    assert setup is not None
+    assert setup.direction is TradeDirection.SHORT
+    assert (setup.entry_price, setup.stop_loss, setup.take_profit) == (
+        Decimal("118.0"),
+        Decimal("118.4"),
+        Decimal("112.0"),
+    )
+
+
+def test_a_bbma_signal_takes_its_direction_from_the_setup_not_the_trend() -> None:
+    """The default confidence fixture reads BULLISH; the BBMA setup says
+    SELL. BBMA's own rule decides, and its trend-major check lives in its
+    requirements checklist."""
+    strategy = make_strategy_evaluation(primary_strategy=StrategyName.BBMA, bbma=_bbma())
+
+    setup = build(make_confidence_result(), strategy, _CLOSE)
+
+    assert setup is not None and setup.direction is TradeDirection.SHORT
+
+
+def test_a_bbma_buy_mirrors_the_sell() -> None:
+    bbma = _bbma(direction=BBMADirection.BUY, entry=90.0, stop=89.6, target=96.0)
+    strategy = make_strategy_evaluation(primary_strategy=StrategyName.BBMA, bbma=bbma)
+
+    setup = build(make_confidence_result(), strategy, _CLOSE)
+
+    assert setup is not None
+    assert setup.direction is TradeDirection.LONG
+    assert setup.stop_loss < setup.entry_price < setup.take_profit
+
+
+def test_a_stale_bbma_setup_trades_nothing() -> None:
+    """With the entry at the marked level, an old setup would place an
+    order at a price the market left long ago."""
+    strategy = make_strategy_evaluation(
+        primary_strategy=StrategyName.BBMA, bbma=_bbma(entry_index=50, bar_count=100)
+    )
+
+    assert build(make_confidence_result(), strategy, _CLOSE) is None
+
+
+def test_bbma_without_a_setup_trades_nothing_and_never_falls_back() -> None:
+    """A 'BBMA' order priced by the generic ATR formula is exactly what
+    ADR-179 removed, so no setup means WAIT, not a generic trade."""
+    empty = BBMAResult(symbol="XAUUSD", timeframe="h1", setups=[], conditions=None, bar_count=100)
+    for bbma in (None, empty):
+        strategy = make_strategy_evaluation(primary_strategy=StrategyName.BBMA, bbma=bbma)
+        assert build(make_confidence_result(), strategy, _CLOSE) is None
+
+
+def test_an_inverted_bbma_setup_never_reaches_the_ea() -> None:
+    """A sell whose stop is below its entry would be a wrong-side order."""
+    strategy = make_strategy_evaluation(primary_strategy=StrategyName.BBMA, bbma=_bbma(stop=117.0))
+
+    assert build(make_confidence_result(), strategy, _CLOSE) is None
+
+
+def test_other_strategies_still_use_the_generic_rule() -> None:
+    """Only BBMA changed; a BBMA result sitting in the evaluation must not
+    re-price a trend-following signal."""
+    strategy = make_strategy_evaluation(primary_strategy=StrategyName.TREND_FOLLOWING, bbma=_bbma())
+
+    setup = build(make_confidence_result(), strategy, _CLOSE)
+
+    assert setup is not None and setup.entry_price == _CLOSE

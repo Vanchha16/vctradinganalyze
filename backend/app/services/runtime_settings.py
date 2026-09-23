@@ -145,6 +145,14 @@ REGISTRY: tuple[RuntimeSetting, ...] = (
         choices=tuple(s.value for s in StrategyName),
     ),
     RuntimeSetting(
+        "smc_enabled",
+        "strategies",
+        "SMC-ICT-CRT v1",
+        "ADR-183. Its own deterministic path: H4 CRT raid, M5 MSS, FVG/OB entry. "
+        "No AI, no generic risk gates, no M1 confirmation. Enable only with BBMA disabled.",
+        "bool",
+    ),
+    RuntimeSetting(
         "tight_m5_enabled",
         "tight",
         "Tight M5 strategy",

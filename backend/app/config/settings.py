@@ -154,6 +154,10 @@ class Settings(BaseSettings):
     #: The M5 tight strategy - genuinely additive, its own timeframe, and
     #: independent of the H1 signal because ADR-125's gate already filters
     #: by timeframe. Takes no LLM call (ADR-176 §4).
+    #: ADR-183 - the smc-ict-crt-v1 production path. Off by default: it is
+    #: enabled in the same change that disables BBMA, so the two strategies
+    #: can never both be live.
+    smc_enabled: bool = False
     tight_m5_enabled: bool = False
     tight_m5_stop_distance: Decimal = Decimal("5")
     tight_m5_target_distance: Decimal = Decimal("10")

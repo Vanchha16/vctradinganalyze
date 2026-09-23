@@ -42,6 +42,13 @@ select = ["E", "F", "I", "UP", "B"]
 target-version = ["py312"]
 line-length = 100
 
+[tool.ruff.lint.per-file-ignores]
+# ADR-183: a byte-for-byte copy of the frozen research module
+# research/smc_ict_crt_v1/rules.py. It must not be reformatted - a parity
+# test compares its sha256 with the frozen original - so line length is
+# waived for this one file rather than editing v1.
+"app/services/smc_crt/rules.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

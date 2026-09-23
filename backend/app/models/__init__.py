@@ -34,6 +34,7 @@ from app.models.signal import Signal
 from app.models.signal_bookmark import SignalBookmark
 from app.models.smc_event import SMCEvent
 from app.models.smc_processing_state import SMCProcessingState
+from app.models.smc_setup import SmcSetup, SmcSetupState
 from app.models.system_setting import SystemSetting
 from app.models.telegram_account import TelegramAccount
 from app.models.user import User
@@ -67,6 +68,8 @@ __all__ = [
     "PriceCandle",
     "Recommendation",
     "SMCEvent",
+    "SmcSetup",
+    "SmcSetupState",
     "SMCEventStatus",
     "SMCEventType",
     "SMCProcessingState",

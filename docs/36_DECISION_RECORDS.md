@@ -11656,3 +11656,85 @@ Review ADRs:
 - When replacing providers
 - When changing AI models
 - During annual architecture reviews
+
+# ADR-183
+
+Title
+
+SMC-ICT-CRT-v1 Runs as Its Own Production Path, and Replaces BBMA-v1
+
+Status
+
+Accepted - the operator's decision on 2026-09-23, with the negative
+backtest known and accepted as a deployment risk.
+
+Context
+
+smc-ict-crt-v1 was specified, frozen and backtested as research
+(`research/smc_ict_crt_v1/`, immutable, sha256-pinned in
+BASELINE_FROZEN.md). Over 24 months of Exness XAUUSDc data it produced
+2,168 CRT candidates and 198 trades; excluding the two known
+specification defects, 151 valid trades, 16.6% win rate, -36.49R net,
+profit factor 0.73, worst drawdown 36.49R. **It has no demonstrated
+positive expectancy.** The operator has read that result and chosen to
+replace BBMA-v1 with it in production anyway.
+
+The frozen rules do not fit the existing signal pipeline. Routing them
+through it would add an M1 confirmation the specification does not have,
+a 24h pending expiry instead of its 12h one, a 168h force-close it does
+not have, seven generic risk gates it does not have, and BBMA's own
+pricing instead of the CRT levels. Each of those would change the
+strategy. The operator's instruction was explicit: reproduce v1, do not
+resolve a conflict by adding an existing production rule to it.
+
+Decision
+
+SMC runs as an **isolated production path** of its own:
+
+- `app/services/smc_crt/rules.py` is a byte-for-byte copy of the frozen
+  research module. `tests/test_smc_crt_parity.py` fails if it ever
+  differs from the recorded sha256, so the production path cannot drift
+  from v1.
+- `app/services/smc_crt/service.py` holds the state machine
+  (NO_SETUP -> CRT_ANCHOR_CONFIRMED -> RAID_CONFIRMED ->
+  WAITING_FOR_M5_MSS -> MSS_CONFIRMED -> ENTRY_ZONE_CONFIRMED ->
+  SIGNAL_CREATED, with EXPIRED/CANCELLED/TRADED terminal). Every
+  transition is stored and logged.
+- `smc_setups` (new table) is the memory: one row per evaluated setup,
+  rejected ones included with their real reason, so a restart resumes
+  instead of re-deciding.
+- Closed candles are enforced **inside this path** (`closed_only`), not
+  in the shared repository: BBMA's reads are deliberately unchanged, so
+  ADR-180 is not needed for this deployment.
+- The signal is written **ACTIVE**, never DRAFT, so the M1 confirmation
+  task - which only looks at drafts - never sees it. Its confirmation is
+  the M5 shift, as the specification says.
+- The 12h expiry is enforced by this service, which cancels its own
+  unfilled signal well before the generic 24h TTL could apply. A filled
+  trade is left alone: it exits at its stop or the opposite CRT boundary
+  and at nothing else.
+- Entry, stop, target and R:R come from the frozen rules, never from
+  `candidate_setup_builder`.
+- News is recorded as `NEWS_UNKNOWN` whenever the data is unavailable,
+  never as "no news".
+- `smc_enabled` (runtime setting, default off) is switched on in the same
+  change that adds `bbma` to `disabled_strategies`, so the two strategies
+  are never both live.
+
+Consequences
+
+- The strategy in production is the strategy that was backtested, which
+  is the point. Its expectancy is negative on that history, which the
+  operator accepts; the first deployment is one controlled 0.01-lot live
+  trade, after which the EA returns to dry run.
+- A second production decision path now exists. It shares the candle
+  tables, the signals table and the EA feed, and nothing else. BBMA's
+  code, data and history are untouched and remain replayable.
+- The generic 168h read-time rule still applies to a filled SMC signal's
+  *display* status. It cannot close a position: the EA only ever deletes
+  unfilled pending orders. The trade itself still exits at its stop or
+  target at the broker. Excluding SMC from that read-time rule would mean
+  editing a shared pure function, which this ADR deliberately does not do.
+- Exits are detected from M1 candles by the existing monitor, where the
+  research simulated them on M5. Stop and target levels are identical;
+  only the detection granularity differs, and it is finer, not looser.

@@ -14,6 +14,7 @@ untouched.
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import ENUM as pg_enum
 
 from alembic import op
 
@@ -37,8 +38,20 @@ _STATES = (
 
 
 def upgrade() -> None:
-    state = sa.Enum(*_STATES, name="smc_setup_state", native_enum=True)
-    state.create(op.get_bind(), checkfirst=True)
+    bind = op.get_bind()
+    postgres = bind.dialect.name == "postgresql"
+    # On PostgreSQL the type is created exactly once, here, and the column
+    # below only *references* it (`create_type=False`). Letting `create_table`
+    # emit its own CREATE TYPE as well is what failed on 2026-09-23:
+    # "type smc_setup_state already exists", inside the same transaction.
+    # Other dialects (SQLite in tests) have no enum type to pre-create.
+    if postgres:
+        pg_enum(*_STATES, name="smc_setup_state").create(bind, checkfirst=True)
+        state: sa.types.TypeEngine = pg_enum(
+            *_STATES, name="smc_setup_state", create_type=False
+        )
+    else:
+        state = sa.Enum(*_STATES, name="smc_setup_state", native_enum=True)
     op.create_table(
         "smc_setups",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -82,4 +95,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("smc_setups")
-    sa.Enum(name="smc_setup_state").drop(op.get_bind(), checkfirst=True)
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        pg_enum(name="smc_setup_state").drop(bind, checkfirst=True)

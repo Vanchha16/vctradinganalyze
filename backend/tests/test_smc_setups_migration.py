@@ -25,6 +25,7 @@ from app.models.smc_setup import SmcSetupState
 
 CREATE_REVISION = "a1c73f5e90d4"
 LABELS_REVISION = "c5b81d4a2f07"
+HEAD_REVISION = "e7a4c19b3d52"
 PREVIOUS = "b4e7d2a91c35"
 BACKEND = Path(__file__).resolve().parents[1]
 DEFAULT_STATE = SmcSetupState.CRT_ANCHOR_CONFIRMED.name
@@ -49,6 +50,9 @@ def _final_labels(sql: str) -> list[str]:
         r"ALTER TYPE smc_setup_state RENAME VALUE '([^']+)' TO '([^']+)'", sql, re.IGNORECASE
     ):
         labels = [new if label == old else label for label in labels]
+    labels += re.findall(
+        r"ALTER TYPE smc_setup_state ADD VALUE IF NOT EXISTS '([^']+)'", sql, re.IGNORECASE
+    )
     return labels
 
 
@@ -56,7 +60,7 @@ def _final_labels(sql: str) -> list[str]:
 def test_every_enum_label_matches_a_python_member_name(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    labels = _final_labels(_render_sql(capsys, LABELS_REVISION))
+    labels = _final_labels(_render_sql(capsys, HEAD_REVISION))
     assert labels == [member.name for member in SmcSetupState], (
         "PostgreSQL labels must be exactly the Python enum member names, in order - "
         "that is what SQLAlchemy sends for a native enum"
@@ -66,7 +70,7 @@ def test_every_enum_label_matches_a_python_member_name(
 def test_no_lowercase_enum_value_survives_as_a_label(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    labels = set(_final_labels(_render_sql(capsys, LABELS_REVISION)))
+    labels = set(_final_labels(_render_sql(capsys, HEAD_REVISION)))
     values = {member.value for member in SmcSetupState}
     assert not (labels & values), (
         f"these StrEnum values are still PostgreSQL labels: {sorted(labels & values)}. "
@@ -79,7 +83,7 @@ def test_no_lowercase_enum_value_survives_as_a_label(
 def test_the_column_default_is_a_valid_member_name_label(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    sql = _render_sql(capsys, LABELS_REVISION)
+    sql = _render_sql(capsys, HEAD_REVISION)
     labels = _final_labels(sql)
     defaults = re.findall(r"ALTER COLUMN state SET DEFAULT '([^']+)'", sql)
     assert defaults, "the column default must be re-set after the rename"
@@ -89,7 +93,7 @@ def test_the_column_default_is_a_valid_member_name_label(
 
 # --- 4 & 5: created once, table correct ------------------------------------
 def test_the_enum_type_is_created_exactly_once(capsys: pytest.CaptureFixture[str]) -> None:
-    sql = _render_sql(capsys, LABELS_REVISION)
+    sql = _render_sql(capsys, HEAD_REVISION)
     creates = re.findall(r"CREATE TYPE\s+smc_setup_state", sql, re.IGNORECASE)
     assert len(creates) == 1, (
         f"expected one CREATE TYPE for smc_setup_state, found {len(creates)}. "
@@ -109,7 +113,7 @@ def test_the_table_is_created_and_references_the_type(
 # --- 6: nothing existing is touched ----------------------------------------
 def test_no_existing_table_is_altered_or_dropped(capsys: pytest.CaptureFixture[str]) -> None:
     """BBMA's data must be untouched by this deployment."""
-    sql = _render_sql(capsys, LABELS_REVISION)
+    sql = _render_sql(capsys, HEAD_REVISION)
     assert not re.search(
         r"ALTER TABLE\s+(signals|ai_analysis|price_candles|assets|ea_tokens|users)",
         sql, re.IGNORECASE,
@@ -125,10 +129,11 @@ def test_no_existing_table_is_altered_or_dropped(capsys: pytest.CaptureFixture[s
 def test_the_revision_chain_is_what_production_expects(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    sql = _render_sql(capsys, LABELS_REVISION)
+    sql = _render_sql(capsys, HEAD_REVISION)
     assert f"WHERE alembic_version.version_num = '{PREVIOUS}'" in sql
     assert f"UPDATE alembic_version SET version_num='{CREATE_REVISION}'" in sql
     assert f"UPDATE alembic_version SET version_num='{LABELS_REVISION}'" in sql
+    assert f"UPDATE alembic_version SET version_num='{HEAD_REVISION}'" in sql
 
 
 def test_the_downgrade_restores_the_previous_labels(
@@ -142,4 +147,19 @@ def test_the_downgrade_restores_the_previous_labels(
     renames = re.findall(
         r"ALTER TYPE smc_setup_state RENAME VALUE '([^']+)' TO '([^']+)'", sql, re.IGNORECASE
     )
-    assert [new for _, new in renames] == [member.value for member in SmcSetupState]
+    original = [m.value for m in SmcSetupState if m is not SmcSetupState.EXECUTION_REJECTED]
+    assert [new for _, new in renames] == original
+
+
+def test_the_execution_rejected_label_is_added_once_outside_a_transaction(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """PostgreSQL cannot use a new enum value in the transaction that added
+    it, so the ADD VALUE must run in its own autocommit block."""
+    sql = _render_sql(capsys, HEAD_REVISION)
+    adds = re.findall(
+        r"ALTER TYPE smc_setup_state ADD VALUE IF NOT EXISTS 'EXECUTION_REJECTED'", sql
+    )
+    assert len(adds) == 1
+    before = sql[: sql.index(adds[0])]
+    assert before.rstrip().endswith("COMMIT;"), "ADD VALUE must follow a COMMIT (autocommit block)"

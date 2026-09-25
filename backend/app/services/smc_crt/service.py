@@ -26,6 +26,7 @@ re-decide.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -34,15 +35,24 @@ import structlog
 
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
+from app.models.audit_log import AuditLog
 from app.models.enums import Recommendation, SignalStatus, SignalType, Timeframe
 from app.models.price_candle import PriceCandle
 from app.models.signal import Signal
 from app.models.smc_setup import SmcSetup, SmcSetupState
 from app.repositories.ai_analysis_repository import AIAnalysisRepository
+from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
 from app.repositories.smc_setup_repository import SmcSetupRepository
 from app.services.smc_crt import rules
+from app.services.smc_crt.execution_safety import (
+    EXECUTION_REJECTED_REASON,
+    EXECUTION_SAFETY_REASON,
+    SMC_STRATEGY_NAME,
+    geometry_violation,
+    is_execution_rejection,
+)
 from app.services.smc_crt.rules import (
     ATR_PERIOD,
     EXPIRY_HOURS,
@@ -57,7 +67,7 @@ from app.utils.time import as_aware_utc
 
 logger = structlog.get_logger(__name__)
 
-STRATEGY_NAME = "smc_ict_crt_v1"
+STRATEGY_NAME = SMC_STRATEGY_NAME
 MODEL_NAME = "none"
 PROMPT_VERSION = "smc-ict-crt-v1"
 
@@ -110,11 +120,17 @@ class SmcCrtService:
         candles: PriceCandleRepository,
         signals: SignalRepository,
         analyses: AIAnalysisRepository,
+        audit: AuditLogRepository | None = None,
     ) -> None:
         self._setups = setups
         self._candles = candles
         self._signals = signals
         self._analyses = analyses
+        self._audit = audit
+        #: Filled by `run()` for the caller to act on *after* it commits:
+        #: signals to deliver (audit D1) and execution rejections to report.
+        self.created_signals: list[uuid.UUID] = []
+        self.execution_rejections: list[uuid.UUID] = []
 
     # --- state machine -----------------------------------------------------
     def _move(self, setup: SmcSetup, state: SmcSetupState, reason: str = "") -> None:
@@ -151,6 +167,8 @@ class SmcCrtService:
         """
         now = as_aware_utc(now)
         touched: list[SmcSetup] = []
+        self.created_signals = []
+        self.execution_rejections = []
 
         h4 = closed_only(
             self._candles.list_recent(asset.id, Timeframe.H4, limit=_H4_CANDLES), Timeframe.H4, now
@@ -274,9 +292,16 @@ class SmcCrtService:
             self._move(row, SmcSetupState.EXPIRED, Reason.SETUP_EXPIRED)
             return row
 
-        signal = self._publish(asset, candidate, row, expires_at)
+        # --- the strategy has decided; everything below is execution plumbing
+        signal, violation = self._publish(asset, candidate, row, expires_at, now)
         row.signal_id = signal.id
         self._move(row, SmcSetupState.SIGNAL_CREATED, f"signal {signal.id}")
+        if violation is not None:
+            self._move(row, SmcSetupState.EXECUTION_REJECTED,
+                        f"{EXECUTION_SAFETY_REASON}: {violation}"[:64])
+            self.execution_rejections.append(signal.id)
+        else:
+            self.created_signals.append(signal.id)
         return row
 
     # --- signals -----------------------------------------------------------
@@ -286,15 +311,30 @@ class SmcCrtService:
         return bool(self._setups.open_signal_count(asset.id, STRATEGY_NAME))
 
     def _publish(
-        self, asset: Asset, candidate: rules.Setup, row: SmcSetup, expires_at: datetime
-    ) -> Signal:
-        """Create the analysis record and the ACTIVE signal.
+        self, asset: Asset, candidate: rules.Setup, row: SmcSetup, expires_at: datetime,
+        now: datetime,
+    ) -> tuple[Signal, str | None]:
+        """Create the analysis record and the signal; return the signal and
+        the execution-safety violation, if any.
 
         ACTIVE, not DRAFT: the frozen rules confirm on the M5 shift, so the
         generic M1 confirmation task - which only ever looks at DRAFT rows -
         never sees this signal and cannot add a rule the specification does
         not have.
+
+        Execution safety (audit D2): the strategy's entry, stop and target
+        are kept exactly as computed. If they cannot form a broker order -
+        a BUY with its stop at or above its entry, say - the signal is
+        written CANCELLED instead of ACTIVE, in the same transaction. It is
+        therefore never visible to the EA feed, never scanned by the M1
+        monitor, and never counted as an open trade; the row is kept for
+        the audit trail.
         """
+        signal_type = SignalType.BUY if candidate.direction is Direction.BUY else SignalType.SELL
+        entry = Decimal(str(candidate.entry))
+        stop = Decimal(str(candidate.sl))
+        target = Decimal(str(candidate.tp1))
+        violation = geometry_violation(signal_type, entry, stop, target)
         summary = (
             f"smc-ict-crt-v1 {candidate.direction.value.upper()}: CRT {candidate.crt_low:.3f}-"
             f"{candidate.crt_high:.3f}, raid {candidate.raid_extreme:.3f}, M5 MSS at "
@@ -321,49 +361,96 @@ class SmcCrtService:
 
         signal = Signal(
             analysis_id=analysis.id, asset_id=asset.id, timeframe=Timeframe.M5,
-            signal_type=SignalType.BUY if candidate.direction is Direction.BUY else SignalType.SELL,
-            entry_price=Decimal(str(candidate.entry)), stop_loss=Decimal(str(candidate.sl)),
-            take_profit=Decimal(str(candidate.tp1)), risk_reward=float(candidate.rr or 0.0),
-            confidence=0.0, strategy=STRATEGY_NAME, status=SignalStatus.ACTIVE,
+            signal_type=signal_type, entry_price=entry, stop_loss=stop, take_profit=target,
+            risk_reward=float(candidate.rr or 0.0), confidence=0.0, strategy=STRATEGY_NAME,
+            status=SignalStatus.ACTIVE if violation is None else SignalStatus.CANCELLED,
             confirmed_at=candidate.mss_t,
-            status_reason=f"M5 MSS at {candidate.mss_level:.3f} (smc-ict-crt-v1)"[:160],
+            closed_at=None if violation is None else now,
+            status_reason=(
+                f"M5 MSS at {candidate.mss_level:.3f} (smc-ict-crt-v1)"
+                if violation is None else f"{EXECUTION_SAFETY_REASON}: {violation}"
+            )[:160],
         )
         self._signals.create(signal)
-        logger.info(
-            "smc.signal_created", signal_id=str(signal.id), direction=candidate.direction.value,
-            entry=str(candidate.entry), sl=str(candidate.sl), tp=str(candidate.tp1),
-            rr=candidate.rr, session=candidate.session, news=row.news_status,
-            expires_at=expires_at.isoformat(),
-        )
-        return signal
+        if violation is None:
+            logger.info(
+                "smc.signal_created", signal_id=str(signal.id),
+                direction=candidate.direction.value, entry=str(entry), sl=str(stop),
+                tp=str(target), rr=candidate.rr, session=candidate.session,
+                news=row.news_status, expires_at=expires_at.isoformat(),
+            )
+        else:
+            logger.warning(
+                "smc.execution_rejected", signal_id=str(signal.id),
+                reason=EXECUTION_SAFETY_REASON, violation=violation,
+                direction=candidate.direction.value, entry=str(entry), sl=str(stop),
+                tp=str(target),
+            )
+            self._audit_rejection(signal, row, violation)
+        return signal, violation
+
+    def _audit_rejection(self, signal: Signal, row: SmcSetup, why: str) -> None:
+        """An audit row for every execution rejection (audit D3). No actor:
+        the system refused it, nobody chose to."""
+        if self._audit is None:
+            return
+        self._audit.create(AuditLog(
+            user_id=None, action="smc_execution_rejected", resource="signal",
+            resource_id=signal.id,
+            context={
+                "reason": EXECUTION_SAFETY_REASON if why else EXECUTION_REJECTED_REASON,
+                "detail": why, "setup_anchor": row.anchor_t.isoformat(),
+                "signal_type": signal.signal_type.value,
+                "entry": str(signal.entry_price), "stop_loss": str(signal.stop_loss),
+                "take_profit": str(signal.take_profit),
+            },
+        ))
 
     # --- expiry ------------------------------------------------------------
     def _expire_due(self, asset: Asset, now: datetime) -> list[SmcSetup]:
-        """Frozen rule §18: a setup whose entry never filled dies 12 h after
-        the raid candle closed - not at the generic 24 h TTL.
+        """Bring each setup that has a signal in line with that signal.
 
-        A filled trade is never touched here: it exits at its stop or the
-        opposite CRT boundary, and at nothing else.
+        Frozen rule §18: a signal whose entry never filled dies 12 h after the
+        raid candle closed - not at the generic 24 h TTL. A filled trade is
+        never touched here: it exits at its stop or the opposite CRT boundary,
+        and at nothing else.
+
+        Audit D3: a signal refused at execution (impossible geometry, or a live
+        broker/EA rejection) ends as EXECUTION_REJECTED - never TRADED, never a
+        stop-out - and TRADED records whether a live broker position existed.
         """
         out: list[SmcSetup] = []
         for row in self._setups.pending_with_signal(asset.id):
-            if row.expires_at is None or as_aware_utc(row.expires_at) > now:
-                continue
             signal = self._signals.get_by_id(row.signal_id) if row.signal_id else None
+            expired = row.expires_at is not None and as_aware_utc(row.expires_at) <= now
             if signal is None:
-                self._move(row, SmcSetupState.EXPIRED, Reason.SETUP_EXPIRED)
-                out.append(row)
+                if expired:
+                    self._move(row, SmcSetupState.EXPIRED, Reason.SETUP_EXPIRED)
+                    out.append(row)
                 continue
             if signal.status is SignalStatus.ACTIVE:
+                if not expired:
+                    continue  # still a live pending order
                 signal.status = SignalStatus.CANCELLED
                 signal.closed_at = now
                 signal.status_reason = "smc-ict-crt-v1: 12h setup expiry, never filled"
                 self._move(row, SmcSetupState.EXPIRED, Reason.SETUP_EXPIRED)
-                out.append(row)
+            elif signal.status is SignalStatus.CANCELLED:
+                if is_execution_rejection(signal.status_reason):
+                    self._move(row, SmcSetupState.EXECUTION_REJECTED,
+                               (signal.status_reason or "")[:64])
+                else:  # replaced, or cancelled from the website
+                    self._move(row, SmcSetupState.CANCELLED, (signal.status_reason or "")[:64])
             elif signal.status in (SignalStatus.TRIGGERED, SignalStatus.SUCCESSFUL,
-                                   SignalStatus.STOPPED_OUT):
-                self._move(row, SmcSetupState.TRADED, f"signal {signal.status.value}")
-                out.append(row)
+                                   SignalStatus.STOPPED_OUT, SignalStatus.CLOSED):
+                if signal.status is SignalStatus.TRIGGERED:
+                    continue  # the trade is still open: resolve it when it closes
+                where = ("live broker position" if self._setups.had_live_position(signal.id)
+                         else "paper - no live broker position")
+                self._move(row, SmcSetupState.TRADED, f"{signal.status.value}, {where}"[:64])
+            else:
+                continue
+            out.append(row)
         return out
 
 

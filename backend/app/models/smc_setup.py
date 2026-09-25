@@ -30,6 +30,11 @@ class SmcSetupState(StrEnum):
     EXPIRED = "expired"
     CANCELLED = "cancelled"
     TRADED = "traded"
+    #: The strategy created a signal, but it was refused at execution - by
+    #: the execution-safety check (impossible stop/entry geometry) or by the
+    #: live EA/broker. No broker position ever existed, so this is never a
+    #: trade outcome: not TRADED, not a stop-out, no R.
+    EXECUTION_REJECTED = "execution_rejected"
 
 
 class SmcSetup(Base, UUIDMixin, TimestampMixin):

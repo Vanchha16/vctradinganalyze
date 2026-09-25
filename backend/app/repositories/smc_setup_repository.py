@@ -6,6 +6,7 @@ from datetime import datetime
 
 from sqlalchemy import func, select
 
+from app.models.ea_execution_event import EaExecutionEvent
 from app.models.enums import SignalStatus
 from app.models.signal import Signal
 from app.models.smc_setup import SmcSetup, SmcSetupState
@@ -47,12 +48,29 @@ class SmcSetupRepository(BaseRepository[SmcSetup]):
     def open_signal_count(self, asset_id: uuid.UUID, strategy: str) -> int:
         """Open signals belonging to one strategy: the "one trade at a time"
         check, scoped so another strategy's rows never block or unblock
-        this one."""
+        this one.
+
+        Only ACTIVE (a pending broker order) and TRIGGERED (an open position)
+        count. A signal refused at execution is written or moved to CANCELLED
+        (audit D2/D3), so it can never hold the one-trade capacity (audit D4)."""
         return int(self.session.execute(
             select(func.count()).select_from(Signal).where(
                 Signal.asset_id == asset_id,
                 Signal.strategy == strategy,
                 Signal.status.in_([SignalStatus.ACTIVE, SignalStatus.TRIGGERED]),
+            )
+        ).scalar_one())
+
+    def had_live_position(self, signal_id: uuid.UUID) -> bool:
+        """Whether a live (not dry-run) EA ever opened a broker position for
+        this signal - the difference between a real trade and a paper one
+        (audit D3). A signal the website marked filled from Twelve Data
+        candles alone never had a broker position."""
+        return bool(self.session.execute(
+            select(func.count()).select_from(EaExecutionEvent).where(
+                EaExecutionEvent.signal_id == signal_id,
+                EaExecutionEvent.event_type == "position_opened",
+                EaExecutionEvent.dry_run.is_(False),
             )
         ).scalar_one())
 

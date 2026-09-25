@@ -22,6 +22,7 @@ from enum import StrEnum
 from app.models.ea_execution_event import EaExecutionEvent
 from app.models.enums import SignalStatus, SignalType
 from app.models.signal import Signal
+from app.services.smc_crt.execution_safety import EXECUTION_REJECTED_REASON, SMC_STRATEGY_NAME
 from app.utils.time import as_aware_utc
 
 #: Closes where price reached the signal's own level.
@@ -37,6 +38,10 @@ OTHER_CLOSE_REASON = "Closed on the EA's account before take profit or stop loss
 class SignalMove(StrEnum):
     TRIGGERED = "triggered"
     CLOSED = "closed"
+    #: ADR-183 audit D3: a live EA refused an smc-ict-crt-v1 order. Never a
+    #: subscriber message (`has_message` is always False): nothing traded, and
+    #: the operator already gets the EA's own rejection alert.
+    EXECUTION_REJECTED = "execution_rejected"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +58,9 @@ class SignalChange:
 def apply_event(signal: Signal, event: EaExecutionEvent) -> SignalChange | None:
     """Moves `signal` for a live `position_opened` or `position_closed`
     report and says what moved; `None` when the report changes nothing."""
+    rejection = _execution_rejection(signal, event)
+    if rejection is not None:
+        return rejection
     if event.dry_run or event.event_type not in ("position_opened", "position_closed"):
         return None
     at = as_aware_utc(event.occurred_at)
@@ -90,6 +98,31 @@ def apply_event(signal: Signal, event: EaExecutionEvent) -> SignalChange | None:
         has_message=status is not SignalStatus.CLOSED,
         occurred_at=at,
     )
+
+
+def _execution_rejection(signal: Signal, event: EaExecutionEvent) -> SignalChange | None:
+    """ADR-183 audit D3/D4. A live EA that could not place an smc-ict-crt-v1
+    order (`order_rejected` by the broker, `order_skipped` by the EA) leaves a
+    signal that no broker ever held. Left ACTIVE, the M1 monitor would later
+    record a fill and a stop-out for it, and it would hold the one-trade
+    capacity; so it is cancelled here, at once, with an unambiguous reason.
+
+    Scoped to smc-ict-crt-v1 on purpose: every other strategy's handling of
+    these events is unchanged. Dry-run reports are checks, not executions,
+    and are left alone."""
+    if (
+        event.dry_run
+        or event.event_type not in ("order_rejected", "order_skipped")
+        or signal.strategy != SMC_STRATEGY_NAME
+        or signal.status is not SignalStatus.ACTIVE
+    ):
+        return None
+    at = as_aware_utc(event.occurred_at)
+    detail = event.message or (f"retcode {event.retcode}" if event.retcode is not None else "")
+    signal.status = SignalStatus.CANCELLED
+    signal.closed_at = at
+    signal.status_reason = f"{EXECUTION_REJECTED_REASON}: {event.event_type} {detail}".strip()[:160]
+    return SignalChange(signal.id, SignalMove.EXECUTION_REJECTED, has_message=False, occurred_at=at)
 
 
 def _trigger(signal: Signal, at: datetime) -> None:

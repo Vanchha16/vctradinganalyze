@@ -24,10 +24,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.database.base import Base
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
+from app.models.audit_log import AuditLog
+from app.models.ea_execution_event import EaExecutionEvent
+from app.models.ea_token import EaToken
 from app.models.enums import MarketType, SignalStatus, Timeframe
 from app.models.price_candle import PriceCandle
 from app.models.signal import Signal
 from app.models.smc_setup import SmcSetup, SmcSetupState
+from app.models.user import User
 from app.repositories.ai_analysis_repository import AIAnalysisRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
@@ -46,8 +50,9 @@ RESEARCH_RULES = (
 FROZEN_RULES_SHA256 = "6363cdb63061d6b70ab11e0cbab3c6261d4e0fcc8f94c99791135da66f2c9134"
 
 _TABLES = [
-    Asset.__table__, AIAnalysis.__table__, Signal.__table__,
-    PriceCandle.__table__, SmcSetup.__table__,
+    User.__table__, Asset.__table__, AIAnalysis.__table__, Signal.__table__,
+    PriceCandle.__table__, SmcSetup.__table__, EaToken.__table__,
+    EaExecutionEvent.__table__, AuditLog.__table__,
 ]
 
 

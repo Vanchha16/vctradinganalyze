@@ -17,10 +17,14 @@ from app.config import settings
 from app.database.base import Base
 from app.models.ai_analysis import AIAnalysis
 from app.models.asset import Asset
+from app.models.audit_log import AuditLog
+from app.models.ea_execution_event import EaExecutionEvent
+from app.models.ea_token import EaToken
 from app.models.enums import MarketType, SignalStatus, SignalType, Timeframe
 from app.models.price_candle import PriceCandle
 from app.models.signal import Signal
 from app.models.smc_setup import SmcSetup, SmcSetupState
+from app.models.user import User
 from app.repositories.ai_analysis_repository import AIAnalysisRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
@@ -34,8 +38,9 @@ M5 = timedelta(minutes=5)
 T0 = datetime(2026, 1, 5, 0, 0, tzinfo=UTC)
 
 _TABLES = [
-    Asset.__table__, AIAnalysis.__table__, Signal.__table__,
-    PriceCandle.__table__, SmcSetup.__table__,
+    User.__table__, Asset.__table__, AIAnalysis.__table__, Signal.__table__,
+    PriceCandle.__table__, SmcSetup.__table__, EaToken.__table__,
+    EaExecutionEvent.__table__, AuditLog.__table__,
 ]
 
 
@@ -272,7 +277,15 @@ def test_a_filled_trade_is_not_touched_by_the_expiry(session):
     session.flush()
     _service(session).run(asset, setup.expires_at + timedelta(hours=200))
     assert signal.status is SignalStatus.TRIGGERED  # no time-based exit is added
+    # An open trade is not "traded" yet: it resolves when the trade closes.
+    assert setup.state is SmcSetupState.SIGNAL_CREATED
+
+    signal.status = SignalStatus.STOPPED_OUT       # it closed at its stop
+    session.flush()
+    _service(session).run(asset, setup.expires_at + timedelta(hours=201))
     assert setup.state is SmcSetupState.TRADED
+    # No live broker position was reported, so the record says it was paper.
+    assert "paper" in (setup.reason or "")
 
 
 # --- routing and isolation -------------------------------------------------

@@ -37,6 +37,7 @@ from app.repositories.ea_token_repository import EaTokenRepository
 from app.repositories.signal_repository import SignalRepository
 from app.schemas.ea import EaSettings
 from app.services.signal import status_resolver
+from app.services.smc_crt.execution_safety import geometry_violation
 from app.utils.time import as_aware_utc
 
 logger = structlog.get_logger(__name__)
@@ -297,6 +298,18 @@ class EaService:
                 row.status, row.created_at, now, triggered_at=row.triggered_at
             )
             if status not in _FEED_STATUSES:
+                continue
+            # ADR-183 audit D2, a second line behind the SMC path's own check:
+            # an order whose stop or target is on the wrong side of its entry
+            # can never be held by a broker, so the EA is never handed one.
+            violation = geometry_violation(
+                row.signal_type, row.entry_price, row.stop_loss, row.take_profit
+            )
+            if violation is not None:
+                logger.warning(
+                    "ea.feed_refused_invalid_geometry",
+                    signal_id=str(row.id), strategy=row.strategy, violation=violation,
+                )
                 continue
             expires_at = as_aware_utc(row.created_at) + timedelta(hours=settings.signal_ttl_hours)
             feed.append(FeedSignal(signal=row, status=status, expires_at=expires_at))

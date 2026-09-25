@@ -11738,3 +11738,32 @@ Consequences
 - Exits are detected from M1 candles by the existing monitor, where the
   research simulated them on M5. Stop and target levels are identical;
   only the detection granularity differs, and it is finer, not looser.
+
+Addendum 2026-09-25 - execution plumbing (production audit D1-D4)
+
+Operator-approved. Plumbing and execution safety only: the frozen rules,
+`rules.py` (sha256 6363cdb6...9134) and every decision they make are
+unchanged, and research/production parity was re-run on production
+candles with identical decisions, entries, stops, targets and R:R.
+
+- D1 - each created signal is handed to Telegram delivery once, only
+  after the database commit. A Telegram failure is logged; it never rolls
+  back or re-creates the signal.
+- D2 - after the rules decide, an order a broker cannot hold (BUY needs
+  SL < entry < TP, SELL needs TP < entry < SL) is not published: the
+  signal is kept for audit as CANCELLED with reason
+  `SMC_SIGNAL_REJECTED_BY_EXECUTION_SAFETY`, an audit-log row is written
+  and the setup moves to the new state `EXECUTION_REJECTED`. The EA feed
+  also refuses any signal with such geometry, for every strategy.
+- D3 - an execution rejection is never a trade or a loss: never TRADED,
+  STOPPED_OUT or SUCCESSFUL. A live EA `order_rejected`/`order_skipped`
+  on an ACTIVE smc signal cancels it with reason
+  `SMC_SIGNAL_REJECTED_BY_EXECUTION`. Operators are told on Telegram that
+  no order was sent and that it is not a trade and not a loss. TRADED
+  records whether a live broker position existed.
+- D4 - a rejected signal is CANCELLED, so it never counts toward the one
+  open trade. Only ACTIVE (pending order) and TRIGGERED (open position)
+  block the next setup.
+- Migration e7a4c19b3d52 adds only the `EXECUTION_REJECTED` label to
+  `smc_setup_state` (PostgreSQL cannot drop an enum label, so its
+  downgrade is a no-op).

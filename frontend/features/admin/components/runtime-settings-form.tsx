@@ -117,6 +117,23 @@ export function RuntimeSettingsForm({ data }: { data: RuntimeSettingListResponse
 
   const disabled = (draft.disabled_strategies as string[]) ?? [];
   const strategies = byKey.disabled_strategies;
+  const otherStrategySettings = data.items.filter(
+    (s) => s.group === "strategies" && s.key !== "disabled_strategies",
+  );
+
+  function settingRow(s: RuntimeSetting) {
+    return (
+      <Row
+        key={s.key}
+        label={s.label}
+        help={s.help}
+        setting={s.key}
+        footer={<OverrideNote setting={s} onReset={() => reviewReset(s)} inline />}
+      >
+        <Control setting={s} value={draft[s.key]} onChange={(v) => set(s.key, v)} />
+      </Row>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -129,7 +146,7 @@ export function RuntimeSettingsForm({ data }: { data: RuntimeSettingListResponse
                 {strategies.choices.map((name) => {
                   const on = !disabled.includes(name);
                   return (
-                    <Row key={name} label={STRATEGY_LABELS[name] ?? name}>
+                    <Row key={name} label={STRATEGY_LABELS[name] ?? name} setting={`disabled_strategies.${name}`}>
                       <Segmented
                         options={["On", "Off"]}
                         value={on ? "On" : "Off"}
@@ -146,15 +163,22 @@ export function RuntimeSettingsForm({ data }: { data: RuntimeSettingListResponse
                   );
                 })}
                 <OverrideNote setting={strategies} onReset={() => reviewReset(strategies)} />
+                {/* ADR-183. Every other setting in this group is a separate
+                    strategy path with its own switch - smc_enabled is
+                    SMC-ICT-CRT-v1, not the legacy "SMC" row above. The
+                    legacy rows only ever showed `disabled_strategies`, which
+                    silently hid these. */}
+                {otherStrategySettings.length ? (
+                  <>
+                    <p className="px-5 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Independent strategy paths
+                    </p>
+                    {otherStrategySettings.map((s) => settingRow(s))}
+                  </>
+                ) : null}
               </>
             ) : (
-              data.items
-                .filter((s) => s.group === group)
-                .map((s) => (
-                  <Row key={s.key} label={s.label} help={s.help} footer={<OverrideNote setting={s} onReset={() => reviewReset(s)} inline />}>
-                    <Control setting={s} value={draft[s.key]} onChange={(v) => set(s.key, v)} />
-                  </Row>
-                ))
+              data.items.filter((s) => s.group === group).map((s) => settingRow(s))
             )}
           </div>
         </Panel>
@@ -197,15 +221,18 @@ function Row({
   label,
   help,
   footer,
+  setting,
   children,
 }: {
   label: string;
   help?: string;
   footer?: React.ReactNode;
+  /** The setting key, so a row can be found without relying on its label. */
+  setting?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+    <div data-setting={setting} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         <p className="text-[13px] font-medium">{label}</p>
         {help ? <p className="mt-0.5 text-[11px] text-muted-foreground">{help}</p> : null}

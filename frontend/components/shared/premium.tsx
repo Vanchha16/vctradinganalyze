@@ -277,6 +277,7 @@ export function Segmented({
         <button
           key={o}
           type="button"
+          aria-pressed={value === o}
           onClick={() => onChange(o)}
           className={cn(
             "focus-ring rounded-md font-medium transition-all duration-200",

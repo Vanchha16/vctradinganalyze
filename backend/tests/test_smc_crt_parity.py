@@ -170,6 +170,51 @@ def test_buy_fixture_matches_the_frozen_rules_end_to_end(db_session):
     assert as_aware_utc(signal.confirmed_at) == as_aware_utc(produced.mss_t)
 
 
+def test_a_key_level_older_than_200_h4_candles_is_still_found(db_session):
+    """Audit D8: the frozen key-level rule has no lookback limit, so the
+    production path must read all stored H4 history. The only level here
+    is a swing low 250+ candles before the raid - outside the old 200-candle
+    window, which recorded KEY_LEVEL_UNCERTAIN where research took the trade."""
+    h4_rows = _flat_h4(5)
+    h4_rows += [(100, 101, 95, 100), (100, 101, 93, 100), (100, 101, 88, 100),
+                (100, 101, 93, 100), (100, 101, 95, 100)]   # confirmed swing low at 88
+    h4_rows += _flat_h4(250)
+    h4_rows += [(100, 130, 90, 105)]                        # anchor: CRT 90-130
+    h4_rows += [(105, 106, 88, 100)]                        # raid to 88, closed back inside
+    _, m5_rows = _buy_fixture()
+    asset = _asset(db_session)
+    _store(db_session, asset, Timeframe.H4, T0, H4, h4_rows)
+    raid_close = T0 + H4 * len(h4_rows)
+    _store(db_session, asset, Timeframe.M5, raid_close, M5, m5_rows)
+    now = raid_close + M5 * (len(m5_rows) + 1)
+
+    h4 = [rules.Candle(T0 + H4 * i, *r) for i, r in enumerate(h4_rows)]
+    raid = len(h4) - 1
+    tolerance = rules.atr(h4, raid, rules.ATR_PERIOD) * rules.KEY_LEVEL_ATR_FRACTION
+    expected = rules.key_levels_for(h4, raid - 1, 88.0, tolerance)
+    assert [(k.name, k.price) for k in expected] == [("swing_low", 88.0)]
+    assert raid - 7 > 200, "the level must sit outside the old 200-candle window"
+
+    produced = _service(db_session).run(asset, now)[-1]
+    assert produced.key_levels == "swing_low@88.0"
+    assert produced.state is SmcSetupState.SIGNAL_CREATED, produced.reason
+
+
+def test_full_h4_history_does_not_back_fill_setups_for_old_anchors(db_session):
+    """D8 reads all H4 history for key levels only: a raid older than the
+    evaluated span (the former 200-candle read) gets no setup record."""
+    h4_rows = _flat_h4(20) + [(100, 110, 90, 105), (95, 96, 85, 87)]  # an old raid
+    h4_rows += _flat_h4(250)
+    asset = _asset(db_session)
+    _store(db_session, asset, Timeframe.H4, T0, H4, h4_rows)
+    h4 = [rules.Candle(T0 + H4 * i, *r) for i, r in enumerate(h4_rows)]
+    assert rules.crt_candidate(h4, 21) is not None, "the old raid is a real CRT candidate"
+
+    now = T0 + H4 * (len(h4_rows) + 1)
+    assert _service(db_session).run(asset, now) == []
+    assert db_session.query(SmcSetup).count() == 0
+
+
 def test_rejected_setup_keeps_its_real_reason_not_a_generic_wait(db_session):
     """A raid that never closes back inside is recorded with its own reason."""
     h4_rows = _flat_h4(20) + [(100, 110, 90, 105), (95, 96, 85, 87)]

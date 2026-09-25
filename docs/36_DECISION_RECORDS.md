@@ -11767,3 +11767,17 @@ candles with identical decisions, entries, stops, targets and R:R.
 - Migration e7a4c19b3d52 adds only the `EXECUTION_REJECTED` label to
   `smc_setup_state` (PostgreSQL cannot drop an enum label, so its
   downgrade is a no-op).
+
+Addendum 2026-09-25 - H4 history for key levels (production audit D8)
+
+Operator-approved, data availability only. The frozen key-level rule
+considers every confirmed H4 swing before the anchor with no lookback limit;
+the former 200-candle H4 read dropped levels research uses (the 2026-09-24
+05:00 BUY needed a swing from 2026-06-11, 603 candles back). The service now
+reads all stored H4 candles stamped at or before `now` (the forming candle is
+still excluded) and feeds them to the unchanged rules, while evaluating only
+the latest 199 H4 raids - the span the old read covered - so no setup record
+is back-filled for old anchors and no resolved setup is re-decided. M5 stays
+at 1500 candles. Research/production parity on production candles: zero
+decision, direction, entry, stop, target or R:R differences over 10 days
+(apart from the existing NO_MSS / SETUP_EXPIRED label).

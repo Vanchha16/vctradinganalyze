@@ -71,10 +71,17 @@ STRATEGY_NAME = SMC_STRATEGY_NAME
 MODEL_NAME = "none"
 PROMPT_VERSION = "smc-ict-crt-v1"
 
-#: How much history each timeframe needs: enough for ATR(14), fractal
-#: pivots and the key-level lookups, and no more - these are database
-#: reads, so they cost no provider requests at all.
-_H4_CANDLES = 200
+#: H4 is read in full: the frozen key-level rule considers every confirmed
+#: H4 swing before the anchor, with no lookback limit, so any fixed window
+#: eventually drops a level research would use (audit D8 - a swing from
+#: 2026-06-11 needed 603 candles on 2026-09-24). Database reads only; they
+#: cost no provider requests.
+_H4_HISTORY_START = datetime(1970, 1, 1, tzinfo=UTC)
+#: ...but only the most recent H4 candles are evaluated as raids - the same
+#: span the former 200-candle read covered - so the full history feeds the
+#: key levels without back-filling setup records for old anchors.
+_H4_EVALUATED_RAIDS = 199
+#: M5 only needs the 12 h after a raid plus ATR(14) and the fractal pivots.
 _M5_CANDLES = 1500
 
 _TF_SECONDS = {Timeframe.H4: 4 * 3600, Timeframe.M5: 300}
@@ -171,7 +178,8 @@ class SmcCrtService:
         self.execution_rejections = []
 
         h4 = closed_only(
-            self._candles.list_recent(asset.id, Timeframe.H4, limit=_H4_CANDLES), Timeframe.H4, now
+            self._candles.list_range(asset.id, Timeframe.H4, start=_H4_HISTORY_START, end=now),
+            Timeframe.H4, now,
         )
         m5 = closed_only(
             self._candles.list_recent(asset.id, Timeframe.M5, limit=_M5_CANDLES), Timeframe.M5, now
@@ -182,7 +190,7 @@ class SmcCrtService:
 
         touched.extend(self._expire_due(asset, now))
 
-        for index in range(1, len(h4)):
+        for index in range(max(1, len(h4) - _H4_EVALUATED_RAIDS), len(h4)):
             existing = self._setups.get_by_anchor(asset.id, h4[index - 1].t)
             if existing is not None and existing.state not in _UNRESOLVED:
                 continue  # resolved already - restart-safe, never re-decided

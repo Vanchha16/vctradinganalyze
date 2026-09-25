@@ -50,9 +50,35 @@ def test_h1_and_m15_are_collected_just_after_their_candles_close() -> None:
     assert h1.minute == {1}
     assert isinstance(m15, crontab)
     assert m15.minute == {1, 16, 31, 46}
-    # Everything else keeps its interval.
-    m5 = market_data_tasks.BEAT_SCHEDULE_SECONDS[Timeframe.M5]
-    assert schedule["collect-market-data-m5"]["schedule"] == m5
+    # M5 and H4 are aligned too (audit D9, next test); the rest keep intervals.
+    for timeframe in (Timeframe.M1, Timeframe.M30, Timeframe.D1, Timeframe.W1, Timeframe.MN):
+        interval = market_data_tasks.BEAT_SCHEDULE_SECONDS[timeframe]
+        assert schedule[f"collect-market-data-{timeframe.value}"]["schedule"] == interval
+
+
+def test_m5_and_h4_are_collected_three_minutes_after_their_candles_close() -> None:
+    """Audit D9: the first run after the close plus Twelve Data's ~2-minute
+    publication lag holds the final bar; the SMC path waits for it."""
+    schedule = market_data_tasks.register_market_data_schedule()
+
+    m5 = schedule["collect-market-data-m5"]["schedule"]
+    assert isinstance(m5, crontab)
+    assert m5.minute == set(range(3, 60, 5))
+    assert m5.hour == set(range(24))
+
+    h4 = schedule["collect-market-data-h4"]["schedule"]
+    assert isinstance(h4, crontab)
+    assert h4.minute == {3}
+    # Summer (01, 05, ...) and winter (00, 04, ...) H4 boundaries both covered.
+    assert h4.hour == {0, 1, 4, 5, 8, 9, 12, 13, 16, 17, 20, 21}
+
+
+def test_the_smc_run_follows_the_m5_collection_by_one_minute() -> None:
+    from app.workers import smc_tasks
+
+    run = smc_tasks.register_smc_schedule()["smc-run"]["schedule"]
+    assert isinstance(run, crontab)
+    assert run.minute == set(range(4, 60, 5))
 
 
 def test_an_operator_override_keeps_its_interval(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,15 +174,15 @@ def test_projected_daily_requests_per_asset_matches_the_floored_schedule() -> No
     """Computed independently from `BEAT_SCHEDULE_SECONDS` (module-level,
     built from the real default floor) across *all nine* `Timeframe`
     values - not just the six the build spec's own table enumerated (it
-    omitted M30/W1/MN). See the report-back note on this discrepancy."""
-    expected = sum(
-        86_400 / interval for interval in market_data_tasks.BEAT_SCHEDULE_SECONDS.values()
-    )
-    assert market_data_tasks.projected_daily_requests_per_asset() == pytest.approx(expected)
-    # Sanity-check against the floored per-timeframe run counts directly.
+    omitted M30/W1/MN). See the report-back note on this discrepancy.
+
+    Audit D9: counts what Beat really runs - H4 on its candle-close crontab
+    runs at 12 boundary hours (summer and winter grids), not 6 intervals."""
     assert market_data_tasks.projected_daily_requests_per_asset() == pytest.approx(
-        288 + 288 + 96 + 48 + 24 + 6 + 1 + (86_400 / 604_800) + (86_400 / 2_592_000)
+        288 + 288 + 96 + 48 + 24 + 12 + 1 + (86_400 / 604_800) + (86_400 / 2_592_000)
     )
+    # Still inside Twelve Data's free-tier cap for the one active asset.
+    assert market_data_tasks.projected_daily_requests_per_asset() <= 800
 
 
 class _RecordingLogger:

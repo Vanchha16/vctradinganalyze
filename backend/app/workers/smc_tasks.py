@@ -134,5 +134,9 @@ def compose_execution_rejected_message(signal: Signal) -> str:
 
 
 def register_smc_schedule() -> dict[str, dict[str, object]]:
-    """Every five minutes, on the minute after each M5 collection."""
-    return {"smc-run": {"task": "smc.run", "schedule": crontab(minute="*/5")}}
+    """Every five minutes, on the minute after each M5 collection.
+
+    Audit D9: M5 (and H4) are collected at minute 3 after their close, so
+    the run at minute 4 is the first to find the just-closed candle final.
+    A candle whose fetch is late is simply not used until it is final."""
+    return {"smc-run": {"task": "smc.run", "schedule": crontab(minute="4-59/5")}}

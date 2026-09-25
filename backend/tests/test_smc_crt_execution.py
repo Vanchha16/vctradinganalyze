@@ -44,7 +44,7 @@ from app.services.smc_crt.execution_safety import (
     geometry_violation,
     is_execution_rejection,
 )
-from app.services.smc_crt.service import STRATEGY_NAME, SmcCrtService
+from app.services.smc_crt.service import PUBLICATION_LAG, STRATEGY_NAME, SmcCrtService
 from app.workers import signal_monitoring_tasks, smc_tasks
 
 H4 = timedelta(hours=4)
@@ -86,6 +86,8 @@ def _store(session, asset, timeframe, start, step, rows):
             asset_id=asset.id, timeframe=timeframe, timestamp=start + step * i,
             open=Decimal(str(o)), high=Decimal(str(h)), low=Decimal(str(low)),
             close=Decimal(str(c)), volume=Decimal("1"),
+            # Final history: fetched after its close (audit D9).
+            fetched_at=start + step * (i + 1) + PUBLICATION_LAG,
         ))
     session.flush()
 

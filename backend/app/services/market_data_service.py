@@ -54,6 +54,10 @@ class MarketDataService:
     def collect(
         self, asset: Asset, timeframe: Timeframe, *, start: datetime, end: datetime
     ) -> CollectionResult:
+        # Audit D9: stamped *before* the request, so it is never later than
+        # the moment the provider answered - a candle is only ever judged
+        # final on values the provider really had by then.
+        fetched_at = datetime.now(UTC)
         raw_candles = self._fetch_with_failover(asset, timeframe, start, end)
 
         # Tracks the newest candle already on record before this run, so a
@@ -96,6 +100,7 @@ class MarketDataService:
                 low=normalized.low,
                 close=normalized.close,
                 volume=normalized.volume,
+                fetched_at=fetched_at,
             )
             self._price_candle_repository.upsert(candle)
             persisted += 1

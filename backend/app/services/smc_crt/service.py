@@ -85,6 +85,11 @@ _H4_EVALUATED_RAIDS = 199
 _M5_CANDLES = 1500
 
 _TF_SECONDS = {Timeframe.H4: 4 * 3600, Timeframe.M5: 300}
+#: Audit D9: Twelve Data publishes a bar about 1-2 minutes after it closes
+#: (measured on production M1: the newest bar returned by every run opened
+#: at least 2 minutes before it), so only a fetch this long after a
+#: candle's close is taken to hold its final values.
+PUBLICATION_LAG = timedelta(minutes=2)
 
 #: A setup in one of these states can still progress: the M5 shift, and then
 #: the entry zone, only appear as candles close after the raid. Anything else
@@ -108,16 +113,38 @@ def _to_candle(row: PriceCandle) -> Candle:
     )
 
 
+def is_final(row: PriceCandle, timeframe: Timeframe) -> bool:
+    """Audit D9: a closed candle holds its final values only if it was
+    fetched after its close plus the provider's publication lag. The
+    collector stores the forming candle and rewrites it in place, so until
+    that fetch the row can hold values from before the close."""
+    if row.fetched_at is None:
+        return False
+    close = as_aware_utc(row.timestamp) + timedelta(seconds=_TF_SECONDS[timeframe])
+    return as_aware_utc(row.fetched_at) >= close + PUBLICATION_LAG
+
+
 def closed_only(rows: Sequence[PriceCandle], timeframe: Timeframe, now: datetime) -> list[Candle]:
-    """Frozen rule §3: never decide on a candle that is still forming.
+    """Frozen rule §3: never decide on a candle that is not complete.
 
     A candle stamped `t` covers `[t, t + period)`, so it is closed only once
-    `now >= t + period`. Applied here, inside the SMC path, rather than in
-    the shared repository - BBMA's reads are deliberately left alone.
+    `now >= t + period` - and, audit D9, final only once `is_final`. The
+    newest closed candles that are not final yet are left out until the
+    fetch that finalises them; if that fetch is late or missed they simply
+    stay out. Older rows are kept: every collection run rewrites its whole
+    lookback window, so the fetch that finalised a candle also rewrote the
+    ones before it after their close (rows from before `fetched_at` existed
+    are null there and are covered the same way).
+
+    Applied here, inside the SMC path, rather than in the shared
+    repository - BBMA's reads are deliberately left alone.
     """
     period = timedelta(seconds=_TF_SECONDS[timeframe])
     now = as_aware_utc(now)
-    return [_to_candle(r) for r in rows if as_aware_utc(r.timestamp) + period <= now]
+    closed = [r for r in rows if as_aware_utc(r.timestamp) + period <= now]
+    while closed and not is_final(closed[-1], timeframe):
+        closed.pop()
+    return [_to_candle(r) for r in closed]
 
 
 class SmcCrtService:
@@ -462,4 +489,4 @@ class SmcCrtService:
         return out
 
 
-__all__ = ["STRATEGY_NAME", "SmcCrtService", "closed_only"]
+__all__ = ["PUBLICATION_LAG", "STRATEGY_NAME", "SmcCrtService", "closed_only", "is_final"]

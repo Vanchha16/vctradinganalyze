@@ -89,5 +89,6 @@ class PriceCandleRepository(BaseRepository[PriceCandle]):
         existing.low = candle.low
         existing.close = candle.close
         existing.volume = candle.volume
+        existing.fetched_at = candle.fetched_at
         self.session.flush()
         return existing

@@ -37,7 +37,7 @@ from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
 from app.repositories.smc_setup_repository import SmcSetupRepository
 from app.services.smc_crt import rules
-from app.services.smc_crt.service import STRATEGY_NAME, SmcCrtService
+from app.services.smc_crt.service import PUBLICATION_LAG, STRATEGY_NAME, SmcCrtService
 from app.utils.time import as_aware_utc
 
 RESEARCH_RULES = (
@@ -98,6 +98,8 @@ def _store(session, asset: Asset, timeframe: Timeframe, start: datetime, step, r
             asset_id=asset.id, timeframe=timeframe, timestamp=start + step * i,
             open=Decimal(str(o)), high=Decimal(str(h)), low=Decimal(str(low)),
             close=Decimal(str(c)), volume=Decimal("1"),
+            # Final history: fetched after its close (audit D9).
+            fetched_at=start + step * (i + 1) + PUBLICATION_LAG,
         ))
     session.flush()
 

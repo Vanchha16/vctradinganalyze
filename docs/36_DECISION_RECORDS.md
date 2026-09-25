@@ -11781,3 +11781,29 @@ is back-filled for old anchors and no resolved setup is re-decided. M5 stays
 at 1500 candles. Research/production parity on production candles: zero
 decision, direction, entry, stop, target or R:R differences over 10 days
 (apart from the existing NO_MSS / SETUP_EXPIRED label).
+
+Addendum 2026-09-25 - decide on final candles only (production audit D9)
+
+Operator-approved; data correctness, not a rule change. The collector
+stores the forming candle and rewrites it in place, and `closed_only`
+checked only the timestamp, so a candle whose period had ended could still
+hold values from before its close. Production first wrote H4 at minute 44
+of the candle and M5 247 s into it and rewrote them only a run later: every
+decision at the close read partial values. The 2026-09-25 01:00 BUY setup
+was built on its raid candle's 05:44 snapshot; the final candle swept both
+sides of the anchor and is no CRT. M5 closes moved by up to 3.37 on re-fetch.
+
+- `price_candles.fetched_at` (migration b2d6f0a8c914, nullable, no
+  backfill) records when the request that last wrote a row was made,
+  stamped before the request so it never claims a later moment.
+- The SMC path uses a closed candle only once it was fetched at or after
+  its close plus a 2-minute publication lag (measured on production M1).
+  The newest closed candles that are not final are left out until the
+  fetch that finalises them; a late or missed fetch keeps them out.
+- M5 is collected at minute 3 after each close (`3-58/5`, 288 runs a day
+  as before) and H4 at minute 3 of both the summer and winter boundary
+  hours (12 runs a day instead of 6; 757 of 800 daily requests projected);
+  `smc.run` moves to minute 4 (`4-59/5`). H1, M15, M1 and every other
+  timeframe are unchanged.
+- The frozen rules, `rules.py` and D1-D8 are unchanged; decisions come
+  about 4 minutes after the close instead of at it.

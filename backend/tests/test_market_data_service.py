@@ -279,3 +279,73 @@ def test_collect_skips_provider_that_declares_unsupported_timeframe(
 
     assert unsupported.calls == 0  # skipped proactively, never invoked
     assert result.persisted > 0  # fell through to the working provider
+
+
+class _RecordingProvider:
+    """Returns one candle and records when it was asked (audit D9)."""
+
+    name = "recording"
+
+    def __init__(self, close: float) -> None:
+        self.close = close
+        self.asked_at: list[datetime] = []
+
+    def get_candles(
+        self, symbol: str, timeframe: Timeframe, start: datetime, end: datetime
+    ) -> list[RawCandle]:
+        self.asked_at.append(datetime.now(UTC))
+        return [
+            RawCandle(
+                symbol=symbol, timeframe=timeframe, timestamp=start,
+                open=1.1, high=1.3, low=1.0, close=self.close,
+            )
+        ]
+
+    def health_check(self) -> bool:
+        return True
+
+    def capabilities(self) -> ProviderCapabilities:
+        return _ALL_TIMEFRAMES_CAPABILITIES
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)  # SQLite
+
+
+def test_collect_stamps_fetched_at_no_later_than_the_provider_request(
+    session: Session, asset: Asset
+) -> None:
+    """Audit D9: a candle is judged final by when it was fetched, so the
+    stamp must never claim a moment later than the provider actually had."""
+    provider = _RecordingProvider(close=1.2)
+    service = MarketDataService(
+        providers=[provider],
+        candle_validator=CandleValidator(),
+        price_candle_repository=PriceCandleRepository(session),
+        sleep=_noop_sleep,
+    )
+    before = datetime.now(UTC)
+    end = datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
+    service.collect(asset, Timeframe.M5, start=end - timedelta(minutes=5), end=end)
+
+    row = session.query(PriceCandle).one()
+    assert row.fetched_at is not None
+    assert before <= _aware(row.fetched_at) <= provider.asked_at[0]
+
+
+def test_a_refetch_rewrites_values_and_fetched_at(session: Session, asset: Asset) -> None:
+    """The forming candle is stored and rewritten in place; the rewrite must
+    carry its own fetch time, or a stale row would look final."""
+    repo = PriceCandleRepository(session)
+    t = datetime(2026, 9, 25, 5, tzinfo=UTC)
+    first = datetime(2026, 9, 25, 5, 44, 33, tzinfo=UTC)
+    later = datetime(2026, 9, 25, 9, 3, 10, tzinfo=UTC)
+    for close, fetched_at in ((4274.86, first), (4294.52, later)):
+        repo.upsert(PriceCandle(
+            asset_id=asset.id, timeframe=Timeframe.H4, timestamp=t,
+            open=4263.57, high=4296.09, low=4257.31, close=close, volume=None,
+            fetched_at=fetched_at,
+        ))
+    row = session.query(PriceCandle).one()
+    assert float(row.close) == 4294.52
+    assert _aware(row.fetched_at) == later

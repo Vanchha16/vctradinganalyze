@@ -99,8 +99,19 @@ def projected_daily_requests_per_asset() -> float:
     """Sum of Beat runs/day across every timeframe, one request per asset
     per run (Phase 9H, ADR-140) - the same arithmetic that revealed the
     original cadence bug, kept as a real function so it can both be tested
-    and reused for the startup warning below."""
-    return sum(_SECONDS_PER_DAY / interval for interval in BEAT_SCHEDULE_SECONDS.values())
+    and reused for the startup warning below.
+
+    Counts what Beat actually runs: a candle-close crontab (ADR-166, audit
+    D9) runs once per listed minute of every listed hour, which for H4 is
+    not the same as once per 4-hour interval."""
+    total = 0.0
+    for timeframe, interval in BEAT_SCHEDULE_SECONDS.items():
+        schedule = schedule_for(timeframe, interval)
+        if isinstance(schedule, crontab):
+            total += len(schedule.hour) * len(schedule.minute)
+        else:
+            total += _SECONDS_PER_DAY / schedule
+    return total
 
 
 def log_quota_projection() -> None:
@@ -183,6 +194,18 @@ def collect_market_data_task(timeframe_value: str) -> None:
 _CANDLE_CLOSE_SCHEDULES: dict[Timeframe, crontab] = {
     Timeframe.H1: crontab(minute="1"),
     Timeframe.M15: crontab(minute="1,16,31,46"),
+    #: Audit D9 (ADR-183) - the smc-ict-crt-v1 path decides on M5 and H4
+    #: and may only use a candle fetched after its close plus Twelve Data's
+    #: ~2-minute publication lag. On free-running intervals production
+    #: first wrote M5 247 s into the candle and H4 44 minutes into it, and
+    #: rewrote them only a run later, so every decision at the close read
+    #: partial values. Minute 3 after the close is the first run that holds
+    #: the final bar. M5: same 288 runs a day. H4: both the summer and the
+    #: winter boundary hours (XAUUSD's H4 grid follows Twelve Data's day,
+    #: which starts at 21:00 UTC in summer and 20:00 in winter - ADR-180),
+    #: 12 runs a day instead of 6.
+    Timeframe.M5: crontab(minute="3-58/5"),
+    Timeframe.H4: crontab(minute="3", hour="0,1,4,5,8,9,12,13,16,17,20,21"),
 }
 
 

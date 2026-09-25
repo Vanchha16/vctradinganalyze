@@ -48,5 +48,12 @@ class PriceCandle(Base, UUIDMixin, CreatedAtMixin):
     low: Mapped[Decimal] = mapped_column(_PRICE, nullable=False)
     close: Mapped[Decimal] = mapped_column(_PRICE, nullable=False)
     volume: Mapped[Decimal | None] = mapped_column(_PRICE, nullable=True)
+    #: When the provider request that last wrote these values was made
+    #: (audit D9). The collector stores the forming candle and rewrites it
+    #: in place, so a candle whose period has ended may still hold values
+    #: from before its close; only a fetch made after the close, plus the
+    #: provider's publication lag, holds its final values. Null on rows
+    #: written before this column existed.
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     asset: Mapped["Asset"] = relationship(back_populates="candles")

@@ -20,6 +20,7 @@ from app.schemas.admin_performance import (
     ReplacementSummary,
 )
 from app.services.signal_confirmation_service import REPLACED_REASON
+from app.services.smc_crt.execution_safety import SMC_STRATEGY_NAME
 
 _ZERO = Decimal("0")
 
@@ -38,6 +39,9 @@ CONFIDENCE_BANDS: tuple[tuple[str, float, float], ...] = (
     ("70-79", 70.0, 80.0),
     ("80+", 80.0, 100.01),
 )
+#: smc-ict-crt-v1 signals have no confidence score (stored as 0, meaning
+#: "not applicable"): their own row, never part of the "<60" band.
+RULE_BASED_BAND = "N/A / Rule-based"
 
 #: ADR-168's comparison, stated rather than guessed at. See
 #: `SignalRepository.count_replaced`.
@@ -103,7 +107,9 @@ class SignalPerformanceService:
             by_timeframe=self._breakdown(Signal.timeframe, epoch),
             by_signal_type=self._breakdown(Signal.signal_type, epoch),
             by_confidence=self._rows(
-                self._signals.performance_by_confidence(epoch, CONFIDENCE_BANDS)
+                self._signals.performance_by_confidence(
+                    epoch, CONFIDENCE_BANDS, unscored=(SMC_STRATEGY_NAME, RULE_BASED_BAND)
+                )
             ),
             risk_review=self._rows(self._signals.risk_review_outcomes(epoch)),
             replacements=ReplacementSummary(

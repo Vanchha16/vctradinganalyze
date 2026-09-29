@@ -8,6 +8,7 @@ import { ConfidenceGauge } from "@/features/ai-analysis/components/confidence-ga
 import { BookmarkButton } from "@/features/signals/components/bookmark-button";
 import { recommendationVariant, signalStatusVariant } from "@/lib/badge-variants";
 import { formatEnumLabel, formatPrice, formatRelativeTime } from "@/lib/format";
+import { isRuleBasedSignal, RULE_BASED_CONFIDENCE_LABEL } from "@/lib/signal-confidence";
 import type { SignalResponse } from "@/services/types";
 
 /**
@@ -64,7 +65,13 @@ export function SignalCard({ signal }: { signal: SignalResponse }) {
                 <Badge variant="outline">{formatEnumLabel(signal.strategy)}</Badge>
               ) : null}
             </div>
-            <ConfidenceGauge score={signal.confidence} size="sm" />
+            {isRuleBasedSignal(signal) ? (
+              <Badge variant="outline" data-testid="rule-based-confidence">
+                {RULE_BASED_CONFIDENCE_LABEL}
+              </Badge>
+            ) : (
+              <ConfidenceGauge score={signal.confidence} size="sm" />
+            )}
           </div>
           <dl className="grid grid-cols-2 gap-4 border-t border-border pt-3 text-sm sm:grid-cols-4">
             <div>

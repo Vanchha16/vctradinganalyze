@@ -488,3 +488,17 @@ def test_performance_route_exposes_no_non_get_method(client: TestClient) -> None
     }
 
     assert paths == {"/api/v1/admin/performance": {"get"}}
+
+
+def test_rule_based_smc_signals_are_not_counted_in_a_confidence_band(
+    client: TestClient, engine
+) -> None:
+    """smc-ict-crt-v1 has no confidence score (stored 0 = not applicable):
+    its trades get their own row and never swell the "<60" band."""
+    _signal(engine, confidence=56.18, strategy="breakout")
+    _signal(engine, confidence=0.0, strategy="smc_ict_crt_v1")
+    _signal(engine, confidence=0.0, strategy="smc_ict_crt_v1")
+
+    bands = {row["key"]: row["metrics"]["trades"] for row in _get(client, engine)["by_confidence"]}
+
+    assert bands == {"<60": 1, "N/A / Rule-based": 2}

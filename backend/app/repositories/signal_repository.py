@@ -243,7 +243,11 @@ class SignalRepository(BaseRepository[Signal]):
         return self.session.execute(query).all()
 
     def performance_by_confidence(
-        self, epoch: datetime, bands: Sequence[tuple[str, float, float]]
+        self,
+        epoch: datetime,
+        bands: Sequence[tuple[str, float, float]],
+        *,
+        unscored: tuple[str, str] | None = None,
     ) -> Sequence[Row[tuple[Any, ...]]]:
         """The same numbers grouped into `(label, lower, upper)` confidence
         bands - lower inclusive, upper exclusive, in the order given.
@@ -251,14 +255,20 @@ class SignalRepository(BaseRepository[Signal]):
         A confidence matching no band lands under `None`, which keeps a
         badly-specified band list visible instead of quietly dropping
         trades out of a breakdown that still looks complete.
+
+        `unscored` = `(strategy, label)`: a strategy with no confidence score
+        at all (its stored 0 means "not applicable") gets its own row under
+        `label` instead of being counted in the lowest band.
         """
-        band_case = case(
-            *[
-                (and_(Signal.confidence >= lower, Signal.confidence < upper), label)
-                for label, lower, upper in bands
-            ],
-            else_=None,
-        )
+        branches = []
+        if unscored is not None:
+            strategy, label = unscored
+            branches.append((Signal.strategy == strategy, label))
+        branches += [
+            (and_(Signal.confidence >= lower, Signal.confidence < upper), label)
+            for label, lower, upper in bands
+        ]
+        band_case = case(*branches, else_=None)
         query = (
             select(band_case.label("key"), *self._outcome_columns())
             .where(self._filled(epoch))

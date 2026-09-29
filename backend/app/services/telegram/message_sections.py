@@ -18,6 +18,7 @@ from app.models.ea_execution_event import EaExecutionEvent
 from app.models.ea_token import EaToken
 from app.models.enums import MarketType, SignalStatus, SignalType
 from app.models.signal import Signal
+from app.services.smc_crt.execution_safety import SMC_STRATEGY_NAME
 from app.utils.time import as_aware_utc
 
 _SEPARATOR = "━━━━━━━━━━━━━━━━━━"
@@ -76,6 +77,19 @@ def render_header(signal: Signal, asset: Asset) -> str:
     return f"{_SEPARATOR}\n{emoji} {direction} • {symbol}\n{_SEPARATOR}"
 
 
+#: smc-ict-crt-v1 decides by fixed rules and has no confidence score; its
+#: stored 0 means "not applicable", so it is never shown as "0%".
+RULE_BASED_CONFIDENCE = "N/A — Rule-based"
+
+
+def confidence_text(signal: Signal) -> str:
+    """The confidence as shown to people: a percentage, or "N/A" for a
+    rule-based signal. Presentation only - the stored value is untouched."""
+    if signal.strategy == SMC_STRATEGY_NAME:
+        return RULE_BASED_CONFIDENCE
+    return f"{signal.confidence:.0f}%"
+
+
 def _field(label: str, value: str) -> str:
     # The label is escaped too: an unescaped "-" in "Last check-in" made
     # Telegram reject every EA OFFLINE alert (production, 2026-09-14).
@@ -94,7 +108,7 @@ def render_trade_setup(signal: Signal, asset: Asset) -> str:
         "",
         _field("⚖️ Risk Reward", f"1 : {signal.risk_reward:.1f}"),
         "",
-        _field("🎯 Confidence", f"{signal.confidence:.0f}%"),
+        _field("🎯 Confidence", confidence_text(signal)),
     ]
     return "\n".join(lines)
 

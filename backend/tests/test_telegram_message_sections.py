@@ -348,3 +348,28 @@ def test_render_risk_management_shows_the_strategy_that_analysed_the_signal() ->
     text = render_risk_management(signal, analysis)
 
     assert "🧭 Strategy : Trend Following" in text
+
+
+def test_a_rule_based_smc_signal_shows_na_confidence_not_zero_percent() -> None:
+    """smc-ict-crt-v1 has no confidence score; its stored 0 means "not
+    applicable" and must never read as "0%". Presentation only."""
+    asset = _make_asset()
+    analysis = _make_analysis(asset_id=asset.id)
+    signal = _make_signal(analysis_id=analysis.id, asset_id=asset.id)
+    signal.strategy = "smc_ict_crt_v1"
+    signal.confidence = 0.0
+
+    text = render_trade_setup(signal, asset)
+
+    assert "🎯 Confidence : N/A — Rule\-based" in text
+    assert "0%" not in text
+    assert signal.confidence == 0.0  # the stored value is untouched
+
+
+def test_a_scored_signal_keeps_its_confidence_percentage() -> None:
+    asset = _make_asset()
+    analysis = _make_analysis(asset_id=asset.id)
+    signal = _make_signal(analysis_id=analysis.id, asset_id=asset.id)
+    signal.strategy = "breakout"
+
+    assert "🎯 Confidence : 83%" in render_trade_setup(signal, asset)

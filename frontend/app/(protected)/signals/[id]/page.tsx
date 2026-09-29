@@ -25,6 +25,7 @@ import { useSignal } from "@/hooks/use-signal";
 import { useSmcAnalysis } from "@/hooks/use-smc-analysis";
 import { recommendationVariant, signalStatusVariant } from "@/lib/badge-variants";
 import { formatEnumLabel, formatPrice } from "@/lib/format";
+import { isRuleBasedSignal, RULE_BASED_CONFIDENCE_LABEL } from "@/lib/signal-confidence";
 import { buildSignalLifecycleMarkers } from "@/lib/signal-lifecycle-markers";
 import { buildSmcOverlays, DEFAULT_SMC_OVERLAYS, type SmcOverlayKind } from "@/lib/smc-overlays";
 import type { Timeframe } from "@/services/types";
@@ -113,7 +114,11 @@ export default function SignalDetailPage() {
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">Confidence</dt>
-                    <dd className="font-medium tabular-nums">{signal.confidence.toFixed(0)}%</dd>
+                    <dd className="font-medium tabular-nums" data-testid="signal-confidence">
+                      {isRuleBasedSignal(signal)
+                        ? RULE_BASED_CONFIDENCE_LABEL
+                        : `${signal.confidence.toFixed(0)}%`}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">Stop Loss</dt>

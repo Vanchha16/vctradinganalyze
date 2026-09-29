@@ -196,6 +196,10 @@ class Settings(BaseSettings):
     # ADR-137's free-running `signal_generation_interval_seconds`, whose
     # phase depended on when the worker last restarted.
     signal_generation_minute: int = 3
+    #: ADR-182 - swing strategy paper trading on EURUSD/GBPUSD/USDJPY (H4
+    #: signals, D1 trend). Recorded in `paper_swing_trades` only - never a
+    #: signal, never sent to the EA. Costs ~21 Twelve Data requests a day.
+    paper_swing_enabled: bool = False
     # ADR-166 - a BUY/SELL is saved as a DRAFT and published (Telegram, the
     # website's live event, the EA feed) only once M15 breaks structure in
     # its direction within the window. False restores immediate publication.

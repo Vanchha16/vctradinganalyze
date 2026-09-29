@@ -1,6 +1,8 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/services/api-client";
 import type {
   RuntimeSettingListResponse,
+  PaperSwingStatisticsResponse,
+  PaperSwingTradeListResponse,
   RuntimeSettingUpdateRequest,
   AdminPerformanceResponse,
   AdminApiUsageResponse,
@@ -214,4 +216,28 @@ export function updateRuntimeSettings(
   payload: RuntimeSettingUpdateRequest,
 ): Promise<RuntimeSettingListResponse> {
   return apiPut<RuntimeSettingListResponse>("/admin/runtime-settings", payload);
+}
+
+/** ADR-182 - the swing paper record next to its backtest. Read only. */
+export function getPaperSwingStatistics(): Promise<PaperSwingStatisticsResponse> {
+  return apiGet<PaperSwingStatisticsResponse>("/admin/paper-swing/statistics");
+}
+
+export interface ListPaperSwingTradesParams {
+  symbol?: string;
+  /** `taken` = open, win, loss and timeout together. */
+  status?: string;
+  offset?: number;
+  limit?: number;
+}
+
+export function listPaperSwingTrades(
+  params: ListPaperSwingTradesParams,
+): Promise<PaperSwingTradeListResponse> {
+  return apiGet<PaperSwingTradeListResponse>("/admin/paper-swing/trades", {
+    symbol: params.symbol,
+    status: params.status,
+    offset: params.offset !== undefined ? String(params.offset) : undefined,
+    limit: params.limit !== undefined ? String(params.limit) : undefined,
+  });
 }

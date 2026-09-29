@@ -236,6 +236,14 @@ REGISTRY: tuple[RuntimeSetting, ...] = (
         choices=("off", "shadow", "enforce"),
     ),
     RuntimeSetting(
+        "paper_swing_enabled",
+        "pipeline",
+        "Swing paper trading",
+        "ADR-182. EURUSD, GBPUSD, USDJPY on H4 - recorded only, never sent to the EA. "
+        "About 21 Twelve Data requests a day.",
+        "bool",
+    ),
+    RuntimeSetting(
         "signal_ttl_hours",
         "pipeline",
         "Pending signal lifetime (hours)",

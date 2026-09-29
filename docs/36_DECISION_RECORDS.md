@@ -11647,6 +11647,316 @@ Alternatives Considered
 
 ---
 
+# ADR-181
+
+Title
+
+Swing Strategy for EURUSD, GBPUSD and USDJPY (D1 Trend + H4 Pullback)
+
+Status
+
+Accepted - option A (paper trading only), chosen by the operator on
+2026-09-19 and built as ADR-182. Options B and C were not taken.
+
+Context
+
+The operator wants BBMA on XAUUSD (live since ADR-179) and a swing strategy
+on currencies. That widens the "XAUUSD first" scope set on 2026-09-09.
+
+Today the `swing_trading` strategy cannot produce a signal: `market_match`
+allows it only on H4/D1/W1, and signals are generated only on H1 (and M5
+for the tight strategy, ADR-176). Even if it won, it would be priced by the
+generic formula (latest close, 1.5 x ATR, 2R), the defect ADR-179 fixed for
+BBMA. Strategy on/off (ADR-178) is global, not per symbol.
+
+The operator's rules:
+
+- Pairs: EURUSD, GBPUSD, USDJPY only, until the strategy is validated.
+- D1 sets the main trend; H4 finds the pullback and the entry.
+- Buy: stop below the relevant H4 swing low. Sell: above the swing high.
+- Target: the previous significant swing high/low.
+- R:R calculated for every trade; no entry without a reasonable R:R.
+- Signals on H4, D1 as the higher timeframe. No M1 confirmation.
+- Free Twelve Data plan; H4 and D1 data only for the currencies.
+
+**What the rules leave open, fixed here before any result was seen:**
+
+| Question | Choice |
+|---|---|
+| D1 trend | last closed D1 close above EMA50, EMA50 higher than 5 days ago = up (mirror down), else no trade |
+| "Swing" / "significant" | H4 fractal pivot, 3 bars each side (known 3 bars after it forms) |
+| The pullback | a swing low forming after the latest swing high, **above** the swing low before it (a higher low - structure intact) |
+| Entry | market, at the close of the H4 bar that confirms the pullback low |
+| Stop | beyond the pullback swing by 0.1 x ATR14(H4) |
+| Target | the swing high the pullback came from |
+| "Reasonable" R:R | the live risk engine's own rules: R:R >= 2 and stop >= 0.5 x ATR |
+
+**Backtest.** D1, H4 and H1 candles for the three pairs were exported from
+the operator's MT5 terminal (Exness cent, 2024-03-26 to 2026-09-18) - no
+Twelve Data requests used. First trade 2024-07 once EMA50 had history.
+Trades are walked on H1 with the stop taken first when a bar touches both
+levels; one trade per pair at a time; closed at market after 20 days (no
+trade reached that). Cost: the bar's own spread (0.8 - 1.0 pip) and today's
+swap rates per night held. Results in R (multiples of the risk taken),
+which is comparable across the three pairs; pips are not.
+
+| Variant | Trades | W/L | Win % | Total | Avg/trade | Max drawdown |
+|---|---|---|---|---|---|---|
+| **Rules above (EMA trend, R:R >= 2)** | 91 | 28/63 | 30.8 | **+20.9R** | +0.23R | 19.9R |
+| EMA trend, R:R >= 1.5 | 132 | 43/89 | 32.6 | +19.2R | +0.15R | 23.2R |
+| EMA trend, no R:R filter | 351 | 176/175 | 50.1 | -2.4R | -0.01R | 37.8R |
+| D1 structure trend (HH/HL), R:R >= 2 | 57 | 14/43 | 24.6 | -8.3R | -0.15R | 23.3R |
+
+The main variant by pair and by year:
+
+| | Trades | W/L | Total |
+|---|---|---|---|
+| EURUSD | 33 | 10/23 | +8.1R |
+| GBPUSD | 37 | 10/27 | -1.1R |
+| USDJPY | 21 | 8/13 | +13.9R |
+| 2024 (Jul-Dec) | 29 | 13/16 | +18.6R |
+| 2025 | 35 | 6/29 | -9.7R |
+| 2026 (to Sep) | 27 | 9/18 | +12.0R |
+
+What the evidence says:
+
+1. **The R:R filter is the whole edge.** The same entries without it
+   break even; with it they win about one in three at 2-6R.
+2. **It is not robust.** The one other reasonable reading of "D1 sets the
+   trend" (swing structure instead of EMA50) loses 8.3R. 2025 lost 9.7R
+   with 29 losses in 35 trades, and the drawdown reached 19.9R - at 1%
+   risk per trade, about 20% of the account.
+3. **It is not statistically distinguishable from zero.** +0.23R average
+   over 91 trades, with a standard deviation of 2.0R per trade, is about
+   1.1 standard errors. Two and a half years is one sample.
+4. **The trades are not swing-length.** The median hold is 11 hours; the
+   stop, beyond an H4 swing, is 9-141 pips (median 26). 47 of the 63
+   losses stopped out inside a day. It behaves like an H4 pullback trade,
+   not a multi-week position.
+5. GBPUSD is flat; almost the entire result comes from EURUSD and USDJPY.
+
+Decision
+
+**Option A was chosen (ADR-182).** The options put to the operator:
+
+- **A. Build it for paper only.** Generate H4 swing signals for the three
+  pairs, recorded and monitored like any signal, **never sent to the EA**,
+  for at least 8-12 weeks; adopt for live trading only if the paper result
+  holds. Recommended: the backtest is positive but fragile, and paper
+  trading is the only cheap way to test it on data it has not seen.
+- **B. Refine the rules first**, then backtest again, e.g. a wider stop
+  (beyond the D1 swing rather than H4) for true swing holds, or a trigger
+  candle instead of entering on the pivot confirmation. Every extra
+  variant tried on the same 2.5 years makes the best one look better than
+  it is; a refinement should be decided on reasoning, then tested once.
+- **C. Do not build.** Keep XAUUSD/BBMA only.
+
+**If A or B is chosen, the build needs** (each a separate change, none
+started):
+
+1. Activate EURUSD (exists, inactive) and add GBPUSD, USDJPY assets.
+2. Market data for the currencies on **H4 and D1 only** - a per-asset
+   timeframe list; today collection is per timeframe for every active
+   asset, so this is new. At best 6 + 1 requests per pair per day (one
+   per new candle), ~21 in total, against the ~49 left under Twelve Data's
+   800/day after XAUUSD (ADR-140). The real count depends on the
+   collection interval set for H4/D1, which polls more often than once
+   per candle; it must be sized against the live usage counter first.
+3. **Per-symbol strategies** in Strategy Settings (ADR-178):
+   XAUUSD = BBMA, the three pairs = swing.
+4. An **H4 signal job** (just after each H4 close), next to the H1 job.
+5. **Swing pricing** in `candidate_setup_builder`, as ADR-179 did for BBMA:
+   direction, entry, stop and target from the swing setup, never the
+   generic formula; no setup = WAIT.
+6. **No confirmation step** for H4 swing signals (no M1 data for the
+   currencies), so they go ACTIVE directly - the confirmation pipeline
+   must skip them rather than let them expire as drafts.
+7. The EA (ADR-161): currency symbols (`EURUSDc` etc.), per-pair lot
+   sizing (pip value differs per pair), and holding over nights and
+   weekends. Only in option A's second stage.
+
+Consequences
+
+- Nothing changes until the operator chooses.
+- Swap is charged on every night held: EURUSD long -0.58 pip/night,
+  GBPUSD long -0.21 / short -0.06, USDJPY 0 at today's rates. Small at
+  these hold times; material if holds get longer.
+- The currencies bring EUR, GBP and JPY news into the risk filter
+  automatically (the calendar is filtered by base and quote currency).
+- The backtest script and data are in the session scratchpad, not the
+  repo.
+
+Alternatives Considered
+
+- **Using the existing `swing_trading` strategy and its generic pricing on
+  H4.** Rejected: it would repeat the defect ADR-179 fixed; its checklist
+  (ADX strength, SMC structure, normal volatility) is not the operator's
+  rule set.
+- **The D1 structure trend.** Tested; -8.3R. The EMA50 trend is the
+  proposal.
+- **No R:R filter.** Tested; break-even. The filter stays at the risk
+  engine's 2.0.
+- **Upgrading Twelve Data.** Deferred by the operator until the strategy
+  is shown to work.
+
+---
+
+
+# ADR-182
+
+Title
+
+Swing Strategy Paper Trading - Recorded Only, Never Sent to the EA
+
+Status
+
+Accepted
+
+Context
+
+The operator chose ADR-181's option A: run the swing strategy (D1 EMA50
+trend + H4 higher-low / lower-high pullback, stop beyond the swing, target
+the previous swing, R:R >= 2) on EURUSD, GBPUSD and USDJPY as **paper
+trading only**, for 8-12 weeks, then compare it with the backtest before
+any EA or real-money work. Their conditions:
+
+- no order may reach MT5 or the EA;
+- every signal and trade recorded - entry, stop, target, R:R, result in R,
+  pair, direction, setup, holding time, and ADR (average daily range);
+- D1 for the trend, H4 for signals, free Twelve Data plan, no M1;
+- the rules do not change during the period except for a technical bug.
+
+Decision
+
+**1. A separate record, not `signals`.** Setups and paper trades go into a
+new table, `paper_swing_trades`. The EA takes its orders from `signals`
+(ADR-161) and the MetaApi path from `broker_orders`; neither is written,
+nor is Telegram. There is no code path from this table to execution.
+
+**2. The pairs stay inactive assets.** EURUSD (already present) and
+GBPUSD, USDJPY (created by the task if missing) are `is_active = false`.
+Everything in the live pipeline iterates active assets only - H1/M5
+generation, all-timeframe collection, the EA feed - so none of it sees
+them. The paper task collects their H4 and D1 candles itself (§6). If
+an administrator activates one of these assets, the paper task logs `paper_swing.asset_is_active`: the live
+pipeline would then trade it too, which this ADR does not intend.
+
+**3. The rules are frozen code.** `app/services/paper_swing/rules.py` is a
+port of the ADR-181 backtest, versioned `swing-v1` and stamped on every
+row. Replayed over the same 2.5 years of MT5 candles, it reproduces the
+backtest's trades exactly (91 of 91, same times, directions and
+outcomes). A deliberate rule change is a new version and a new ADR, and
+its trades are reported apart from `swing-v1`'s.
+
+**4. Every candidate is recorded.** A taken setup is `open`, then `win`,
+`loss` or `timeout`. A setup the filters stopped is `rejected`
+(`rr_below_min`, `stop_below_min`, `no_room`); one arriving while the pair
+already has a trade open is `skipped` (`trade_open`) - one trade per pair
+at a time, as backtested. Unique on (pair, direction, pullback bar), so a
+re-run records nothing twice.
+
+**5. Paper fills follow the backtest's conventions.** Entry at the close
+of the H4 bar that confirmed the pullback; stop or target on later H4
+bars, stop first when one bar touches both; closed at the market after 20
+days. Net of a fixed spread per pair (the broker's median: 0.8 / 1.0 /
+1.0 pips) and swap per night held (the broker's 2026-09-19 rates). ADR is
+the mean D1 high-low range of the last 14 closed days, in pips - recorded,
+not used by any rule.
+
+**6. Schedule and cost - driven by the data's own candle boundaries.**
+Twelve Data's forex H4 bars open at 01:00, 05:00 ... UTC in summer and at
+00:00, 04:00 ... in winter (seen across its whole history for all three
+pairs); its D1 bar is labelled 00:00 UTC. `paper_swing.run` therefore runs
+at minute 4 of every hour and fetches a timeframe only in the first hour
+after the newest stored candle - the one still forming when fetched -
+closes (or a 4-hour / 1-day step after that, when the provider had no new
+bar, e.g. over a weekend). Decisions follow each close within minutes in
+both seasons, at no more than 6 H4 and 1 D1 request per pair per day: 21
+in total, on top of the ~751 XAUUSD uses (751 on 2026-09-18), so ~772 of
+800. A first run, or a newest candle older than 10 days (H4) / 20 days
+(D1), fetches 120 days of H4 and 450 of D1 in one request each. The startup
+quota log includes these 21 when the paper run is on.
+
+**7. Switch and view.** On/off is `paper_swing_enabled` (default off),
+shown as "Swing paper trading" in Strategy Settings (ADR-178). The record
+is Admin -> Paper Trading, super admin only, read only: the statistics
+next to the backtest, by pair and direction, the rejection counts, and
+every row.
+
+**8. The comparison baseline is the backtest on Twelve Data's own candles.**
+Validated before deployment (2026-09-19), because Twelve Data's candles
+differ from the MT5 candles ADR-181 used in three ways:
+
+- **H4 grid:** 01:00 UTC in summer, 00:00 UTC in winter (MT5: always 00:00).
+- **D1 day:** labelled 00:00 UTC but closing about 20:00 UTC in winter and
+  21:00-22:00 UTC in summer (MT5: 00:00-24:00 UTC; MT5's clock was checked
+  to be UTC - H1 closes agree with Twelve Data's to a median 0.8 pips at
+  offset 0, 3+ pips at any other).
+- **Weekend bars:** Twelve Data has Saturday/Sunday forex bars - on H4 since
+  January 2026, on D1 intermittently before that. MT5 has none.
+
+So the backtest was re-run on Twelve Data's full history (H4 from
+2024-03-01, D1 from 2023-06-02, fetched through the production provider,
+12 requests), with exits on the same H4 bars and the same fixed spread and
+swap as paper. The paper service, fed the same candles bar by bar through a
+database as the live task would, reproduces it exactly: the same 108 trades
+(time, pair, direction, outcome), R equal to 0.0001, and the same 624
+setups not taken for the same reasons.
+
+| | Trades | Win % | Avg | Total | Max DD | PF |
+|---|---|---|---|---|---|---|
+| **Twelve Data candles (the baseline)** | 108 | 27.8 | +0.086R | +9.3R | 28.5R | 1.11 |
+| Twelve Data, same window as ADR-181 (from 2024-07-17) | 99 | 27.3 | +0.025R | +2.4R | 28.5R | 1.03 |
+| Twelve Data, weekend bars removed (diagnostic) | 107 | 29.0 | +0.154R | +16.5R | 23.4R | 1.21 |
+| MT5 candles (ADR-181) | 91 | 30.8 | +0.23R | +20.9R | 19.9R | 1.32 |
+
+**On the data paper trading receives, the backtest is close to
+break-even.** Most of ADR-181's result does not survive a change of data
+feed; weekend bars explain only part of the gap. The paper page compares
+against the Twelve Data row and shows the MT5 row for reference.
+
+No look-ahead: pivots are computed on bars up to the decision bar only; a
+bar counts as closed only one bar length after it opened, which for Twelve
+Data's D1 is hours after it actually closes; exits use only bars opening at
+or after the entry. Twelve Data sometimes returns a bar followed by a gap
+of more than 4 hours (8 times in 2.5 years on EURUSD: holidays, a few
+weekends); the rules treat it as a 4-hour bar, the same in backtest and
+paper.
+
+Consequences
+
+- **8-12 weeks is about 7-10 trades.** At 0.86 a week, the paper
+  period cannot, by itself, confirm or rule out an edge of +0.1 to +0.2R
+  per trade: with a spread of about 2R per trade, ten trades leave a
+  standard error of roughly 0.6R. What it *can* show: that the live data
+  produces setups at the backtested rate, that the recorded levels match
+  what a chart shows, and whether results fall far outside the backtest's
+  range (for example, ten straight losses). The evaluation at the end of
+  the period will say so plainly, and extending the period is the likely
+  honest recommendation.
+- The paper result is net of estimated costs, not a broker fill. Slippage
+  and a spread wider than the median at news times are not modelled.
+- EUR, GBP and JPY calendar events do not affect the paper trades: the
+  news filter belongs to the live pipeline, and ADR-181's rules had none.
+- Nothing is sent anywhere, so a bug here cannot lose money; it can only
+  make the record wrong, which is why the rules are pinned by tests and by
+  the backtest replay.
+
+Alternatives Considered
+
+- **Writing paper signals into `signals` with a flag.** Rejected: the EA,
+  Telegram and the signal pages all read that table; one missed filter
+  would send a paper trade to a real account.
+- **Activating the pairs and switching the pipeline per symbol.** Rejected
+  for now: it would also collect every timeframe for them (well over the
+  free quota) and run the H1 strategy engine on them.
+- **H1 candles for exact backtest parity.** 72 more requests a day - over
+  the free plan's remaining headroom. H4 exits were shown not to change
+  the result.
+
+---
+
+
 # Review Policy
 
 Review ADRs:

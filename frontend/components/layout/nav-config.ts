@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Signal,
   SlidersHorizontal,
+  FlaskConical,
   Target,
   Terminal,
   UserRound,
@@ -86,6 +87,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "EA Activity", href: "/ea-activity", icon: Bot },
       // ADR-178 - runtime strategy/signal settings, same owner-only boundary.
       { label: "Strategy Settings", href: "/admin/strategy-settings", icon: SlidersHorizontal },
+      // ADR-182 - swing paper-trading record, super admin only, never sent to the EA.
+      { label: "Paper Trading", href: "/admin/paper-trading", icon: FlaskConical },
     ],
   },
   {

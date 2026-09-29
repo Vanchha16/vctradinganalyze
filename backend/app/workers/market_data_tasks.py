@@ -12,6 +12,7 @@ from app.repositories.price_candle_repository import PriceCandleRepository
 from app.services.market_data.candle_validator import CandleValidator
 from app.services.market_data.timeframe_utils import TIMEFRAME_DURATIONS
 from app.services.market_data_service import MarketDataService
+from app.services.paper_swing_service import REQUESTS_PER_DAY as _PAPER_SWING_REQUESTS
 from app.workers.celery_app import celery_app
 
 logger = structlog.get_logger(__name__)
@@ -131,6 +132,10 @@ def log_quota_projection() -> None:
 
     per_asset = projected_daily_requests_per_asset()
     projected = per_asset * active_asset_count
+    # ADR-182 - the swing paper pairs are inactive assets collected by their
+    # own task, so they are not in `active_asset_count`; count them here.
+    paper_requests = _PAPER_SWING_REQUESTS if settings.paper_swing_enabled else 0
+    projected += paper_requests
 
     for provider_name, daily_limit in settings.market_data_rate_limits_per_day.items():
         if projected > daily_limit:
@@ -141,6 +146,7 @@ def log_quota_projection() -> None:
                 daily_limit=daily_limit,
                 active_asset_count=active_asset_count,
                 requests_per_asset_per_day=per_asset,
+                paper_swing_requests_per_day=paper_requests,
             )
         else:
             logger.info(
@@ -150,6 +156,7 @@ def log_quota_projection() -> None:
                 daily_limit=daily_limit,
                 active_asset_count=active_asset_count,
                 requests_per_asset_per_day=per_asset,
+                paper_swing_requests_per_day=paper_requests,
             )
 
 

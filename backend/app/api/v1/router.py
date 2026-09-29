@@ -4,6 +4,7 @@ from app.api.v1.routes import (
     admin_assets,
     admin_credentials,
     admin_logs,
+    admin_paper_swing,
     admin_performance,
     admin_runtime_settings,
     admin_system,
@@ -85,6 +86,8 @@ api_router.include_router(admin_logs.router)
 api_router.include_router(admin_performance.router)
 #: ADR-178 - runtime strategy/signal settings, super admin only.
 api_router.include_router(admin_runtime_settings.router)
+#: ADR-182 - swing paper trading record, super admin only, read only.
+api_router.include_router(admin_paper_swing.router)
 api_router.include_router(admin_system.router)
 api_router.include_router(market_data.router, dependencies=[_data_rate_limit, _require_auth])
 api_router.include_router(

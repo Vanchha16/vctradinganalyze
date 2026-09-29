@@ -15,6 +15,8 @@ from app.repositories.economic_event_repository import EconomicEventRepository
 from app.repositories.news_article_repository import NewsArticleRepository
 from app.repositories.news_sentiment_repository import NewsSentimentRepository
 from app.repositories.news_source_repository import NewsSourceRepository
+from app.repositories.paper_swing_trade_repository import PaperSwingTradeRepository
+from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
 from app.repositories.system_setting_repository import SystemSettingRepository
 from app.repositories.user_repository import UserRepository
@@ -28,6 +30,7 @@ from app.services.admin_user_service import AdminUserService
 from app.services.economic_calendar_ingestion_pipeline import EconomicCalendarIngestionPipeline
 from app.services.news_ingestion_pipeline import NewsIngestionPipeline
 from app.services.news_sentiment.ai_summary_generator import AISummaryGenerator
+from app.services.paper_swing_service import PaperSwingService
 from app.services.signal_performance_service import SignalPerformanceService
 from app.services.user_service import UserService
 
@@ -70,6 +73,13 @@ def get_admin_runtime_settings_service(
     return AdminRuntimeSettingsService(
         setting_repository=SystemSettingRepository(db),
         audit_log_repository=AuditLogRepository(db),
+    )
+
+
+def get_paper_swing_service(db: Annotated[Session, Depends(get_db)]) -> PaperSwingService:
+    """ADR-182 - the swing paper record, read only from the API."""
+    return PaperSwingService(
+        AssetRepository(db), PriceCandleRepository(db), PaperSwingTradeRepository(db)
     )
 
 

@@ -1068,3 +1068,84 @@ export interface RuntimeSettingListResponse {
 export interface RuntimeSettingUpdateRequest {
   changes: Record<string, RuntimeSettingValue | null>;
 }
+
+// --- ADR-182: swing strategy paper trading --------------------------------
+
+export interface PaperSwingSummary {
+  /** Closed paper trades. Open ones are only counted in `open`. */
+  trades: number;
+  open: number;
+  wins: number;
+  losses: number;
+  timeouts: number;
+  win_rate: number | null;
+  total_r: number;
+  avg_r: number | null;
+  max_drawdown_r: number;
+  /** Gross R won / gross R lost; null with no losing trade yet. */
+  profit_factor: number | null;
+  avg_holding_hours: number | null;
+}
+
+export interface PaperSwingBacktestReference {
+  trades: number;
+  win_rate: number;
+  avg_r: number;
+  total_r: number;
+  max_drawdown_r: number;
+  profit_factor: number;
+  trades_per_week: number;
+}
+
+export interface PaperSwingStatisticsResponse {
+  enabled: boolean;
+  strategy_version: string;
+  started_at: string | null;
+  weeks_running: number;
+  trades_per_week: number | null;
+  overall: PaperSwingSummary;
+  by_pair: Record<string, PaperSwingSummary>;
+  by_direction: Record<string, PaperSwingSummary>;
+  rejected: Record<string, number>;
+  skipped_trade_open: number;
+  backtest_reference: Record<"twelve_data" | "mt5", PaperSwingBacktestReference>;
+}
+
+export type PaperSwingStatus = "open" | "win" | "loss" | "timeout" | "rejected" | "skipped";
+
+/** Prices and pip values are Decimals, so they arrive as strings. */
+export interface PaperSwingTrade {
+  id: string;
+  symbol: string;
+  strategy_version: string;
+  setup: string;
+  direction: "buy" | "sell";
+  d1_trend: string;
+  status: PaperSwingStatus;
+  reject_reason: string | null;
+  signal_time: string;
+  pivot_time: string;
+  origin_time: string;
+  entry_price: string;
+  stop_loss: string;
+  take_profit: string;
+  risk_pips: string;
+  reward_pips: string;
+  risk_reward: string;
+  atr_h4_pips: string;
+  adr_pips: string | null;
+  spread_pips: string;
+  closed_at: string | null;
+  exit_price: string | null;
+  swap_pips: string | null;
+  result_pips: string | null;
+  result_r: string | null;
+  holding_hours: string | null;
+}
+
+export interface PaperSwingTradeListResponse {
+  items: PaperSwingTrade[];
+  total: number;
+  offset: number;
+  limit: number;
+}

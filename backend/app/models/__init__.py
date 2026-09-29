@@ -29,6 +29,7 @@ from app.models.news_article import NewsArticle
 from app.models.news_sentiment import NewsSentiment
 from app.models.news_source import NewsSource
 from app.models.oauth_account import OAuthAccount
+from app.models.paper_swing_trade import PaperSwingTrade
 from app.models.price_candle import PriceCandle
 from app.models.signal import Signal
 from app.models.signal_bookmark import SignalBookmark
@@ -64,6 +65,7 @@ __all__ = [
     "NewsSource",
     "NewsSourceTier",
     "OAuthAccount",
+    "PaperSwingTrade",
     "OrderStatus",
     "PriceCandle",
     "Recommendation",

@@ -180,6 +180,12 @@ Before editing one of those values in `.env` on the server, check that page
 otherwise the edit can be silently ignored. Overrides take effect within 30
 seconds without a restart.
 
+**Swing paper trading (ADR-182)** is the `paper_swing_enabled` switch on the
+same page (`PAPER_SWING_ENABLED`, default off). While on, the
+`paper_swing.run` task uses ~21 Twelve Data requests a day for EURUSD,
+GBPUSD and USDJPY, which stay **inactive** assets. Do not activate them from
+Admin -> Assets: that would put them in the live pipeline and the EA feed.
+
 **Resource note:** disk is not tight (48G, ~39G free). Memory is - 909MB
 RAM, ~172MB available, plus a 1GB swapfile that `npm run build` relies
 on. BACKLOG.md §10's "~1.2GB free disk" is stale.

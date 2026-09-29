@@ -126,11 +126,20 @@ class EaEventService:
 
         moved: dict[uuid.UUID, Signal] = {}
         messages: list[tuple[SignalMove, uuid.UUID]] = []
+        # Audit D10: a cancelled order must never erase a position the
+        # account really opened - stored before, or earlier in this batch.
+        live_positions = self._event_repository.signals_with_live_position(
+            {row.signal_id for row in rows if row.event_type == "order_cancelled"}
+        )
         # Oldest first, and a fill before a close in the same second: one
         # batch can carry both.
         for row in sorted(rows, key=_move_order):
             signal = signals[row.signal_id]
-            change = ea_signal_sync.apply_event(signal, row)
+            if row.event_type == "position_opened" and not row.dry_run:
+                live_positions.add(row.signal_id)
+            change = ea_signal_sync.apply_event(
+                signal, row, has_live_position=row.signal_id in live_positions
+            )
             if change is None:
                 continue
             moved[signal.id] = signal

@@ -42,6 +42,22 @@ class SignalMove(StrEnum):
     #: subscriber message (`has_message` is always False): nothing traded, and
     #: the operator already gets the EA's own rejection alert.
     EXECUTION_REJECTED = "execution_rejected"
+    #: Audit D10: the EA withdrew its own unfilled smc-ict-crt-v1 order.
+    #: Never a subscriber message either.
+    CANCELLED = "cancelled"
+
+
+#: Audit D10 - `order_cancelled` messages VCTradingEA sends when the broker,
+#: not the EA, ended the order (mql5/VCTradingEA.mq5, order reconciliation).
+BROKER_CANCEL_MESSAGES = frozenset(
+    {
+        "rejected by the broker after it was placed",
+        "expired at the broker",
+        "cancelled outside the EA",
+    }
+)
+#: `status_reason` prefix when the EA withdrew its own pending order.
+EA_CANCELLED_REASON = "smc-ict-crt-v1: unfilled order cancelled by the EA"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,12 +71,20 @@ class SignalChange:
     occurred_at: datetime
 
 
-def apply_event(signal: Signal, event: EaExecutionEvent) -> SignalChange | None:
+def apply_event(
+    signal: Signal, event: EaExecutionEvent, *, has_live_position: bool = False
+) -> SignalChange | None:
     """Moves `signal` for a live `position_opened` or `position_closed`
-    report and says what moved; `None` when the report changes nothing."""
+    report and says what moved; `None` when the report changes nothing.
+
+    `has_live_position`: whether a live EA ever opened a broker position for
+    this signal (audit D10) - a cancelled order never erases one."""
     rejection = _execution_rejection(signal, event)
     if rejection is not None:
         return rejection
+    cancelled = _cancelled_order(signal, event, has_live_position)
+    if cancelled is not None:
+        return cancelled
     if event.dry_run or event.event_type not in ("position_opened", "position_closed"):
         return None
     at = as_aware_utc(event.occurred_at)
@@ -125,6 +149,48 @@ def _execution_rejection(signal: Signal, event: EaExecutionEvent) -> SignalChang
     return SignalChange(signal.id, SignalMove.EXECUTION_REJECTED, has_message=False, occurred_at=at)
 
 
+def _cancelled_order(
+    signal: Signal, event: EaExecutionEvent, has_live_position: bool
+) -> SignalChange | None:
+    """ADR-183 audit D10. A live smc-ict-crt-v1 order that ended without a
+    fill (`order_cancelled`) leaves nothing at the broker: the EA never
+    places an order for the same signal twice. Left open, the M1 monitor
+    marked 400ee027 filled from candles alone on 2026-09-29, and it then
+    held the one-trade capacity for a trade the account never had.
+
+    - ACTIVE, or TRIGGERED from candles only (no live `position_opened`):
+      cancelled here. A broker-side end - rejected after placement, expired
+      at the broker, cancelled outside the EA - is an execution rejection
+      (the D3 path: never a trade, a fill or a loss); the EA withdrawing its
+      own pending order is an unfilled cancel.
+    - TRIGGERED with a live position: left alone - that trade is real.
+
+    Same scope as `_execution_rejection`: smc-ict-crt-v1 only, live only."""
+    if (
+        event.dry_run
+        or event.event_type != "order_cancelled"
+        or signal.strategy != SMC_STRATEGY_NAME
+    ):
+        return None
+    if signal.status is SignalStatus.TRIGGERED:
+        if has_live_position:
+            return None
+    elif signal.status is not SignalStatus.ACTIVE:
+        return None
+    at = as_aware_utc(event.occurred_at)
+    message = (event.message or "").strip()
+    signal.status = SignalStatus.CANCELLED
+    signal.closed_at = at
+    signal.triggered_at = None  # a fill seen only on candles never happened at the broker
+    if message in BROKER_CANCEL_MESSAGES:
+        signal.status_reason = f"{EXECUTION_REJECTED_REASON}: order_cancelled {message}"[:160]
+        return SignalChange(
+            signal.id, SignalMove.EXECUTION_REJECTED, has_message=False, occurred_at=at
+        )
+    signal.status_reason = f"{EA_CANCELLED_REASON}: {message}".strip(": ")[:160]
+    return SignalChange(signal.id, SignalMove.CANCELLED, has_message=False, occurred_at=at)
+
+
 def _trigger(signal: Signal, at: datetime) -> None:
     signal.status = SignalStatus.TRIGGERED
     signal.triggered_at = at
@@ -140,4 +206,11 @@ def _profit_loss(signal: Signal, closed_price: Decimal | None) -> Decimal | None
     return move if signal.signal_type is SignalType.BUY else -move
 
 
-__all__ = ["OTHER_CLOSE_REASON", "SignalChange", "SignalMove", "apply_event"]
+__all__ = [
+    "BROKER_CANCEL_MESSAGES",
+    "EA_CANCELLED_REASON",
+    "OTHER_CLOSE_REASON",
+    "SignalChange",
+    "SignalMove",
+    "apply_event",
+]

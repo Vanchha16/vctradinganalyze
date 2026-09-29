@@ -69,3 +69,17 @@ class EaExecutionEventRepository(BaseRepository[EaExecutionEvent]):
         if event_type is not None:
             query = query.where(EaExecutionEvent.event_type == event_type)
         return query
+
+    def signals_with_live_position(self, signal_ids: Collection[uuid.UUID]) -> set[uuid.UUID]:
+        """Which of these signals a live (not dry-run) EA ever opened a broker
+        position for (ADR-183 audit D10): a cancelled order must never erase
+        a position the account really opened."""
+        if not signal_ids:
+            return set()
+        return set(self.session.execute(
+            select(EaExecutionEvent.signal_id).where(
+                EaExecutionEvent.signal_id.in_(signal_ids),
+                EaExecutionEvent.event_type == "position_opened",
+                EaExecutionEvent.dry_run.is_(False),
+            ).distinct()
+        ).scalars().all())

@@ -11807,3 +11807,25 @@ sides of the anchor and is no CRT. M5 closes moved by up to 3.37 on re-fetch.
   timeframe are unchanged.
 - The frozen rules, `rules.py` and D1-D8 are unchanged; decisions come
   about 4 minutes after the close instead of at it.
+
+Addendum 2026-09-29 - a live order that ended without a fill (production audit D10)
+
+Operator-approved; execution plumbing only. Signal 400ee027 (2026-09-28
+22:09) was placed live; the broker ended the order at 00:18:28
+(`order_cancelled`, "rejected by the broker after it was placed"). Nothing
+handled that event, so the signal stayed ACTIVE, the M1 monitor marked it
+TRIGGERED from candles at 00:19, and it held the one-trade capacity - every
+later setup became REJECT_OPEN_TRADE - for a trade the account never had.
+
+- A live `order_cancelled` on an smc-ict-crt-v1 signal that is ACTIVE, or
+  TRIGGERED from candles only (no live `position_opened` ever reported),
+  cancels it: the EA never places an order for the same signal twice.
+- The broker ending the order ("rejected by the broker after it was
+  placed", "expired at the broker", "cancelled outside the EA") is an
+  execution rejection on the D3 path (setup EXECUTION_REJECTED); the EA
+  withdrawing its own pending order is an unfilled cancel (setup
+  CANCELLED). Neither sends a subscriber message; the operator keeps the
+  EA's own alert.
+- A signal with a live broker position is never touched by a
+  cancellation. Dry-run events and other strategies are unchanged.
+- No migration, no rule change. 400ee027 itself is corrected separately.

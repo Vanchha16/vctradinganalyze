@@ -432,3 +432,209 @@ def test_a_rejected_signal_sends_a_rejection_notice_not_a_signal(factory, task_e
         text = smc_tasks.compose_execution_rejected_message(signal)
     assert "REJECTED BY EXECUTION SAFETY" in text
     assert "not a trade and not a loss" in text
+
+
+# =============================================================================
+# D10 - a live order that ended without a fill (`order_cancelled`)
+# =============================================================================
+BROKER_REJECTED = "rejected by the broker after it was placed"
+
+
+def _principal(session: Session):
+    from app.services.ea_service import EaPrincipal
+
+    user = User(email="op@example.com", username="op", password_hash="x", is_active=True)
+    session.add(user)
+    session.flush()
+    token = EaToken(user_id=user.id, name="VcEA", token_hash="h" * 64, hint="abcd")
+    session.add(token)
+    session.flush()
+    return EaPrincipal(user=user, token=token)
+
+
+def _ea_in(signal: Signal, event_type: str, at: datetime, *, message: str | None = None,
+           dry_run: bool = False):
+    from app.schemas.ea import EaEventIn
+
+    return EaEventIn(
+        event_key=f"{event_type}:{signal.id}", event_type=event_type,
+        signal_id=signal.id, dry_run=dry_run, occurred_at=int(at.timestamp()),
+        account_login="1", broker_symbol="XAUUSDc", message=message,
+    )
+
+
+def _ingest(session: Session, principal, events, now: datetime):
+    from app.repositories.ea_execution_event_repository import EaExecutionEventRepository
+    from app.services.ea_event_service import EaEventService
+
+    service = EaEventService(EaExecutionEventRepository(session), SignalRepository(session))
+    return service.ingest(principal, events, now)
+
+
+def _active_smc_signal(session: Session):
+    asset, now = _load(session, VALID_M5)
+    _service(session).run(asset, now)
+    session.commit()
+    [signal] = _smc_signals(session)
+    assert signal.status is SignalStatus.ACTIVE
+    return asset, now, signal
+
+
+def _cancel(signal: Signal, message: str, *, dry_run: bool = False) -> EaExecutionEvent:
+    return EaExecutionEvent(
+        user_id=signal.id, signal_id=signal.id, event_key=f"cancelled:{signal.id}",
+        event_type="order_cancelled", dry_run=dry_run, occurred_at=datetime.now(UTC),
+        account_login="1", broker_symbol="XAUUSDc", message=message,
+    )
+
+
+def _setup_of(session: Session, signal: Signal) -> SmcSetup:
+    session.flush()
+    return session.query(SmcSetup).filter(SmcSetup.signal_id == signal.id).one()
+
+
+# --- 1 & 2: the broker ended the order -> execution rejection ----------------
+@pytest.mark.parametrize(
+    "message",
+    [BROKER_REJECTED, "expired at the broker", "cancelled outside the EA"],
+)
+def test_a_broker_side_cancellation_is_an_execution_rejection(session, message):
+    asset, now, signal = _active_smc_signal(session)
+    principal = _principal(session)
+    result = _ingest(session, principal,
+                     [_ea_in(signal, "order_cancelled", now, message=message)], now)
+
+    assert signal.status is SignalStatus.CANCELLED
+    assert signal.status_reason == f"{EXECUTION_REJECTED_REASON}: order_cancelled {message}"
+    assert is_execution_rejection(signal.status_reason)
+    assert signal.triggered_at is None and signal.profit_loss is None
+    assert result.signal_messages == []               # no subscriber trigger/outcome message
+    assert len(result.notify) == 1                    # the operator EA alert, exactly once
+    assert result.moved_signals == [signal]           # the website is told the new status
+
+    setup = _setup_of(session, signal)
+    _service(session).run(asset, now + M5)
+    assert setup.state is SmcSetupState.EXECUTION_REJECTED
+
+
+def test_a_resent_cancellation_changes_nothing_twice(session):
+    _asset_, now, signal = _active_smc_signal(session)
+    principal = _principal(session)
+    event = _ea_in(signal, "order_cancelled", now, message=BROKER_REJECTED)
+    _ingest(session, principal, [event], now)
+    again = _ingest(session, principal, [event], now)
+    assert again.duplicates == 1 and again.notify == [] and again.moved_signals == []
+
+
+# --- 3: the EA withdrew its own order -> unfilled cancel, not a rejection ----
+def test_an_ea_self_cancel_is_an_unfilled_cancel_not_a_rejection(session):
+    asset, now, signal = _active_smc_signal(session)
+    change = ea_signal_sync.apply_event(signal, _cancel(signal, "its signal expired"))
+
+    assert change is not None and change.move is SignalMove.CANCELLED
+    assert change.has_message is False
+    assert signal.status is SignalStatus.CANCELLED
+    assert signal.status_reason == f"{ea_signal_sync.EA_CANCELLED_REASON}: its signal expired"
+    assert not is_execution_rejection(signal.status_reason)
+
+    setup = _setup_of(session, signal)
+    _service(session).run(asset, now + M5)
+    assert setup.state is SmcSetupState.CANCELLED
+
+
+# --- 4: the exact 400ee027 sequence ------------------------------------------
+def test_the_400ee027_sequence_never_becomes_a_paper_fill(session, factory, monkeypatch):
+    """order_placed, then the broker cancels it, then price reaches the entry
+    (2026-09-28 22:09 / 09-29 00:18:29 / 00:19). The signal must stay
+    cancelled: no TRIGGERED, no outcome, no R."""
+    asset, now, signal = _active_smc_signal(session)
+    principal = _principal(session)
+    _ingest(session, principal, [
+        _ea_in(signal, "order_placed", now),
+        _ea_in(signal, "order_cancelled", now + M1, message=BROKER_REJECTED),
+    ], now + M1)
+    session.commit()
+
+    entry, stop = float(signal.entry_price), float(signal.stop_loss)
+    # M1 later trades through the entry and on through the stop.
+    _store(session, asset, Timeframe.M1, now + M1 * 2, M1,
+           [(entry + 1, entry + 1, stop - 1, stop - 0.5)] * 5)
+    session.commit()
+    monkeypatch.setattr(signal_monitoring_tasks, "SessionLocal", factory)
+    for name in ("enqueue_signal_triggered_delivery", "enqueue_signal_outcome_delivery"):
+        monkeypatch.setattr(f"app.workers.telegram_tasks.{name}", lambda *_: None)
+    signal_monitoring_tasks.monitor_active_signals_task()
+
+    with factory() as check:
+        after = check.get(Signal, signal.id)
+        assert after.status is SignalStatus.CANCELLED
+        assert after.triggered_at is None and after.profit_loss is None
+
+
+# --- 5: the race - a paper trigger before the cancellation arrives ----------
+def test_a_paper_trigger_is_undone_by_a_later_broker_cancellation(session):
+    asset, now, signal = _active_smc_signal(session)
+    signal.status = SignalStatus.TRIGGERED            # the M1 monitor, from candles alone
+    signal.triggered_at = now
+    session.commit()
+
+    principal = _principal(session)
+    result = _ingest(session, principal,
+                     [_ea_in(signal, "order_cancelled", now + M1, message=BROKER_REJECTED)],
+                     now + M1)
+    assert signal.status is SignalStatus.CANCELLED    # never STOPPED_OUT or SUCCESSFUL
+    assert is_execution_rejection(signal.status_reason)
+    assert signal.profit_loss is None
+    assert signal.triggered_at is None                # the candle-only fill is withdrawn
+    assert result.signal_messages == []
+
+    setup = _setup_of(session, signal)
+    _service(session).run(asset, now + M5)
+    assert setup.state is SmcSetupState.EXECUTION_REJECTED   # not TRADED
+
+
+# --- 6: a real position is never erased --------------------------------------
+@pytest.mark.parametrize("opened_in_same_batch", [False, True])
+def test_a_cancellation_never_erases_a_live_position(session, opened_in_same_batch):
+    _asset_, now, signal = _active_smc_signal(session)
+    principal = _principal(session)
+    opened = _ea_in(signal, "position_opened", now)
+    stray = _ea_in(signal, "order_cancelled", now + M1, message=BROKER_REJECTED)
+    if opened_in_same_batch:
+        _ingest(session, principal, [opened, stray], now + M1)
+    else:
+        _ingest(session, principal, [opened], now)
+        assert signal.status is SignalStatus.TRIGGERED
+        _ingest(session, principal, [stray], now + M1)
+
+    assert signal.status is SignalStatus.TRIGGERED    # the trade is real: left alone
+    assert signal.closed_at is None
+
+
+# --- 7: a cancelled signal no longer holds the one-trade capacity ------------
+def test_a_cancelled_order_does_not_block_the_next_setup(session):
+    asset, _now, signal = _active_smc_signal(session)
+    repo = SmcSetupRepository(session)
+    assert repo.open_signal_count(asset.id, STRATEGY_NAME) == 1
+
+    ea_signal_sync.apply_event(signal, _cancel(signal, BROKER_REJECTED))
+    session.flush()
+    assert repo.open_signal_count(asset.id, STRATEGY_NAME) == 0
+
+
+# --- 8: dry runs, other strategies and finished signals are untouched --------
+def test_cancellations_are_scoped_to_smc_and_to_live_events(session):
+    _asset_, _now, signal = _active_smc_signal(session)
+
+    dry = _cancel(signal, BROKER_REJECTED, dry_run=True)
+    assert ea_signal_sync.apply_event(signal, dry) is None
+    assert signal.status is SignalStatus.ACTIVE
+
+    signal.strategy = "bbma"
+    assert ea_signal_sync.apply_event(signal, _cancel(signal, BROKER_REJECTED)) is None
+    assert signal.status is SignalStatus.ACTIVE
+
+    signal.strategy = STRATEGY_NAME
+    signal.status = SignalStatus.STOPPED_OUT          # already finished: left alone
+    assert ea_signal_sync.apply_event(signal, _cancel(signal, BROKER_REJECTED)) is None
+    assert signal.status is SignalStatus.STOPPED_OUT

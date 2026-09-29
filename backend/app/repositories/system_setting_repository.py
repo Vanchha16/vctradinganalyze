@@ -11,6 +11,13 @@ class SystemSettingRepository(BaseRepository[SystemSetting]):
         query = self._filter_by(self._query(), key=key)
         return self.session.execute(query).scalar_one_or_none()
 
+    def get_by_key_for_update(self, key: str) -> SystemSetting | None:
+        """`get_by_key`, holding the row locked until the transaction ends
+        (ADR-184): two requests reading an armed canary at once must not
+        both act on it. SQLite (tests) ignores the lock."""
+        query = self._filter_by(self._query(), key=key).with_for_update()
+        return self.session.execute(query).scalar_one_or_none()
+
     def upsert(self, key: str, value: str) -> SystemSetting:
         setting = self.get_by_key(key)
         if setting is not None:

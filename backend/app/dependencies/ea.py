@@ -11,6 +11,8 @@ from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.ea_execution_event_repository import EaExecutionEventRepository
 from app.repositories.ea_token_repository import EaTokenRepository
 from app.repositories.signal_repository import SignalRepository
+from app.repositories.system_setting_repository import SystemSettingRepository
+from app.services.ea_canary import EaLiveOrderCanary
 from app.services.ea_event_service import EaEventService
 from app.services.ea_service import EaPrincipal, EaService, TerminalReport
 
@@ -28,6 +30,19 @@ def get_ea_event_service(db: Annotated[Session, Depends(get_db)]) -> EaEventServ
     return EaEventService(
         event_repository=EaExecutionEventRepository(db),
         signal_repository=SignalRepository(db),
+    )
+
+
+def get_ea_canary(
+    db: Annotated[Session, Depends(get_db)],
+    ea_service: Annotated[EaService, Depends(get_ea_service)],
+) -> EaLiveOrderCanary:
+    """ADR-184. Shares the request's session with the event service, so the
+    disarm and the token's dry-run switch commit together."""
+    return EaLiveOrderCanary(
+        setting_repository=SystemSettingRepository(db),
+        audit_log_repository=AuditLogRepository(db),
+        ea_service=ea_service,
     )
 
 

@@ -31,6 +31,7 @@ from app.models.ea_execution_event import EaExecutionEvent
 from app.models.ea_token import EaToken
 from app.models.enums import MarketType, SignalStatus, SignalType, Timeframe, UserRole
 from app.models.signal import Signal
+from app.models.system_setting import SystemSetting
 from app.models.user import User
 from app.utils.time import as_aware_utc
 
@@ -42,6 +43,7 @@ _TABLES = [
     AIAnalysis.__table__,
     Signal.__table__,
     EaExecutionEvent.__table__,
+    SystemSetting.__table__,  # ADR-184: the canary reads its setting on a live report
 ]
 
 

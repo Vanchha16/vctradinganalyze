@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, Query, status
 
 from app.config import settings
 from app.dependencies.ea import (
+    get_ea_canary,
     get_ea_event_service,
     get_ea_principal,
     get_ea_service,
@@ -48,6 +49,7 @@ from app.schemas.ea import (
     EaTokenListResponse,
     EaTokenResponse,
 )
+from app.services.ea_canary import EaLiveOrderCanary
 from app.services.ea_event_service import EaEventService
 from app.services.ea_service import EaPrincipal, EaService, FeedSignal
 from app.services.ea_signal_sync import SignalMove
@@ -184,13 +186,19 @@ async def report_ea_events(
     payload: EaEventBatchRequest,
     principal: Annotated[EaPrincipal, Depends(get_ea_principal)],
     service: _EventService,
+    canary: Annotated[EaLiveOrderCanary, Depends(get_ea_canary)],
 ) -> EaEventBatchResponse:
     """ADR-162: the EA's report of what it did. Idempotent per
     `event_key` - re-sending a batch is safe and expected after a lost
     response. ADR-170: newly stored live events are sent to Telegram.
     ADR-172: a live fill or close moves the signal it traded, and the
-    website and subscribers are told as the candle monitor would tell them."""
-    result = service.ingest(principal, payload.events, datetime.now(UTC))
+    website and subscribers are told as the candle monitor would tell them.
+    ADR-184: an armed canary puts the token back in dry run on the first
+    live order - after the events are stored, so they are never lost; if
+    it fails, the error makes the EA re-send and the retry trips it."""
+    now = datetime.now(UTC)
+    result = service.ingest(principal, payload.events, now)
+    canary.trip_if_armed(principal, payload.events, now)
     for event_id in result.notify:
         enqueue_ea_event_delivery(str(event_id))
     for signal in result.moved_signals:

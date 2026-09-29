@@ -11829,3 +11829,65 @@ later setup became REJECT_OPEN_TRADE - for a trade the account never had.
 - A signal with a live broker position is never touched by a
   cancellation. Dry-run events and other strategies are unchanged.
 - No migration, no rule change. 400ee027 itself is corrected separately.
+
+---
+
+# ADR-184
+
+Title
+
+A Server-Side One-Live-Order Canary Puts an EA Token Back in Dry Run
+
+Status
+
+Accepted - operator-approved on 2026-09-29, built disarmed; arming it is a
+separate, audited decision.
+
+Context
+
+The one-live-trade test of smc-ict-crt-v1 (ADR-183) relied on
+`canary_guard.sh`, a polling script run from a Claude session on the
+operator's PC. It stopped whenever that session ended. On 2026-09-28 the
+first live trade (c31527f6) opened and closed while the guard was down, so
+nothing returned the EA to dry run, and the EA placed a second live order
+(400ee027) - the one-trade rule broken. The broker happened to cancel it.
+`max_open_trades = 1` does not help: it limits concurrent positions, not
+the number of trades.
+
+Decision
+
+- A runtime setting `ea_one_live_order_canary` (ADR-178's
+  `system_settings` overlay, group "pipeline"), default **off**. Arming
+  and disarming by hand go through the Strategy Settings page like every
+  other runtime setting, audited as `runtime_setting_changed`.
+- When the backend stores a newly reported **live** (`dry_run = false`)
+  `order_placed` or `position_opened` event while the canary is armed, the
+  same request, in one transaction:
+  1. disarms the canary (row set to off, audited `runtime_setting_changed`
+     with no actor and reason "tripped by the first live order"), and
+  2. switches the reporting token to `dry_run = true` through
+     `EaService.update_settings` - the Settings page's own path: lot,
+     max open trades, pause and slippage are kept, `settings_version` is
+     bumped, and `ea_settings_updated` is audited. The lot is capped at the
+     terminal's reported `MaxLotSize`, as `ea_revert.py` did.
+- The canary reads its own `system_settings` row under a row lock, not the
+  30-second settings cache, so two batches reported at once trip it
+  exactly once and a fresh arm is honoured at once.
+- Dry-run events, duplicates of stored events, other event types, and
+  every event while the canary is off change nothing.
+
+Consequences
+
+- Nothing depends on a process staying alive: the state is a database row
+  and the trigger is the EA's own report. A restarted backend, worker,
+  server or operator PC changes nothing; an event reported after a
+  backend outage (the EA re-sends until accepted) still trips it.
+- The EA picks the change up on its next feed poll (InpPollSeconds,
+  10 s). An order already at the broker is not withdrawn; a second order
+  is possible only if a second signal reaches the EA inside that poll
+  window - one smc signal at a time and the D4 one-trade check make this
+  very unlikely, but not impossible.
+- It is token-wide: any live order from that token trips it, whichever
+  strategy sent the signal.
+- `canary_guard.sh` is superseded for arming a live test; it may still be
+  run as a second, independent check.

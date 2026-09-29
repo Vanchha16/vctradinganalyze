@@ -158,6 +158,10 @@ class Settings(BaseSettings):
     #: enabled in the same change that disables BBMA, so the two strategies
     #: can never both be live.
     smc_enabled: bool = False
+    #: ADR-184 - armed, the first live order an EA reports puts that token
+    #: back in dry run and disarms this. Off by default; armed only by an
+    #: audited change for a controlled live test.
+    ea_one_live_order_canary: bool = False
     tight_m5_enabled: bool = False
     tight_m5_stop_distance: Decimal = Decimal("5")
     tight_m5_target_distance: Decimal = Decimal("10")

@@ -253,6 +253,14 @@ REGISTRY: tuple[RuntimeSetting, ...] = (
         minimum=Decimal("1"),
         maximum=Decimal("336"),
     ),
+    RuntimeSetting(
+        "ea_one_live_order_canary",
+        "pipeline",
+        "EA one-live-order canary",
+        "ADR-184. When on, the first live order an EA reports switches that token "
+        "back to dry run and turns this off again. For a controlled live test only.",
+        "bool",
+    ),
 )
 BY_FIELD: Mapping[str, RuntimeSetting] = {spec.field: spec for spec in REGISTRY}
 

@@ -153,6 +153,15 @@ REGISTRY: tuple[RuntimeSetting, ...] = (
         "bool",
     ),
     RuntimeSetting(
+        "smc_v2_enabled",
+        "strategies",
+        "SMC-ICT-CRT v2 (design A, H1) - experimental",
+        "ADR-185. H1 CRT ranges, M5 MSS, R:R >= 2, at most 3 signals a day and one at a "
+        "time. Its backtest did NOT pass its criteria. Does nothing while SMC-ICT-CRT v1 is "
+        "on. Keep the EA in dry run.",
+        "bool",
+    ),
+    RuntimeSetting(
         "tight_m5_enabled",
         "tight",
         "Tight M5 strategy",

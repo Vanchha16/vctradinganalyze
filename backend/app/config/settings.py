@@ -158,6 +158,11 @@ class Settings(BaseSettings):
     #: enabled in the same change that disables BBMA, so the two strategies
     #: can never both be live.
     smc_enabled: bool = False
+    #: ADR-185 - smc-ict-crt-v2 design A (H1 CRT ranges), its own path. Off by
+    #: default. An experimental operator decision: the design's pre-registered
+    #: study did not pass. Publishes only while `smc_enabled` is off - v2
+    #: replaces v1's signal generation, the two never run together.
+    smc_v2_enabled: bool = False
     #: ADR-184 - armed, the first live order an EA reports puts that token
     #: back in dry run and disarms this. Off by default; armed only by an
     #: audited change for a controlled live test.

@@ -12201,3 +12201,86 @@ Consequences
   strategy sent the signal.
 - `canary_guard.sh` is superseded for arming a live test; it may still be
   run as a second, independent check.
+
+---
+
+# ADR-185
+
+Title
+
+SMC-ICT-CRT v2 Design A Replaces v1's XAUUSD Signal Generation - an Operator
+Decision After a Failed Backtest
+
+Status
+
+Accepted - operator decision, 2026-10-09. Experimental. The design's
+pre-registered study did not pass; this records the decision to run it
+anyway, with the EA in dry run.
+
+Context
+
+- `research/smc_ict_crt_v2_3signals/` pre-registered four v2 designs
+  (2026-10-06) for "up to 3 XAUUSD signals a day". None passed its frequency
+  or quality criteria. Design A - v1's CRT structure on H1 ranges, R:R >= 2 -
+  measured 0.57 signals/day and -41.59 R (PF 0.75) over 24 months of MT5 data,
+  after the two v1 defect fixes it adds. That verdict stands; nothing here
+  turns it into a pass.
+- The operator first declined deployment, then (2026-10-09, directly in the
+  implementing session) asked for production to use design A in place of
+  SMC-ICT-CRT v1 (ADR-183), keeping the EA in dry run.
+- Production reads Twelve Data, which quotes XAUUSD 24/7 including
+  low-activity weekend quotes (median M5 range 0.25 against ~3.6 on weekdays,
+  2026-08/10), whereas the study used the execution broker's candles, which
+  never exist while the broker is closed.
+
+Decision
+
+- A separate path, `app/services/smc_crt_v2/` with its own table
+  `smc_v2_setups`, task `smc_v2.run` (every 5 minutes, minute 4) and runtime
+  switch `smc_v2_enabled` (default off). Strategy identity
+  `smc_ict_crt_v2_a`. v1's code, table, P20 and records are not changed.
+- Design A exactly as frozen: H1 CRT anchor and raid, close back inside, key
+  level within 0.10 x ATR(H1,14), first M5 close beyond the confirmed swing,
+  FVG -> OB -> MSS entry, stop at the raid extreme +/- 0.10 x ATR(M5,14),
+  target the opposite H1 boundary, R:R >= 2.0, expiry 3 H1 candles, reject
+  reversed geometry (C10) and a modelled 0.26 spread above 10% of the stop
+  (C11), at most one signal at a time (C13) and three per broker trading day
+  (C14). The frozen v1 primitives are imported, not copied.
+- Live data admission (new; not strategy thresholds):
+  - only final M5 candles (ADR-183 D9), from broker-open periods: daily
+    17:00-18:00 New York and Friday 17:00 to Sunday 18:00 New York are
+    excluded - verified against 541,441 Exness M5 candles (2019-2026), none of
+    which falls inside;
+  - an H1 candle counts only with exactly its twelve on-grid M5 candles;
+  - any other missing candle is a data gap; a decision whose own inputs
+    cross one is recorded DATA_INCOMPLETE, never published; a gap after a
+    decision does not undo it;
+  - a setup waits for its M5 shift until expiry instead of being closed
+    early; NO_MSS is concluded only from a complete, gap-free window.
+- Publication: decision time and publication time are recorded separately.
+  A decision older than 10 minutes (the D9 lag plus one missed run) is not
+  published. The one slot counts pending and open signals of v1 and v2, so a
+  remaining v1 signal blocks v2. Publication is serialised by a PostgreSQL
+  advisory lock; the setup identity (asset, strategy, design, timeframe,
+  anchor) and the signal link are unique.
+- v2 publishes nothing while `smc_enabled` (v1) is on. The live-EA rules of
+  ADR-183 D3/D10 (execution rejections, EA-cancelled orders) apply to v2
+  signals too. The website labels v2 confidence "Rule-based - No Score".
+
+Consequences
+
+- Activation is a settings change, in this order: confirm the EA token is in
+  dry run (set and effective); wait until no v1 signal is ACTIVE or
+  TRIGGERED - nothing is cancelled or closed to make room; set
+  `smc_enabled = false`; then `smc_v2_enabled = true`. Rollback is the
+  reverse; v2's records and table stay.
+- Expect few signals: the study measured 0.57/day on broker data, and data
+  admission is stricter than the backtest (on the broker's 24-month history,
+  42 of 323 qualified setups became DATA_INCOMPLETE, mostly holidays and the
+  broker's irregular closures, which are not modelled). The cap of three is
+  a ceiling, not a target.
+- Market holidays are not modelled: a missing candle on a holiday is a data
+  gap, the conservative side.
+- No Twelve Data requests are added: v2 reads stored M5 candles only.
+- A live (non-dry-run) test needs its own decision, including the EA's
+  `max_open_trades` and the ADR-184 canary.

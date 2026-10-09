@@ -6,7 +6,11 @@ import type { SignalResponse } from "@/services/types";
  * never shown as "0%", which reads as "no confidence at all".
  * Presentation only: the stored value and every decision are unchanged.
  */
-const RULE_BASED_STRATEGIES: ReadonlySet<string> = new Set(["smc_ict_crt_v1"]);
+const RULE_BASED_STRATEGIES: ReadonlySet<string> = new Set([
+  "smc_ict_crt_v1",
+  // ADR-185 - smc-ict-crt-v2 design A, also rule-based with no score.
+  "smc_ict_crt_v2_a",
+]);
 
 export const RULE_BASED_CONFIDENCE_LABEL = "Rule-based — No Score";
 

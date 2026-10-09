@@ -23,6 +23,7 @@ from app.models.ea_execution_event import EaExecutionEvent
 from app.models.enums import SignalStatus, SignalType
 from app.models.signal import Signal
 from app.services.smc_crt.execution_safety import EXECUTION_REJECTED_REASON, SMC_STRATEGY_NAME
+from app.services.smc_crt_v2.rules import STRATEGY_NAME as SMC_V2_STRATEGY_NAME
 from app.utils.time import as_aware_utc
 
 #: Closes where price reached the signal's own level.
@@ -58,6 +59,12 @@ BROKER_CANCEL_MESSAGES = frozenset(
 )
 #: `status_reason` prefix when the EA withdrew its own pending order.
 EA_CANCELLED_REASON = "smc-ict-crt-v1: unfilled order cancelled by the EA"
+#: ADR-185 - the deterministic SMC paths these live-EA rules apply to, and
+#: each one's own wording for an EA-withdrawn order (v1's is unchanged).
+_SMC_CANCELLED_REASONS = {
+    SMC_STRATEGY_NAME: EA_CANCELLED_REASON,
+    SMC_V2_STRATEGY_NAME: "smc-ict-crt-v2-a: unfilled order cancelled by the EA",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +144,7 @@ def _execution_rejection(signal: Signal, event: EaExecutionEvent) -> SignalChang
     if (
         event.dry_run
         or event.event_type not in ("order_rejected", "order_skipped")
-        or signal.strategy != SMC_STRATEGY_NAME
+        or signal.strategy not in _SMC_CANCELLED_REASONS
         or signal.status is not SignalStatus.ACTIVE
     ):
         return None
@@ -169,7 +176,7 @@ def _cancelled_order(
     if (
         event.dry_run
         or event.event_type != "order_cancelled"
-        or signal.strategy != SMC_STRATEGY_NAME
+        or signal.strategy not in _SMC_CANCELLED_REASONS
     ):
         return None
     if signal.status is SignalStatus.TRIGGERED:
@@ -187,7 +194,8 @@ def _cancelled_order(
         return SignalChange(
             signal.id, SignalMove.EXECUTION_REJECTED, has_message=False, occurred_at=at
         )
-    signal.status_reason = f"{EA_CANCELLED_REASON}: {message}".strip(": ")[:160]
+    reason = _SMC_CANCELLED_REASONS[signal.strategy or ""]
+    signal.status_reason = f"{reason}: {message}".strip(": ")[:160]
     return SignalChange(signal.id, SignalMove.CANCELLED, has_message=False, occurred_at=at)
 
 

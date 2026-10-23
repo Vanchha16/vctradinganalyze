@@ -2,9 +2,9 @@
 Buttons"/"Quick Actions" concept, picked up here after docs/57 scoped
 the initial build down to `/start <code>` only).
 
-Two actions: Summary Report (today + last 7 days signal recap, plus a
-market snapshot) and Show Chart (prompts for a symbol, then replies with
-a rendered candlestick image - `chart_renderer.py`).
+Two actions: Summary Report (today, last 7 days and last 30 days signal
+recap, plus a market snapshot) and Show Chart (prompts for a symbol, then
+replies with a rendered candlestick image - `chart_renderer.py`).
 
 Two different Telegram keyboard types back these, used at different
 points by `telegram_tasks.py`:

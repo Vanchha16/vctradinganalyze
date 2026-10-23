@@ -84,13 +84,13 @@ def test_today_and_week_sections_reflect_signal_status_and_pnl(session: Session)
         profit_loss=Decimal("-20"),
         created_at=now - timedelta(days=3),
     )
-    # Outside the 7-day window - must not contribute to either section.
+    # Outside even the 30-day window - must not contribute to any section.
     _make_signal(
         session,
         asset,
         status=SignalStatus.SUCCESSFUL,
         profit_loss=Decimal("999"),
-        created_at=now - timedelta(days=30),
+        created_at=now - timedelta(days=40),
     )
     session.commit()
 
@@ -108,6 +108,48 @@ def test_today_and_week_sections_reflect_signal_status_and_pnl(session: Session)
     assert "Won 1" in unescaped  # today's section
     assert "+50.00" in unescaped  # today's P&L: just the SUCCESSFUL signal
     assert "+30.00" in unescaped  # week's P&L: 50 - 20 net across both signals
+
+
+def test_30_day_section_includes_signals_older_than_a_week(session: Session) -> None:
+    asset = _make_asset(session)
+    now = datetime.now(UTC)
+    _make_signal(
+        session,
+        asset,
+        status=SignalStatus.SUCCESSFUL,
+        profit_loss=Decimal("40"),
+        created_at=now - timedelta(days=2),
+    )
+    _make_signal(
+        session,
+        asset,
+        status=SignalStatus.STOPPED_OUT,
+        profit_loss=Decimal("-15"),
+        created_at=now - timedelta(days=20),
+    )
+    _make_signal(
+        session,
+        asset,
+        status=SignalStatus.SUCCESSFUL,
+        profit_loss=Decimal("999"),
+        created_at=now - timedelta(days=31),
+    )
+    session.commit()
+
+    text = build_summary_report_text(
+        SignalRepository(session),
+        AssetRepository(session),
+        PriceCandleRepository(session),
+        now=now,
+    ).replace("\\", "")
+
+    week, month = text.split("Last 7 Days")[1].split("Last 30 Days")
+    assert "Signals: 1  (Won 1 / Lost 0 / Open 0)" in week
+    assert "P&L: +40.00" in week
+    assert "Signals: 2  (Won 1 / Lost 1 / Open 0)" in month
+    assert "P&L: +25.00" in month  # 40 - 15; the 31-day-old signal is outside
+    assert "999" not in text
+    assert text.index("Today") < text.index("Last 7 Days") < text.index("Last 30 Days")
 
 
 def test_an_unfilled_signal_past_its_ttl_is_not_counted_as_open(session: Session) -> None:

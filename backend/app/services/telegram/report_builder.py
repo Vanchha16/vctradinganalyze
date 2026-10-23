@@ -1,6 +1,6 @@
 """Builds the text for the Telegram bot's "Summary Report" button (§13):
-today's signal activity, a trailing-7-day recap, and a quick market
-snapshot of active assets. Broadcast identically to every linked
+today's signal activity, trailing 7-day and 30-day recaps, and a quick
+market snapshot of active assets. Broadcast identically to every linked
 account on request, same as every other Telegram message this project
 sends - `Signal` has no `user_id` column (ADR-130), so there is no
 per-user variant to build.
@@ -22,7 +22,8 @@ from app.services.signal.status_resolver import effective_status
 from app.services.telegram.message_sections import escape_markdown_v2
 
 _SEPARATOR = "━━━━━━━━━━━━━━━━━━"
-_REPORT_WINDOW_DAYS = 7
+#: Trailing windows after "Today", in display order.
+_REPORT_WINDOWS_DAYS = (7, 30)
 #: Up to the last hour of M1 data (docs/38's collection cadence) - a
 #: "recent change" figure, deliberately not labelled "24h"/"daily" since
 #: that would overstate what two M1 candles up to an hour apart actually
@@ -103,19 +104,19 @@ def build_summary_report_text(
 ) -> str:
     now = now or datetime.now(UTC)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    week_start = now - timedelta(days=_REPORT_WINDOW_DAYS)
+    periods = [("Today", today_start)] + [
+        (f"Last {days} Days", now - timedelta(days=days)) for days in _REPORT_WINDOWS_DAYS
+    ]
 
     sections = [
         f"{_SEPARATOR}\n📊 SUMMARY REPORT\n{_SEPARATOR}",
-        _period_section(
-            "Today",
-            _status_counts(signal_repository, today_start, now),
-            signal_repository.sum_profit_loss_since(today_start),
-        ),
-        _period_section(
-            "Last 7 Days",
-            _status_counts(signal_repository, week_start, now),
-            signal_repository.sum_profit_loss_since(week_start),
+        *(
+            _period_section(
+                label,
+                _status_counts(signal_repository, start, now),
+                signal_repository.sum_profit_loss_since(start),
+            )
+            for label, start in periods
         ),
         _market_overview_section(asset_repository, candle_repository),
         escape_markdown_v2(f"Generated {now.strftime('%Y-%m-%d %H:%M UTC')}"),

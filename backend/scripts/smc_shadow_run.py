@@ -87,7 +87,8 @@ def main() -> None:
               f"{(s.reason or '')[:24]:<24} {s.entry or 0:>9.2f} {s.stop_loss or 0:>9.2f} "
               f"{s.take_profit or 0:>9.2f} {s.risk_reward or 0:>6.2f}")
     signals = session.query(Signal).all()
-    print(f"\nsetups evaluated: {len(setups)} | signals that would have been created: {len(signals)}")
+    print(f"\nsetups evaluated: {len(setups)} | "
+          f"signals that would have been created: {len(signals)}")
     for sig in signals:
         print(f"  {sig.signal_type.value.upper()} entry {sig.entry_price} stop {sig.stop_loss} "
               f"target {sig.take_profit} RR {sig.risk_reward} status {sig.status.value} "

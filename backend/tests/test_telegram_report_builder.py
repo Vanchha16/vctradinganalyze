@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.config import settings
 from app.database.base import Base
 from app.models.asset import Asset
 from app.models.enums import MarketType, SignalStatus, SignalType, Timeframe
@@ -43,6 +44,7 @@ def _make_signal(
     status: SignalStatus,
     profit_loss: Decimal | None = None,
     created_at: datetime,
+    strategy: str | None = None,
 ) -> Signal:
     signal = Signal(
         asset_id=asset.id,
@@ -57,6 +59,7 @@ def _make_signal(
         status=status,
         profit_loss=profit_loss,
         created_at=created_at,
+        strategy=strategy,
     )
     session.add(signal)
     session.flush()
@@ -150,6 +153,58 @@ def test_30_day_section_includes_signals_older_than_a_week(session: Session) -> 
     assert "P&L: +25.00" in month  # 40 - 15; the 31-day-old signal is outside
     assert "999" not in text
     assert text.index("Today") < text.index("Last 7 Days") < text.index("Last 30 Days")
+
+
+def _report(session: Session, now: datetime) -> str:
+    return build_summary_report_text(
+        SignalRepository(session),
+        AssetRepository(session),
+        PriceCandleRepository(session),
+        now=now,
+    ).replace("\\", "")
+
+
+def _engine_signals(session: Session, now: datetime) -> None:
+    asset = _make_asset(session, "XAUUSD")
+    _make_signal(session, asset, status=SignalStatus.STOPPED_OUT, profit_loss=Decimal("-30"),
+                 created_at=now - timedelta(days=10), strategy="smc_ict_crt_v1")
+    _make_signal(session, asset, status=SignalStatus.STOPPED_OUT, profit_loss=Decimal("-7"),
+                 created_at=now - timedelta(days=9), strategy="smc_ict_crt_v1")
+    _make_signal(session, asset, status=SignalStatus.SUCCESSFUL, profit_loss=Decimal("40"),
+                 created_at=now - timedelta(days=2), strategy="smc")
+    _make_signal(session, asset, status=SignalStatus.STOPPED_OUT, profit_loss=Decimal("-10"),
+                 created_at=now - timedelta(days=3))  # before ADR-147: no strategy recorded
+    session.commit()
+
+
+def test_a_switched_off_engine_is_left_out_and_named(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "smc_enabled", False)
+    monkeypatch.setattr(settings, "smc_v2_enabled", False)
+    now = datetime.now(UTC)
+    _engine_signals(session, now)
+
+    text = _report(session, now)
+    month = text.split("Last 30 Days")[1]
+    assert "Signals: 2  (Won 1 / Lost 1 / Open 0)" in month  # smc + the unlabelled one
+    assert "P&L: +30.00" in month  # 40 - 10; SMC v1's -37 left out
+    assert "Not counted - engines switched off, last 30 days: SMC v1 (2)" in text
+
+
+def test_a_switched_on_engine_is_counted_and_nothing_is_named(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "smc_enabled", True)
+    monkeypatch.setattr(settings, "smc_v2_enabled", False)
+    now = datetime.now(UTC)
+    _engine_signals(session, now)
+
+    text = _report(session, now)
+    month = text.split("Last 30 Days")[1]
+    assert "Signals: 4  (Won 1 / Lost 3 / Open 0)" in month
+    assert "P&L: -7.00" in month  # 40 - 10 - 30 - 7
+    assert "Not counted" not in text
 
 
 def test_an_unfilled_signal_past_its_ttl_is_not_counted_as_open(session: Session) -> None:

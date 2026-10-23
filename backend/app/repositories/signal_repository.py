@@ -53,6 +53,14 @@ def _status_clause(status: SignalStatus, as_of: datetime | None) -> ColumnElemen
     return stored
 
 
+def _not_in_strategies(strategies: Collection[str]) -> ColumnElement[bool]:
+    """True for signals outside `strategies`, including those with no
+    strategy recorded (NULL is never "in" a list, so it is kept explicitly)."""
+    if not strategies:
+        return Signal.id.is_not(None)
+    return or_(Signal.strategy.is_(None), Signal.strategy.not_in(list(strategies)))
+
+
 class SignalRepository(BaseRepository[Signal]):
     model = Signal
 
@@ -137,27 +145,47 @@ class SignalRepository(BaseRepository[Signal]):
         return self.session.execute(query).scalar_one()
 
     def list_status_times_since(
-        self, since: datetime
+        self, since: datetime, *, exclude_strategies: Collection[str] = ()
     ) -> Sequence[Row[tuple[SignalStatus, datetime, datetime | None]]]:
         """`(status, created_at, triggered_at)` of every signal since `since`,
         for the Telegram bot's Summary Report button (§13). The caller
         counts them by the status a reader sees, which a stored-status
         GROUP BY cannot give: an unfilled signal past its TTL is still
-        stored ACTIVE (ADR-088)."""
+        stored ACTIVE (ADR-088).
+
+        `exclude_strategies`: signals of these strategies are left out. A
+        signal with no strategy recorded (before ADR-147) is always kept."""
         query = select(Signal.status, Signal.created_at, Signal.triggered_at).where(
-            Signal.created_at >= since
+            Signal.created_at >= since, _not_in_strategies(exclude_strategies)
         )
         return self.session.execute(query).all()
 
-    def sum_profit_loss_since(self, since: datetime) -> Decimal:
+    def sum_profit_loss_since(
+        self, since: datetime, *, exclude_strategies: Collection[str] = ()
+    ) -> Decimal:
         """Total realized P&L since `since`, for the same Summary Report
         use case above. `profit_loss` is only ever set once a signal
         closes (SUCCESSFUL/STOPPED_OUT) - still-open signals contribute
-        nothing, not a NULL that would poison the sum."""
+        nothing, not a NULL that would poison the sum. `exclude_strategies`
+        as in `list_status_times_since`."""
         query = select(func.coalesce(func.sum(Signal.profit_loss), 0)).where(
-            Signal.created_at >= since
+            Signal.created_at >= since, _not_in_strategies(exclude_strategies)
         )
         return Decimal(str(self.session.execute(query).scalar_one()))
+
+    def count_by_strategy_since(
+        self, since: datetime, strategies: Collection[str]
+    ) -> dict[str, int]:
+        """Signals since `since` per strategy, for the given strategies only -
+        what the Summary Report says it left out."""
+        if not strategies:
+            return {}
+        query = (
+            select(Signal.strategy, func.count())
+            .where(Signal.created_at >= since, Signal.strategy.in_(list(strategies)))
+            .group_by(Signal.strategy)
+        )
+        return {strategy: count for strategy, count in self.session.execute(query) if strategy}
 
     def count_by_signal_type(self) -> dict[SignalType, int]:
         """ "Recommendation distribution" (docs/58 §3.2, `GET

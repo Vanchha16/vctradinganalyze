@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Numeric, String, Uuid
+from sqlalchemy import JSON, DateTime, ForeignKey, Numeric, String, UniqueConstraint, Uuid
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -48,6 +48,11 @@ class SmcSetup(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "smc_setups"
+    #: Declared here to match migration a1c73f5e90d4, which created it; the
+    #: model had omitted it, so `alembic check` reported drift.
+    __table_args__ = (
+        UniqueConstraint("asset_id", "anchor_t", name="uq_smc_setups_asset_anchor"),
+    )
 
     asset_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("assets.id", ondelete="CASCADE"), index=True, nullable=False

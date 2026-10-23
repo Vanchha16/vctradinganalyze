@@ -12284,3 +12284,42 @@ Consequences
 - No Twelve Data requests are added: v2 reads stored M5 candles only.
 - A live (non-dry-run) test needs its own decision, including the EA's
   `max_open_trades` and the ADR-184 canary.
+
+# ADR-186
+
+Title
+
+The Hourly H1 Job Keeps Analysing an Asset That Has a Signal Open, Without
+Signalling It Again
+
+Status
+
+Accepted - operator request, 2026-10-23.
+
+Context
+
+- The hourly job skips an asset entirely while a signal for it is open: a
+  live trade, or a draft inside its confirmation window (ADR-088/125/137/166).
+  That gate exists so a second signal is never stacked on an open one.
+- Skipping also stops the analysis. While a trade stays open - for hours or
+  days - the AI Analysis page shows no new reading, and the operator twice
+  took that for a fault (2026-10-16, 2026-10-23).
+
+Decision
+
+- The scheduled H1 job (`signals.generate_for_watchlist`) still never
+  creates a signal for an asset with one open. It now runs and stores the
+  analysis anyway, with the warning "Analysis only - not sent as a signal:
+  this asset already has a signal open (one trade at a time)."
+  (`SignalEngine.analyse_only`; `AIOrchestratorEngine.generate` takes
+  `extra_warnings`, which change nothing but the stored warnings.)
+- The tight M5 job (ADR-176) keeps skipping, as before. Nothing else changes:
+  the gate itself, drafts, confirmation, replacement (ADR-168), monitoring,
+  Telegram and the EA feed.
+
+Consequences
+
+- The analysis history stays hourly. An analysis made while a trade is open
+  may read BUY or SELL; its warning says why no signal followed.
+- The OpenAI calls for an asset are the same as when no trade is open:
+  narration on every hourly run, risk review only on BUY/SELL.

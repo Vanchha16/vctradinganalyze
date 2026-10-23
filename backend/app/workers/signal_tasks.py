@@ -21,6 +21,7 @@ from app.dependencies.signal import get_signal_engine
 from app.dependencies.smc import get_smc_engine
 from app.dependencies.strategy import get_strategy_engine
 from app.dependencies.technical_analysis import get_technical_analysis_engine
+from app.models.asset import Asset
 from app.models.enums import SignalStatus, Timeframe
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.economic_event_repository import EconomicEventRepository
@@ -28,6 +29,7 @@ from app.repositories.news_sentiment_repository import NewsSentimentRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
 from app.repositories.signal_repository import SignalRepository
 from app.services.signal.status_resolver import effective_status
+from app.services.signal_engine import SignalEngine, SignalGenerationResult
 from app.workers.celery_app import celery_app
 
 #: Automatic generation runs against the seeded/active asset set only
@@ -103,11 +105,40 @@ def _has_open_signal(
     )
 
 
+#: ADR-186 - stored as a warning on an analysis made while the asset already
+#: had a signal open, so a BUY/SELL reading that sent nothing says why.
+OPEN_SIGNAL_NOTE = (
+    "Analysis only - not sent as a signal: this asset already has a signal "
+    "open (one trade at a time)."
+)
+
+
+def _process_asset(
+    asset: Asset,
+    timeframe: Timeframe,
+    now: datetime,
+    signal_repository: SignalRepository,
+    signal_engine: SignalEngine,
+    *,
+    analyse_while_open: bool,
+) -> SignalGenerationResult | None:
+    """One asset's turn in a run. With a signal already open (ADR-088/125/
+    137/166), no new signal is ever created: the asset is skipped, or -
+    `analyse_while_open` (ADR-186) - analysed and stored without a signal,
+    so the analysis history stays current. Otherwise the full path."""
+    if _has_open_signal(signal_repository, asset.id, now, timeframe):
+        if analyse_while_open:
+            signal_engine.analyse_only(asset, timeframe, OPEN_SIGNAL_NOTE)
+        return None
+    return signal_engine.generate(asset, timeframe)
+
+
 @celery_app.task(name="signals.generate_for_watchlist")  # type: ignore[untyped-decorator]
 def generate_signals_task() -> None:
     """Hourly automatic signal generation on H1 (docs/51 §6 extended to a
-    scheduled trigger)."""
-    _generate_for_timeframe(_TIMEFRAME)
+    scheduled trigger). ADR-186: keeps analysing an asset that has a signal
+    open, without signalling it again."""
+    _generate_for_timeframe(_TIMEFRAME, analyse_while_open=True)
 
 
 @celery_app.task(name="signals.generate_tight_m5")  # type: ignore[untyped-decorator]
@@ -129,7 +160,7 @@ def generate_tight_m5_signals_task() -> None:
     _generate_for_timeframe(Timeframe.M5)
 
 
-def _generate_for_timeframe(timeframe: Timeframe) -> None:
+def _generate_for_timeframe(timeframe: Timeframe, *, analyse_while_open: bool = False) -> None:
     """Shared body for both scheduled generators. Calls the exact same
     `SignalEngine.generate()` path `POST /signals/generate/{symbol}` already
     uses - zero new decision/scoring logic, only a new trigger. Builds the
@@ -193,20 +224,24 @@ def _generate_for_timeframe(timeframe: Timeframe) -> None:
         # `MarketDataService.collect()`, which doesn't self-commit.
         now = datetime.now(UTC)
         for asset in asset_repository.list_active(limit=1000):
-            if _has_open_signal(signal_repository, asset.id, now, timeframe):
-                # A live trade or a waiting draft already exists for this
-                # asset/timeframe (ADR-088 EXPIRED is read-time-only, so
-                # this re-checks effective_status rather than trusting
-                # the stored status). Skip until it closes, expires or is
-                # confirmed. An unfilled ACTIVE signal does not block while
-                # confirmation is on (ADR-168); repeats of its setup are
-                # cancelled at confirmation, so Telegram is not spammed.
-                continue
-
-            result = signal_engine.generate(asset, timeframe)
+            # A live trade or a waiting draft already open for this
+            # asset/timeframe (ADR-088 EXPIRED is read-time-only, so the gate
+            # re-checks effective_status rather than trusting the stored
+            # status) means no new signal until it closes, expires or is
+            # confirmed. An unfilled ACTIVE signal does not block while
+            # confirmation is on (ADR-168); repeats of its setup are
+            # cancelled at confirmation, so Telegram is not spammed.
+            result = _process_asset(
+                asset, timeframe, now, signal_repository, signal_engine,
+                analyse_while_open=analyse_while_open,
+            )
             # ADR-166: a DRAFT is announced by the confirmation task once M15
             # confirms it, not here.
-            if result.signal is not None and result.signal.status is SignalStatus.ACTIVE:
+            if (
+                result is not None
+                and result.signal is not None
+                and result.signal.status is SignalStatus.ACTIVE
+            ):
                 # Deferred import: avoids a module-level import cycle
                 # (telegram_tasks -> celery_app -> workers/__init__ ->
                 # this module), mirrors how Celery task modules already

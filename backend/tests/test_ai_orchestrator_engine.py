@@ -395,3 +395,17 @@ def test_m5_still_narrates_while_the_tight_strategy_is_off(session: Session, ass
     result = engine.generate(asset, Timeframe.M5)
 
     assert result.ai_available is True
+
+
+# --- ADR-186: a caller's note is stored with the analysis ----------------
+
+
+def test_extra_warnings_are_stored_after_the_engines_own(session: Session, asset: Asset) -> None:
+    _seed_trending_candles(session, asset, Timeframe.H1, 300, drift=0.3)
+    engine = _make_engine(session, MockAIProvider())
+
+    result = engine.generate(asset, Timeframe.H1, extra_warnings=["not sent as a signal"])
+
+    assert result.warnings[-1] == "not sent as a signal"
+    row = session.get(AIAnalysis, result.id)
+    assert row is not None and row.warnings[-1] == "not sent as a signal"

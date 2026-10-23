@@ -89,6 +89,20 @@ class SignalEngine:
             signal=signal,
         )
 
+    def analyse_only(self, asset: Asset, timeframe: Timeframe, note: str) -> SignalGenerationResult:
+        """ADR-186 - the same analysis as `generate`, stored with `note` as a
+        warning, and never a signal: for an asset that already has a signal
+        open, so the analysis stays current while the one-trade rule
+        (ADR-125/137/166) still stops a second signal."""
+        result = self._ai_orchestrator_engine.generate(asset, timeframe, extra_warnings=[note])
+        return SignalGenerationResult(
+            analysis_id=result.id,
+            symbol=result.symbol,
+            timeframe=result.timeframe,
+            recommendation=result.recommendation,
+            signal=None,
+        )
+
     def _persist(self, asset: Asset, result: AIAnalysisResult) -> Signal:
         assert result.entry_price is not None
         assert result.stop_loss is not None

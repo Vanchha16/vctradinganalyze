@@ -5,6 +5,7 @@ in-memory SQLite session-factory pattern. Doesn't exercise
 full AI orchestration dependency graph); the AI/telegram side is already
 covered by `test_signal_engine.py` and `test_telegram_tasks.py`."""
 
+import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 
@@ -20,7 +21,13 @@ from app.models.asset import Asset
 from app.models.enums import MarketType, Recommendation, SignalStatus, SignalType, Timeframe
 from app.models.signal import Signal
 from app.repositories.signal_repository import SignalRepository
-from app.workers.signal_tasks import _has_open_signal, register_signal_schedule
+from app.services.signal_engine import SignalGenerationResult
+from app.workers.signal_tasks import (
+    OPEN_SIGNAL_NOTE,
+    _has_open_signal,
+    _process_asset,
+    register_signal_schedule,
+)
 
 _TABLES = [Asset.__table__, AIAnalysis.__table__, Signal.__table__]
 
@@ -177,6 +184,78 @@ def test_has_open_signal_false_for_a_draft_past_its_window(
     with session_factory() as session:
         asset = _seed_signal(session, status=SignalStatus.DRAFT, created_at=stale)
         assert _has_open_signal(SignalRepository(session), asset.id, datetime.now(UTC)) is False
+
+
+class _RecordingSignalEngine:
+    """Records which path a run took; returns a WAIT result."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None]] = []
+
+    def generate(self, asset: Asset, timeframe: Timeframe) -> SignalGenerationResult:
+        self.calls.append(("generate", None))
+        return self._result(asset, timeframe)
+
+    def analyse_only(self, asset: Asset, timeframe: Timeframe, note: str) -> SignalGenerationResult:
+        self.calls.append(("analyse_only", note))
+        return self._result(asset, timeframe)
+
+    @staticmethod
+    def _result(asset: Asset, timeframe: Timeframe) -> SignalGenerationResult:
+        return SignalGenerationResult(analysis_id=uuid.uuid4(), symbol=asset.symbol,
+                                      timeframe=timeframe, recommendation=Recommendation.WAIT,
+                                      signal=None)
+
+
+def _process(session: Session, asset: Asset, engine: _RecordingSignalEngine, **kw: bool) -> object:
+    return _process_asset(asset, Timeframe.H1, datetime.now(UTC), SignalRepository(session),
+                          engine, **kw)  # type: ignore[arg-type]
+
+
+def test_an_open_trade_is_still_analysed_but_never_signalled_again(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """ADR-186 - the hourly H1 job keeps the analysis current while a trade
+    is open, and the one-trade rule still stops a second signal."""
+    with session_factory() as session:
+        asset = _seed_signal(
+            session, status=SignalStatus.TRIGGERED, created_at=datetime.now(UTC)
+        )
+        session.get(Signal, session.query(Signal).one().id).triggered_at = datetime.now(UTC)
+        session.commit()
+        engine = _RecordingSignalEngine()
+
+        result = _process(session, asset, engine, analyse_while_open=True)
+
+        assert result is None
+        assert engine.calls == [("analyse_only", OPEN_SIGNAL_NOTE)]
+        assert session.query(Signal).count() == 1  # only the open one
+
+
+def test_without_the_option_an_open_trade_is_skipped_entirely(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The tight M5 job keeps the old behaviour: no analysis at all."""
+    with session_factory() as session:
+        asset = _seed_signal(session, status=SignalStatus.DRAFT, created_at=datetime.now(UTC))
+        engine = _RecordingSignalEngine()
+
+        assert _process(session, asset, engine, analyse_while_open=False) is None
+        assert engine.calls == []
+
+
+def test_with_nothing_open_the_full_path_runs(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as session:
+        asset = _seed_signal(
+            session, status=SignalStatus.STOPPED_OUT, created_at=datetime.now(UTC)
+        )
+        engine = _RecordingSignalEngine()
+
+        _process(session, asset, engine, analyse_while_open=True)
+
+        assert engine.calls == [("generate", None)]
 
 
 def test_register_signal_schedule_runs_just_after_the_h1_close() -> None:

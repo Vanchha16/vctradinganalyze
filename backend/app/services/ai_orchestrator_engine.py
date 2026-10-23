@@ -11,6 +11,7 @@ deterministic template and sets `ai_available=False`.
 
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -69,12 +70,20 @@ class AIOrchestratorEngine:
         self._ai_analysis_repository = ai_analysis_repository
 
     def generate(
-        self, asset: Asset, timeframe: Timeframe, focus_event_id: UUID | None = None
+        self,
+        asset: Asset,
+        timeframe: Timeframe,
+        focus_event_id: UUID | None = None,
+        extra_warnings: Sequence[str] = (),
     ) -> AIAnalysisResult:
         """`focus_event_id` (ADR-152) names one economic release the
         caller wants the narration to address. It changes only the
         prompt - never the recommendation, which stays deterministic
-        (ADR-079)."""
+        (ADR-079).
+
+        `extra_warnings` (ADR-186) are stored with the analysis after the
+        engine's own - a note from the caller, e.g. that this analysis will
+        not become a signal. They change nothing else."""
         start = time.monotonic()
         calculated_at = datetime.now(UTC)
 
@@ -98,7 +107,7 @@ class AIOrchestratorEngine:
         conditions = invalidation_builder.build(context, decision.recommendation)
 
         narration = self._narrate(context, decision, extracted)
-        warnings = [*narration.warnings, *review_warnings]
+        warnings = [*narration.warnings, *review_warnings, *extra_warnings]
 
         latency_ms = round((time.monotonic() - start) * 1000)
 

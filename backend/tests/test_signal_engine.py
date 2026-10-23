@@ -4,7 +4,7 @@ covered by `test_ai_orchestrator_engine.py`) is enough to verify the
 wrapping/persistence/WAIT-produces-no-signal behavior in isolation."""
 
 import uuid
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -33,9 +33,13 @@ class _FakeAIOrchestratorEngine:
     def __init__(self, result: AIAnalysisResult) -> None:
         self._result = result
         self.call_count = 0
+        self.extra_warnings: list[str] = []
 
-    def generate(self, asset: Asset, timeframe: Timeframe) -> AIAnalysisResult:
+    def generate(
+        self, asset: Asset, timeframe: Timeframe, extra_warnings: Sequence[str] = ()
+    ) -> AIAnalysisResult:
         self.call_count += 1
+        self.extra_warnings = list(extra_warnings)
         return self._result
 
 
@@ -160,6 +164,23 @@ def test_sell_recommendation_persists_a_signal(session: Session, asset: Asset) -
 
     assert generation.signal is not None
     assert generation.signal.signal_type.value == "sell"
+
+
+def test_analyse_only_never_creates_a_signal_and_stores_the_note(
+    session: Session, asset: Asset
+) -> None:
+    """ADR-186 - a BUY reading while a signal is already open is analysed and
+    stored, never signalled."""
+    fake = _FakeAIOrchestratorEngine(_buy_result())
+    engine = SignalEngine(fake, SignalRepository(session))
+
+    generation = engine.analyse_only(asset, Timeframe.H1, "already open")
+
+    assert generation.recommendation is Recommendation.BUY
+    assert generation.signal is None
+    assert session.query(Signal).count() == 0
+    assert fake.call_count == 1
+    assert fake.extra_warnings == ["already open"]
 
 
 def test_wait_recommendation_produces_no_signal(session: Session, asset: Asset) -> None:

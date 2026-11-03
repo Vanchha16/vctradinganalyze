@@ -12323,3 +12323,83 @@ Consequences
   may read BUY or SELL; its warning says why no signal followed.
 - The OpenAI calls for an asset are the same as when no trade is open:
   narration on every hourly run, risk review only on BUY/SELL.
+
+# ADR-187
+
+Title
+
+Subscribers Connect Their Own MT5 Account and the Platform Trades the
+Signals Through a Cloud Bridge (MetaApi) — Supersedes ADR-161 §1 When
+Accepted
+
+Status
+
+Proposed — 2026-11-03, awaiting operator review. Until accepted, ADR-161
+binds unchanged.
+
+Context
+
+- ADR-161 (2026-09-11) chose execution only inside the operator's own MT5
+  terminal through an EA: "the server never holds broker credentials and
+  has no code path ... that places, modifies or cancels an order". The EA
+  needs a Windows PC or VPS. That host went offline on 2026-10-21 with no
+  way to recover it from the platform.
+- On 2026-11-03 the operator asked for an app where users connect their
+  broker account and the platform trades the signals, like Elirox: no
+  Windows server, for the operator **and subscribers**.
+- The 2026-08 MetaApi executor (`EXECUTION_ENABLED`, never enabled) was
+  rejected by ADR-161 for concrete reasons:
+  - it could not cancel orders;
+  - it had no switch or UI;
+  - it used 3% percentage risk;
+  - it served one account configured in `.env`.
+- The signals are not proven profitable. Live, 14-22 Oct: 15 closed, 3 won,
+  -6.3R. The 1-year replay: +0.1R/trade, failing its pre-registered
+  criteria.
+
+Decision
+
+Proposed. Details are in docs/62.
+
+- **Scope.** The platform may place, cancel and track orders on MT5 accounts
+  that subscribers connect, through MetaApi.cloud behind the existing
+  `OrderExecutionProvider` protocol. MT5 + XAUUSD only. Fixed lot, no
+  percentage risk. Never modify or close a filled position.
+- **Credentials.** The MT5 password is forwarded once to MetaApi and never
+  stored, logged or returned. We keep the MetaApi account id and
+  non-secret metadata. The platform's MetaApi token is encrypted at rest
+  (ADR-156).
+- **Separation.** Per-account orders live in new tables (`broker_connections`,
+  `copy_orders`, `copy_events`). A subscriber's fill never changes the
+  signal's status. The 2026-08 single-account executor and its
+  `BrokerOrder` reconciliation fork are retired.
+- **Safety rules reused from the EA:**
+  - **Orders:** once per signal per account; skip past stop or target;
+    limit or market by price; broker-side expiry; cancel unfilled orders
+    when the signal ends; never cancel on a failed request.
+  - **Controls:** daily loss limit; max open trades; dry run first; a
+    one-live-order canary; global and per-account kill switches.
+- **Gates before any live order:**
+  - G1, legal advice on trading third parties' accounts;
+  - G2, a profit gate on new live signals; the operator sets the numbers
+    on acceptance (proposed: at least 60 filled signals, net R > 0 after
+    spread, PF ≥ 1.20, positive in both halves);
+  - G3, MetaApi commercial terms and metered cost;
+  - G4, an independent security review.
+
+  Demo accounts are unrestricted.
+- **The EA path (ADR-161 §2-§4) remains** valid and supported in parallel.
+
+Consequences
+
+- The platform becomes able to trade real money on many accounts. A bug or
+  a leaked MetaApi token is the worst case. Server-side lot caps, loss
+  limits, kill switches, anomaly alerts and an audit trail (docs/62 §9)
+  are mandatory, not optional.
+- Running cost becomes per connected account (MetaApi metering). Who pays
+  is an open question (docs/62 §12).
+- docs/00 and docs/01 need the scope statement amended again when this is
+  accepted.
+- It is built in phases (docs/62 §11), each stopping for operator review.
+  Phase 2 is a spike on a MetaApi demo account that proves cancel, expiry
+  and cost before any production code.

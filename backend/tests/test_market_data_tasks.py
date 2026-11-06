@@ -1,5 +1,7 @@
+import uuid
 from collections.abc import Generator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from celery.schedules import crontab
@@ -136,6 +138,105 @@ def test_m1_on_a_slower_schedule_fetches_three_runs_back() -> None:
 
 def test_timeframes_run_once_per_candle_keep_their_candle_based_window() -> None:
     assert market_data_tasks.lookback_for(Timeframe.H1) == timedelta(hours=5)
+
+
+# --- ADR-188: a run reaches back to the newest stored candle ---
+
+_END = datetime(2026, 11, 6, 4, 10, tzinfo=UTC)
+
+
+def test_a_fresh_series_keeps_the_normal_window() -> None:
+    latest = _END - timedelta(hours=1)
+
+    start = market_data_tasks.collection_start(Timeframe.H1, _END, latest)
+
+    assert start == _END - market_data_tasks.lookback_for(Timeframe.H1)
+
+
+def test_a_new_series_with_nothing_stored_keeps_the_normal_window() -> None:
+    start = market_data_tasks.collection_start(Timeframe.H1, _END, None)
+
+    assert start == _END - market_data_tasks.lookback_for(Timeframe.H1)
+
+
+def test_a_gap_is_fetched_from_the_newest_stored_candle() -> None:
+    """2026-11-06: the restored database ended 5 Nov 02:00, and H1 stayed a
+    day short until it was backfilled by hand."""
+    latest = datetime(2026, 11, 5, 2, 0, tzinfo=UTC)
+
+    assert market_data_tasks.collection_start(Timeframe.H1, _END, latest) == latest
+
+
+def test_a_naive_stored_timestamp_is_read_as_utc() -> None:
+    latest = datetime(2026, 11, 5, 2, 0)
+
+    start = market_data_tasks.collection_start(Timeframe.H1, _END, latest)
+
+    assert start == latest.replace(tzinfo=UTC)
+
+
+def test_m1_catch_up_stays_inside_one_provider_response() -> None:
+    latest = _END - timedelta(days=10)
+
+    start = market_data_tasks.collection_start(Timeframe.M1, _END, latest)
+
+    assert start == _END - timedelta(minutes=4_500)
+
+
+def test_higher_timeframes_catch_up_at_most_seven_days() -> None:
+    latest = _END - timedelta(days=30)
+
+    assert market_data_tasks.collection_start(Timeframe.H1, _END, latest) == _END - timedelta(
+        days=7
+    )
+
+
+def test_the_cap_never_shortens_a_longer_normal_window() -> None:
+    """W1's normal window (five weeks) is already longer than the 7-day cap."""
+    latest = _END - timedelta(days=200)
+
+    start = market_data_tasks.collection_start(Timeframe.W1, _END, latest)
+
+    assert start == _END - market_data_tasks.lookback_for(Timeframe.W1)
+
+
+def test_the_task_fetches_each_asset_from_its_own_newest_candle(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stale = datetime(2026, 11, 5, 2, 0, tzinfo=UTC)
+    with session_factory() as session:
+        behind = Asset(symbol="XAUUSD", name="Gold", market_type=MarketType.METAL)
+        current = Asset(symbol="EURUSD", name="Euro", market_type=MarketType.FOREX)
+        session.add_all([behind, current])
+        session.flush()
+        session.add(_candle(behind.id, stale))
+        session.commit()
+
+    starts: dict[str, datetime] = {}
+
+    def record(self: object, asset: Asset, timeframe: Timeframe, *, start: datetime, end: datetime):  # type: ignore[no-untyped-def]
+        starts[asset.symbol] = start
+
+    monkeypatch.setattr(market_data_tasks.MarketDataService, "collect", record)
+
+    market_data_tasks.collect_market_data_task(Timeframe.H1.value)
+
+    assert starts["XAUUSD"] == stale
+    lookback = market_data_tasks.lookback_for(Timeframe.H1)
+    assert starts["EURUSD"] > datetime.now(UTC) - lookback - timedelta(minutes=1)
+
+
+def _candle(asset_id: uuid.UUID, timestamp: datetime) -> PriceCandle:
+    return PriceCandle(
+        asset_id=asset_id,
+        timeframe=Timeframe.H1,
+        timestamp=timestamp,
+        open=Decimal("4128.76"),
+        high=Decimal("4137.88"),
+        low=Decimal("4122.59"),
+        close=Decimal("4129.59"),
+        volume=Decimal("0"),
+    )
 
 
 # --- Phase 9H (ADR-140): collection cadence floor + quota projection ---

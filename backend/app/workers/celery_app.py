@@ -54,6 +54,7 @@ from app.workers import (  # noqa: E402
 
 celery_app.conf.beat_schedule = {
     **market_data_tasks.register_market_data_schedule(),
+    **market_data_tasks.register_market_data_watch_schedule(),
     **news_sentiment_tasks.register_news_schedule(),
     **economic_calendar_tasks.register_economic_calendar_schedule(),
     **signal_tasks.register_signal_schedule(),
@@ -77,4 +78,3 @@ def _refresh_runtime_settings(*_: object, **__: object) -> None:
     from app.services import runtime_settings
 
     runtime_settings.refresh()
-

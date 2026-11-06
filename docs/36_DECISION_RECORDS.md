@@ -12323,3 +12323,78 @@ Consequences
   may read BUY or SELL; its warning says why no signal followed.
 - The OpenAI calls for an asset are the same as when no trade is open:
   narration on every hourly run, risk review only on BUY/SELL.
+
+# ADR-188
+
+Title
+
+Market Data Closes Its Own Gaps After Downtime, and Tells the Operator When
+Prices Stop
+
+Status
+
+Accepted - operator request, 2026-11-06, after the 2026-11-05 outage
+(docs/27 section 10.1).
+
+Context
+
+- Production went offline on 2026-11-05 at about 03:05 UTC (AWS billing
+  suspension) and was rebuilt on 2026-11-06 from the nightly dump.
+- **Nobody knew for about a day.** Nothing in the app reports that prices
+  have stopped arriving: the EA watch (ADR-170) covers the terminal, and
+  ingestion health (ADR-139) covers news and the calendar, both only on the
+  admin page.
+- **The gap did not close.** Each collection run fetches a fixed window
+  (`lookback_for`, ADR-171: about five candles or three runs). After the
+  restore, M1 and M5 were current within minutes, but H1 ended at
+  5 Nov 02:00 and would have stayed a day short forever: the chart showed
+  4129.59 against a live 4046, and the hourly AI engine would have read
+  that hole as history. It was backfilled by hand (2,593 candles, M1-D1).
+  The same hole follows any worker outage longer than the window.
+
+Decision
+
+1. **A run starts from the newest stored candle when that is older than
+   its normal window** (`market_data_tasks.collection_start`). It is capped
+   so one request never asks for more than a provider returns: 4,500
+   candles (under Twelve Data's 5,000; M1 about three days) or 7 days,
+   whichever is shorter. The cap never shortens the normal window (W1, MN).
+   With nothing stored, the normal window is used, as before.
+   - Still one request per run: the quota projection (ADR-140) is unchanged.
+   - Upserts stay idempotent (docs/06 section 16).
+2. **A stale-price alert** (`market_data.watch_freshness`, every
+   `MARKET_DATA_WATCH_INTERVAL_SECONDS`, default 300).
+   - For each active asset, if the newest M1 candle is older than
+     `MARKET_DATA_STALE_ALERT_MINUTES` (default 90) and the market was open
+     for that whole time, super admins get "PRICES STOPPED" on Telegram,
+     once per episode, and "PRICES BACK" when candles return.
+   - 90 minutes clears gold's daily one-hour break and the first stretch
+     after the Sunday reopen (an hour later than the session rules' 22:00
+     in winter).
+   - Same delivery rules as the EA watch: super admins only, no-op while
+     Telegram is unconfigured, and the marker is written only after a
+     successful send, so a failed send is retried.
+   - The per-asset marker lives in Redis like ingestion health, no
+     migration. An unreadable marker skips the asset for that run rather
+     than risking an alert every five minutes.
+
+Consequences
+
+- A restored or restarted server catches up on its first run of every
+  timeframe; a gap longer than the cap still needs a manual backfill.
+- Weekend and holiday runs re-request from Friday's last candle: a bigger
+  response, the same request count.
+- The alert cannot report its own server being down - the worker would be
+  down with it. An outside uptime monitor is still needed for that.
+- Market holidays the session rules do not know (ADR-066) can produce one
+  false "PRICES STOPPED", followed by "PRICES BACK" at the reopen.
+
+Alternatives Rejected
+
+- **A bigger fixed window.** Every run would fetch days of data to cover a
+  rare outage, and still miss one longer than the window.
+- **A one-off backfill script in the runbook.** It relies on someone
+  remembering it; it was forgotten on this rebuild until the chart looked
+  wrong.
+- **Storing the alert marker in a new table.** A migration for one flag
+  per asset that is safe to lose.

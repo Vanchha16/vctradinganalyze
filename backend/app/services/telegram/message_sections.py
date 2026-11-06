@@ -423,11 +423,46 @@ def compose_ea_loss_limit_message(token: EaToken, *, now: datetime) -> str:
     )
 
 
+def _newest_candle(newest: datetime | None, now: datetime) -> str:
+    if newest is None:
+        return "None stored"
+    seen = as_aware_utc(newest)
+    minutes = max(0, int((now - seen).total_seconds() // 60))
+    return f"{seen:%Y-%m-%d %H:%M} UTC ({minutes} min ago)"
+
+
+def compose_market_data_stale_message(
+    symbol: str, newest: datetime | None, *, now: datetime
+) -> str:
+    """ADR-188 - no new M1 candle for a while the market is open."""
+    body = "\n\n".join(
+        [
+            _field("🕒 Newest M1 candle", _newest_candle(newest, now)),
+            escape_markdown_v2(
+                "No signals or analyses are being made for this symbol. Check the "
+                "market data key and quota on the admin API keys page, and the "
+                "worker's log."
+            ),
+        ]
+    )
+    return "\n\n".join([_ea_header("⚠️ PRICES STOPPED", symbol), body, render_timestamp(now)])
+
+
+def compose_market_data_resumed_message(
+    symbol: str, newest: datetime | None, *, now: datetime
+) -> str:
+    """ADR-188 - candles arriving again after a stale alert."""
+    body = _field("🕒 Newest M1 candle", _newest_candle(newest, now))
+    return "\n\n".join([_ea_header("✅ PRICES BACK", symbol), body, render_timestamp(now)])
+
+
 __all__ = [
     "compose_ea_back_online_message",
     "compose_ea_event_message",
     "compose_ea_loss_limit_message",
     "compose_ea_offline_message",
+    "compose_market_data_resumed_message",
+    "compose_market_data_stale_message",
     "compose_signal_message",
     "compose_signal_cancelled_message",
     "compose_signal_outcome_message",

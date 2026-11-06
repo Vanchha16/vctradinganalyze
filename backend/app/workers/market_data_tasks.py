@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -6,13 +7,23 @@ from celery.schedules import crontab
 from app.config import settings
 from app.database.session import SessionLocal
 from app.dependencies.market_data import get_market_data_providers
+from app.dependencies.telegram import get_telegram_provider
 from app.models.enums import Timeframe
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.price_candle_repository import PriceCandleRepository
+from app.repositories.telegram_account_repository import TelegramAccountRepository
+from app.services import credential_resolver, market_data_watch
 from app.services.market_data.candle_validator import CandleValidator
 from app.services.market_data.timeframe_utils import TIMEFRAME_DURATIONS
 from app.services.market_data_service import MarketDataService
+from app.services.market_data_watch import FreshnessAlert
 from app.services.paper_swing_service import REQUESTS_PER_DAY as _PAPER_SWING_REQUESTS
+from app.services.telegram.message_sections import (
+    compose_market_data_resumed_message,
+    compose_market_data_stale_message,
+)
+from app.services.telegram_service import TelegramService
+from app.utils.time import as_aware_utc
 from app.workers.celery_app import celery_app
 
 logger = structlog.get_logger(__name__)
@@ -182,15 +193,103 @@ def collect_market_data_task(timeframe_value: str) -> None:
             price_candle_repository=PriceCandleRepository(session),
         )
 
+        candle_repository = PriceCandleRepository(session)
         end = datetime.now(UTC)
-        start = end - lookback_for(timeframe)
 
         for asset in asset_repository.list_active(limit=1000):
+            latest = candle_repository.get_latest(asset.id, timeframe)
+            start = collection_start(
+                timeframe, end, latest.timestamp if latest is not None else None
+            )
             service.collect(asset, timeframe, start=start, end=end)
 
         session.commit()
     finally:
         session.close()
+
+
+#: ADR-188 - the furthest one run reaches back to close a gap. 4,500 candles
+#: stays under Twelve Data's 5,000-candle response (M1: ~3 days); 7 days caps
+#: the higher timeframes, whose normal lookback already covers longer gaps.
+_CATCH_UP_MAX_CANDLES = 4_500
+_CATCH_UP_MAX_AGE = timedelta(days=7)
+
+
+def collection_start(
+    timeframe: Timeframe, end: datetime, latest_stored: datetime | None
+) -> datetime:
+    """Where one collection run starts fetching (ADR-171, ADR-188).
+
+    Normally `end - lookback_for(timeframe)`. When the newest stored candle
+    is older than that - the worker was down, the server was rebuilt from a
+    backup, or the provider failed for a while - the run starts from that
+    candle instead, so the gap closes on the next run rather than staying a
+    permanent hole (2026-11-06: a day of H1 was missing after the restore and
+    had to be backfilled by hand). Capped, so one run never asks for more than
+    a provider returns. Still one request per run: no quota change."""
+    normal_start = end - lookback_for(timeframe)
+    if latest_stored is None:
+        return normal_start
+    cap = min(TIMEFRAME_DURATIONS[timeframe] * _CATCH_UP_MAX_CANDLES, _CATCH_UP_MAX_AGE)
+    catch_up_start = max(as_aware_utc(latest_stored), end - cap)
+    return min(normal_start, catch_up_start)
+
+
+_FRESHNESS_COMPOSERS: dict[FreshnessAlert, Callable[..., str]] = {
+    FreshnessAlert.STALE: compose_market_data_stale_message,
+    FreshnessAlert.RESUMED: compose_market_data_resumed_message,
+}
+
+
+@celery_app.task(name="market_data.watch_freshness", ignore_result=True)  # type: ignore[untyped-decorator]
+def watch_freshness_task() -> None:
+    """ADR-188 - tells super admins when an active asset's prices stop, and
+    when they resume. The decision is `services/market_data_watch.py`; this
+    task loads, sends, and only then records - so a failed send is decided
+    again, and retried, on the next run. Silently no-ops while Telegram is
+    not configured."""
+    if not credential_resolver.resolve("telegram_bot"):
+        return
+
+    session = SessionLocal()
+    try:
+        now = datetime.now(UTC)
+        candles = PriceCandleRepository(session)
+        telegram = TelegramService(
+            account_repository=TelegramAccountRepository(session),
+            provider=get_telegram_provider(),
+        )
+        for asset in AssetRepository(session).list_active(limit=1000):
+            alerted = market_data_watch.is_alerted(asset.id)
+            if alerted is None:
+                continue
+            latest = candles.get_latest(asset.id, Timeframe.M1)
+            newest = latest.timestamp if latest is not None else None
+            alert = market_data_watch.decide(newest, now, alerted=alerted)
+            if alert is None:
+                continue
+            try:
+                telegram.send_to_operators(
+                    _FRESHNESS_COMPOSERS[alert](asset.symbol, newest, now=now)
+                )
+            except Exception:
+                logger.warning(
+                    "market_data.freshness_alert_failed", symbol=asset.symbol, exc_info=True
+                )
+                continue
+            market_data_watch.record(asset.id, alert, now)
+            logger.info("market_data.freshness_alerted", symbol=asset.symbol, alert=alert.value)
+    finally:
+        session.close()
+
+
+def register_market_data_watch_schedule() -> dict[str, dict[str, object]]:
+    return {
+        "market-data-watch-freshness": {
+            "task": "market_data.watch_freshness",
+            "schedule": float(settings.market_data_watch_interval_seconds),
+        }
+    }
 
 
 #: ADR-166 - H1 and M15 are collected on the clock, one minute after each

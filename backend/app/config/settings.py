@@ -275,6 +275,11 @@ class Settings(BaseSettings):
     # offline once, and again when it is back. The watch runs this often.
     ea_offline_alert_minutes: int = 5
     ea_watch_interval_seconds: int = 60
+    # ADR-188 - super admins are told on Telegram when an active asset has had
+    # no new M1 candle for this many minutes while the market is open (90
+    # clears gold's daily one-hour break), and again when prices resume.
+    market_data_stale_alert_minutes: int = 90
+    market_data_watch_interval_seconds: int = 300
     # ADR-170 - a live EA event that arrives this long after it happened (a
     # terminal catching up after an outage) is stored but not sent to Telegram.
     ea_event_alert_max_age_hours: int = 6
